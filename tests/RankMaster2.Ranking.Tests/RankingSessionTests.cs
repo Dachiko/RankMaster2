@@ -60,6 +60,19 @@ public class RankingSessionTests
         Assert.Contains(session.Records, r => r.Id == gone!.Id);
     }
 
+    [Fact]
+    public void Restore_AfterLastDrop_ResumesPair()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), 1);
+        session.Start();
+        var gone = session.Drop(session.Current!.Value.Left);
+        Assert.Null(session.Current);
+        session.Restore(gone!);
+        Assert.NotNull(session.Current);
+        Assert.Equal(2, session.Records.Count);
+    }
+
     private static MediaRecord Rec(string name) =>
         new(new MediaId(name), MediaExtensions.KindOf(name) ?? MediaKind.Still, RankingConstants.DefaultRating, 0, 0, 0);
 

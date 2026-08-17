@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace RankMaster2;
@@ -17,7 +18,7 @@ internal static class StillDecoder
 
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-        var source = decoder.Frames[0];
+        var source = ApplyExifOrientation(decoder.Frames[0]);
         var srcW = Math.Max(source.PixelWidth, 1);
         var srcH = Math.Max(source.PixelHeight, 1);
         var (dw, dh) = Fit(srcW, srcH, panelWidth, panelHeight, cap);
@@ -25,7 +26,7 @@ internal static class StillDecoder
         BitmapSource bitmap = source;
         if (dw != srcW || dh != srcH)
         {
-            var scaled = new TransformedBitmap(source, new System.Windows.Media.ScaleTransform(
+            var scaled = new TransformedBitmap(source, new ScaleTransform(
                 dw / (double)srcW, dh / (double)srcH));
             scaled.Freeze();
             bitmap = scaled;
@@ -55,5 +56,66 @@ internal static class StillDecoder
         var dw = Math.Max(1, (int)Math.Round(srcW * scale));
         var dh = Math.Max(1, (int)Math.Round(srcH * scale));
         return (dw, dh);
+    }
+
+    internal static BitmapSource ApplyExifOrientation(BitmapSource source)
+    {
+        var orientation = ReadOrientation(source);
+        if (orientation <= 1)
+            return source;
+
+        var group = new TransformGroup();
+        switch (orientation)
+        {
+            case 2:
+                group.Children.Add(new ScaleTransform(-1, 1));
+                break;
+            case 3:
+                group.Children.Add(new RotateTransform(180));
+                break;
+            case 4:
+                group.Children.Add(new ScaleTransform(1, -1));
+                break;
+            case 5:
+                group.Children.Add(new RotateTransform(90));
+                group.Children.Add(new ScaleTransform(-1, 1));
+                break;
+            case 6:
+                group.Children.Add(new RotateTransform(90));
+                break;
+            case 7:
+                group.Children.Add(new RotateTransform(270));
+                group.Children.Add(new ScaleTransform(-1, 1));
+                break;
+            case 8:
+                group.Children.Add(new RotateTransform(270));
+                break;
+            default:
+                return source;
+        }
+
+        var oriented = new TransformedBitmap(source, group);
+        oriented.Freeze();
+        return oriented;
+    }
+
+    private static int ReadOrientation(BitmapSource source)
+    {
+        try
+        {
+            if (source.Metadata is not BitmapMetadata meta)
+                return 1;
+            var value = meta.GetQuery("/app1/ifd/{ushort=274}");
+            return value switch
+            {
+                ushort u => u,
+                int i => i,
+                _ => 1
+            };
+        }
+        catch
+        {
+            return 1;
+        }
     }
 }

@@ -69,8 +69,6 @@ public sealed class RankingSession
 
     public void Save() => _catalog.Save(Folder, _records);
 
-    public void AbandonCurrent() => Advance();
-
     public MediaRecord? Drop(MediaId id)
     {
         var i = _records.FindIndex(r => r.Id == id);
@@ -114,6 +112,8 @@ public sealed class RankingSession
         if (_records.Any(r => r.Id == record.Id))
             return;
         _records.Add(record);
+        if (Current is null)
+            Current = Pick();
         FillWarm();
     }
 

@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private RankingSession? _session;
     private bool _busy;
     private bool _exiting;
+    private bool _renaming;
     private Storyboard? _selectCue;
     private DispatcherTimer? _toastTimer;
 
@@ -70,10 +71,16 @@ public partial class MainWindow : Window
         RenameButton.Visibility = Visibility.Visible;
     }
 
-    private void OnOpenFolder(object sender, RoutedEventArgs e) => PickFolder();
+    private void OnOpenFolder(object sender, RoutedEventArgs e)
+    {
+        if (!_renaming)
+            PickFolder();
+    }
 
     private void OnResume(object sender, RoutedEventArgs e)
     {
+        if (_renaming)
+            return;
         if (ResumeButton.Tag is string path)
             BeginSession(path);
     }
@@ -89,13 +96,17 @@ public partial class MainWindow : Window
 
     private void BeginSession(string folder)
     {
+        if (_renaming)
+            return;
         SetStartError("");
         try
         {
+            LeaveCompare();
+            _pipeline.Ready -= OnFrameReady;
+            _pipeline.Failed -= OnFrameFailed;
             _pipeline.Dispose();
             _pipeline = CreatePipeline();
             _pipeline.SetFolder(folder);
-            UpdatePanelSize();
 
             var session = new RankingSession(folder, _catalog, _engine, _selector, _pipeline.PrefetchPairs);
             if (!session.Start())
@@ -111,12 +122,23 @@ public partial class MainWindow : Window
             LastFolderStore.Save(folder);
             StartPanel.Visibility = Visibility.Collapsed;
             RankPanel.Visibility = Visibility.Visible;
+            RankPanel.UpdateLayout();
+            UpdatePanelSize();
             ShowCurrent();
         }
         catch (Exception ex)
         {
             SetStartError("Could not open folder: " + ex.Message);
         }
+    }
+
+    private void LeaveCompare()
+    {
+        StopVideo(LeftVideo);
+        StopVideo(RightVideo);
+        LeftImage.Source = null;
+        RightImage.Source = null;
+        try { _pipeline.ReleaseAll(); } catch { /* disposed */ }
     }
 
     private void SetStartError(string message)
@@ -129,6 +151,7 @@ public partial class MainWindow : Window
     {
         if (_session?.Current is null)
         {
+            LeaveCompare();
             SetStartError("No pair left to compare.");
             RankPanel.Visibility = Visibility.Collapsed;
             StartPanel.Visibility = Visibility.Visible;
@@ -273,6 +296,8 @@ public partial class MainWindow : Window
         if (confirm != MessageBoxResult.OK)
             return;
 
+        _renaming = true;
+        LeaveCompare();
         RenamePanel.Visibility = Visibility.Visible;
         RenameStatus.Text = "Backing up and renaming…";
         try
@@ -288,6 +313,7 @@ public partial class MainWindow : Window
         finally
         {
             RenamePanel.Visibility = Visibility.Collapsed;
+            _renaming = false;
         }
     }
 
@@ -383,7 +409,8 @@ public partial class MainWindow : Window
         if (e.Key == Key.O)
         {
             e.Handled = true;
-            PickFolder();
+            if (!_renaming)
+                PickFolder();
             return;
         }
 
@@ -393,7 +420,8 @@ public partial class MainWindow : Window
         if (e.Key == Key.S && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
         {
             e.Handled = true;
-            _session.Save();
+            try { _session.Save(); }
+            catch (Exception ex) { ShowToast(ex.Message); }
             return;
         }
 
@@ -543,8 +571,15 @@ public partial class MainWindow : Window
         _busy = true;
         try
         {
-            _session.Skip();
-            ShowCurrent();
+            try
+            {
+                _session.Skip();
+                ShowCurrent();
+            }
+            catch (Exception ex)
+            {
+                ShowToast(ex.Message);
+            }
         }
         finally
         {

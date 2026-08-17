@@ -25,6 +25,7 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
     private int _panelW = 960;
     private int _panelH = 1080;
     private Pair? _visible;
+    private volatile bool _disposed;
 
     public MediaPipeline(int prefetchPairs = DefaultPrefetchPairs, Dispatcher? dispatcher = null)
     {
@@ -138,8 +139,18 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
+        Ready = null;
+        Failed = null;
+        lock (_gate)
+        {
+            _wanted.Clear();
+            _cache.Clear();
+            _warm.Clear();
+            _visible = null;
+        }
         _cts.Cancel();
-        _work.CompleteAdding();
+        try { _work.CompleteAdding(); } catch (InvalidOperationException) { }
         _cts.Dispose();
     }
 
@@ -210,6 +221,9 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
             return;
         }
 
+        if (_disposed)
+            return;
+
         if (kind == MediaKind.Video)
         {
             var frame = new PreparedFrame { Kind = MediaKind.Video, VideoPath = path };
@@ -252,6 +266,8 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
 
     private bool IsWanted(MediaId id)
     {
+        if (_disposed)
+            return false;
         lock (_gate)
             return _wanted.Contains(id);
     }
@@ -280,7 +296,13 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
 
     private void RaiseReady(MediaId id, PreparedFrame frame)
     {
-        void Emit() => Ready?.Invoke(id, frame);
+        if (_disposed)
+            return;
+        void Emit()
+        {
+            if (!_disposed)
+                Ready?.Invoke(id, frame);
+        }
         if (_dispatcher.CheckAccess())
             Emit();
         else
@@ -289,7 +311,13 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
 
     private void RaiseFailed(MediaId id)
     {
-        void Emit() => Failed?.Invoke(id);
+        if (_disposed)
+            return;
+        void Emit()
+        {
+            if (!_disposed)
+                Failed?.Invoke(id);
+        }
         if (_dispatcher.CheckAccess())
             Emit();
         else

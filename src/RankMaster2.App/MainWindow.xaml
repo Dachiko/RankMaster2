@@ -232,7 +232,7 @@
                             <TextBlock Grid.Row="1" Foreground="#9CA3AF" Text="Select Right"/>
                             <TextBlock Grid.Row="1" Grid.Column="1" FontFamily="Consolas" Text="[→]"/>
                             <TextBlock Grid.Row="2" Foreground="#9CA3AF" Text="Skip"/>
-                            <TextBlock Grid.Row="2" Grid.Column="1" FontFamily="Consolas" Text="[S]"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" FontFamily="Consolas" Text="[↓]/[S]"/>
                             <TextBlock Grid.Row="3" Foreground="#9CA3AF" Text="Discard"/>
                             <TextBlock Grid.Row="3" Grid.Column="1" FontFamily="Consolas" Text="[1] / [2]"/>
                             <TextBlock Grid.Row="4" Foreground="#9CA3AF" Text="Special"/>

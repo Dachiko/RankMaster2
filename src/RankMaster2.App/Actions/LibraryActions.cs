@@ -83,7 +83,10 @@ public sealed class LibraryActions : ILibraryActions
             var map = FileOps.RenameByConservativeScore(folder, records);
             var remapped = _catalog.RemapIds(records, map);
             _catalog.Save(folder, remapped);
-            _session()?.ReplaceAll(remapped);
+            var session = _session();
+            if (session is not null &&
+                string.Equals(session.Folder, folder, StringComparison.OrdinalIgnoreCase))
+                session.ReplaceAll(remapped);
         }
         catch (Exception ex)
         {

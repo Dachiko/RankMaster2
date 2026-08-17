@@ -324,7 +324,8 @@ dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained
 3. Ranking + tests, Catalog + tests — **done**
 4. Pipeline + compare shell — **done**
 5. Actions — **done**
-6. Pre-exe audit fixes (JSON merge, locks, prefetch promote, cue/tint, still quality) — **done**
+6. Pre-exe audit fixes — **done**
+7. Second-audit follow-up (restore resumes pair, rename lock, pipeline dispose, EXIF, leave-compare unlocks) — **done**
 
 Do not start a later phase by opening any other ranking app. This file is the brief.
 
