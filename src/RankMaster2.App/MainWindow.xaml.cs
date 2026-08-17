@@ -22,6 +22,8 @@ public partial class MainWindow : Window
     private bool _busy;
     private bool _exiting;
     private bool _renaming;
+    private bool _suppressMediaFailed;
+    private bool _inShowCurrent;
     private Storyboard? _selectCue;
     private DispatcherTimer? _toastTimer;
 
@@ -134,11 +136,14 @@ public partial class MainWindow : Window
 
     private void LeaveCompare()
     {
+        _suppressMediaFailed = true;
         StopVideo(LeftVideo);
         StopVideo(RightVideo);
         LeftImage.Source = null;
         RightImage.Source = null;
         try { _pipeline.ReleaseAll(); } catch { /* disposed */ }
+        if (!_inShowCurrent)
+            _suppressMediaFailed = false;
     }
 
     private void SetStartError(string message)
@@ -149,33 +154,45 @@ public partial class MainWindow : Window
 
     private void ShowCurrent()
     {
-        if (_session?.Current is null)
-        {
-            LeaveCompare();
-            SetStartError("No pair left to compare.");
-            RankPanel.Visibility = Visibility.Collapsed;
-            StartPanel.Visibility = Visibility.Visible;
-            RefreshResumeButton();
+        if (_inShowCurrent)
             return;
+        _inShowCurrent = true;
+        _suppressMediaFailed = true;
+        try
+        {
+            if (_session?.Current is null)
+            {
+                LeaveCompare();
+                SetStartError("No pair left to compare.");
+                RankPanel.Visibility = Visibility.Collapsed;
+                StartPanel.Visibility = Visibility.Visible;
+                RefreshResumeButton();
+                return;
+            }
+
+            ResetPaneTransforms();
+            var pair = _session.Current.Value;
+            ResetPane(LeftImage, LeftVideo, LeftSpinner, LeftName, pair.Left);
+            ResetPane(RightImage, RightVideo, RightSpinner, RightName, pair.Right);
+            OverlayFolder.Text = _session.FolderName;
+            OverlayUnranked.Text = _session.UnrankedCount.ToString("N0");
+            OverlaySession.Text = _session.SessionVotes.ToString("N0");
+            var progress = LibraryProgress.Of(_session.Rankable);
+            OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
+            ConfidenceFill.Width = 232 * progress;
+
+            _pipeline.Show(pair.Left, pair.Right);
+            foreach (var warm in _session.WarmPairs)
+                _pipeline.Enqueue(warm);
         }
-
-        ResetPaneTransforms();
-        var pair = _session.Current.Value;
-        ResetPane(LeftImage, LeftVideo, LeftSpinner, LeftName, pair.Left);
-        ResetPane(RightImage, RightVideo, RightSpinner, RightName, pair.Right);
-        OverlayFolder.Text = _session.FolderName;
-        OverlayUnranked.Text = _session.UnrankedCount.ToString("N0");
-        OverlaySession.Text = _session.SessionVotes.ToString("N0");
-        var progress = LibraryProgress.Of(_session.Rankable);
-        OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
-        ConfidenceFill.Width = 232 * progress;
-
-        _pipeline.Show(pair.Left, pair.Right);
-        foreach (var warm in _session.WarmPairs)
-            _pipeline.Enqueue(warm);
+        finally
+        {
+            _suppressMediaFailed = false;
+            _inShowCurrent = false;
+        }
     }
 
-    private static void ResetPane(
+    private void ResetPane(
         System.Windows.Controls.Image image,
         MediaElement video,
         TextBlock spinner,
@@ -201,7 +218,7 @@ public partial class MainWindow : Window
 
     private void OnFrameFailed(MediaId id)
     {
-        if (_session is null || _busy)
+        if (_session is null || _busy || _suppressMediaFailed || _inShowCurrent)
             return;
         if (_session.Current is not { } pair || !pair.Contains(id))
             return;
@@ -211,6 +228,10 @@ public partial class MainWindow : Window
 
     private void OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
     {
+        if (_suppressMediaFailed || _inShowCurrent)
+            return;
+        if (sender is not MediaElement el || el.Source is null)
+            return;
         if (_session?.Current is not { } pair)
             return;
         if (sender == LeftVideo)
@@ -219,7 +240,7 @@ public partial class MainWindow : Window
             OnFrameFailed(pair.Right);
     }
 
-    private static void ApplyFrame(
+    private void ApplyFrame(
         System.Windows.Controls.Image image,
         MediaElement video,
         TextBlock spinner,
@@ -227,11 +248,12 @@ public partial class MainWindow : Window
     {
         if (frame.Kind == MediaKind.Video)
         {
-            if (video.Source?.OriginalString == frame.VideoPath)
+            if (video.Source?.LocalPath == frame.VideoPath)
                 return;
             StopVideo(video);
-            video.Source = frame.VideoPath is null ? null : new Uri(frame.VideoPath);
-            try { video.Play(); } catch { /* MediaOpened will retry */ }
+            if (frame.VideoPath is null)
+                return;
+            video.Source = new Uri(frame.VideoPath);
             return;
         }
 
@@ -240,11 +262,20 @@ public partial class MainWindow : Window
         spinner.Visibility = Visibility.Collapsed;
     }
 
-    private static void StopVideo(MediaElement video)
+    private void StopVideo(MediaElement video)
     {
-        try { video.Stop(); } catch { /* not opened */ }
-        try { video.Close(); } catch { /* not opened */ }
-        video.Source = null;
+        var prior = _suppressMediaFailed;
+        _suppressMediaFailed = true;
+        try
+        {
+            try { video.Stop(); } catch { /* not opened */ }
+            try { video.Close(); } catch { /* not opened */ }
+            video.Source = null;
+        }
+        finally
+        {
+            _suppressMediaFailed = prior;
+        }
     }
 
     private void OnVideoEnded(object sender, RoutedEventArgs e)
