@@ -57,6 +57,24 @@ public class PairSelectorTests
     }
 
     [Fact]
+    public void ReservedIds_AreNeverPicked()
+    {
+        var sel = new PairSelector();
+        var a = Rec("a.jpg", 0, sigma: 8);
+        var b = Rec("b.jpg", 0, sigma: 7);
+        var c = Rec("c.jpg", 0, sigma: 6);
+        var d = Rec("d.jpg", 0, sigma: 5);
+        var pair = sel.SelectNextPair(
+            [a, b, c, d],
+            new HashSet<MediaId>(),
+            new HashSet<MediaId> { a.Id, b.Id });
+        Assert.NotNull(pair);
+        var names = new HashSet<string> { pair!.Value.Left.Filename, pair.Value.Right.Filename };
+        Assert.DoesNotContain("a.jpg", names);
+        Assert.DoesNotContain("b.jpg", names);
+    }
+
+    [Fact]
     public void Recent_IsIgnoredIfItWouldLeaveFewerThanTwo()
     {
         var sel = new PairSelector();

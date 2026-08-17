@@ -9,7 +9,6 @@ public static class RankingConstants
     public const double TargetSigma = 1.8;
     public const int UnplacedMatchThreshold = 3;
     public const int RecentShownLimit = 30;
-    public const int AutosaveEveryVotes = 20;
 
     public static Rating DefaultRating => new(InitialMu, InitialSigma);
 }

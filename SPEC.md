@@ -62,13 +62,15 @@ Honor EXIF orientation on stills.
 
 1. **Start** — Open folder (`O` or button). If a last-folder path exists and is still valid, show **Resume**. Resume does **not** auto-start; the user clicks it. Last folder path lives in app local data, not in the media folder. Resume does not restore a pair (pick a new one).
 2. **Loading** — Scanning / merging JSON.
-3. **Ranking** — Full-window two-pane compare, dark background.
+3. **Ranking** — **True fullscreen** two-pane compare (covers the Windows taskbar / Start menu). No title bar.
 4. **Renaming** — Progress for backup + two-phase rename.
-5. **Saved** — After `Esc` (saved). User closes the window.
+
+There is no “Saved” screen. `Esc` **quits the process immediately**.
 
 ### Compare UI
 
-- Two panes, `Uniform` / contain, black letterbox, a neutral VS mark in the center.
+- The window is borderless and fills the monitor, **including over the taskbar**.
+- Two panes, each exactly half the screen. Each still or video is scaled with **uniform** aspect (`Stretch.Uniform`) so it is as large as possible on its half without cropping or stretching. Black letterbox if the aspect does not match the pane. A neutral VS mark in the center.
 - **Filename** visible on each pane.
 - Click a pane to vote for it. Keys also work.
 - Vote applies immediately. The new pair’s IDs come on screen at once even if pixels are not ready.
@@ -86,9 +88,9 @@ Honor EXIF orientation on stills.
 | `1` / `2` | Move left / right to `discarded/` |
 | `4` / `5` | Move left / right to `special 1/` |
 | `O` | Open folder |
-| `Ctrl+S` | Save JSON now |
+| `Ctrl+S` | Save JSON now (redundant if the last action already saved) |
 | `Ctrl+Z` | Undo **last move** only |
-| `Esc` | Save, go to Saved screen |
+| `Esc` | **Quit immediately.** The pair on screen is treated as unseen: no rating change, no `matches` / `impressions` / `lastPlayed` bump, not added to recents. Prior choices are already on disk. |
 
 Ignore keys while a move is in flight.
 
@@ -117,7 +119,7 @@ File: `<folder>/rankmaster_db.json`
 - Identity is the **filename** (the object key and the `filename` field must match).
 - Scan disk, then merge: existing rows kept, missing files dropped from the in-memory session (leave orphan keys out of the next save), new files get default rating.
 - Atomic save: write `rankmaster_db.json.tmp`, flush, replace `rankmaster_db.json`.
-- Autosave every **20** votes, plus manual save, plus Esc, plus before rename.
+- **Save on every choice** (vote or skip), atomically, before the next pair is requested. Not batched every N pairs. `Ctrl+S` is a manual extra save. `Esc` does not write (nothing new to write). Save also before rename.
 - `μ − 3σ` is computed, never stored.
 - Keep writing `impressions` and `lastPlayed` for compatibility. **Do not use `impressions` to pick pairs.**
 
@@ -195,7 +197,7 @@ then σ² += τ²
 
 Skip: no rating change, no `matches++`.
 
-After a shown pair (vote **or** skip): `impressions++` on both ids (compatibility only).
+`impressions++` on both ids only when the user **makes a choice** (vote or skip). Merely displaying a pair, prefetching it, or quitting with `Esc` does **not** increment impressions. The pair on screen at `Esc` is unseen.
 
 `matches++` and `lastPlayed = now` only on vote.
 
@@ -208,9 +210,12 @@ c² = 2β² + σ1² + σ2²
 q  = sqrt(2β² / c²) * exp(−Δμ² / (2c²))
 ```
 
-**`SelectNextPair(records, recentShownIds)`**
+**`SelectNextPair(records, recentShownIds, reservedIds)`**
 
-`recentShownIds`: last ~30 **shown** ids (not merely queued). If applying it would leave fewer than 2 candidates, ignore it.
+`recentShownIds`: last ~30 ids that received a **choice** (vote or skip), not merely displayed or queued.  
+`reservedIds`: current pair + warm/queued pairs — never pick these.
+
+If applying recent would leave fewer than 2 candidates, ignore **recent** only. Still honor `reservedIds`.
 
 1. `unplaced` = eligible, `matches < 3`, not recent.
 2. `placed` = eligible, `matches >= 3`, not recent.
@@ -225,7 +230,7 @@ q  = sqrt(2β² / c²) * exp(−Δμ² / (2c²))
 
 Do **not** sample 50 random files. Sorting 20k records is fine.
 
-Prefetch: the Shell may ask for the next pair before the current vote. That pair is allowed to be one vote stale. Do not increment `impressions` until that pair is **shown**.
+Prefetch: the Shell may ask for the next pair before the current vote. That pair is allowed to be one vote stale. Do not increment `impressions` until the user votes or skips that pair.
 
 ### Catalog (`RankMaster2.Catalog`) — disk names and JSON only
 
@@ -271,7 +276,7 @@ Discard, special 1, undo last move, rename-by-conservative-score. Orchestrates P
 
 ### Shell (`RankMaster2.App`)
 
-WPF window, keys, two surfaces, start/resume, overlay. Talks to the four modules. Standard title bar, dark compare surface.
+Borderless fullscreen WPF window, keys, two surfaces, start/resume, overlay. Talks to the four modules. Dark compare surface. `Esc` calls `Shutdown` with no extra catalog write.
 
 ---
 
@@ -314,8 +319,8 @@ dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained
 1. This spec + repo — **done**
 2. Solution + contracts that compile — **done**
 3. Ranking + tests, Catalog + tests — **done**
-4. Pipeline (sequential reader, `PrefetchPairs`, still first-paint, video spinner) — next
-5. Shell + Actions wired to the real Pipeline
+4. Pipeline + compare shell (fullscreen, save-on-choice, `Esc` quits unseen) — **done**
+5. Actions (discard / special 1 / undo / rename) still to wire
 
 Do not start a later phase by opening any other ranking app. This file is the brief.
 

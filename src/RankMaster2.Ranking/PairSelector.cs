@@ -2,12 +2,16 @@ namespace RankMaster2.Ranking;
 
 public sealed class PairSelector : IPairSelector
 {
-    public Pair? SelectNextPair(IReadOnlyList<MediaRecord> records, IReadOnlySet<MediaId> recentShownIds)
+    public Pair? SelectNextPair(
+        IReadOnlyList<MediaRecord> records,
+        IReadOnlySet<MediaId> recentShownIds,
+        IReadOnlySet<MediaId>? reservedIds = null)
     {
         if (records.Count < 2)
             return null;
 
-        var eligible = records.ToList();
+        var reserved = reservedIds ?? (IReadOnlySet<MediaId>)new HashSet<MediaId>();
+        var eligible = records.Where(r => !reserved.Contains(r.Id)).ToList();
         var available = WithoutRecent(eligible, recentShownIds);
         if (available.Count < 2)
             available = eligible;

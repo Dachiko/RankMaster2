@@ -4,16 +4,69 @@
         Title="Rank Master 2"
         Background="#000000"
         Foreground="#EEEEEE"
-        Width="1100"
-        Height="720"
-        MinWidth="800"
-        MinHeight="500">
-    <Grid Margin="32">
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560">
-            <TextBlock FontSize="28" FontWeight="SemiBold" Text="Rank Master 2" Margin="0,0,0,12"/>
-            <TextBlock TextWrapping="Wrap" Opacity="0.75" Margin="0,0,0,24"
-                       Text="Compare two files in a folder. Rankings are stored in rankmaster_db.json next to the media. The compare loop is not wired yet — see SPEC.md."/>
-            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Opacity="0.6"/>
-        </StackPanel>
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowState="Maximized"
+        KeyDown="OnKeyDown">
+    <Grid>
+        <Grid x:Name="StartPanel" Background="#000000">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="640">
+                <TextBlock FontSize="36" FontWeight="SemiBold" Text="Rank Master 2" Margin="0,0,0,16"/>
+                <TextBlock TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,28" FontSize="16"
+                           Text="Pick a folder. Two files at a time. Arrow keys choose the better one. Esc quits; the pair on screen is not recorded."/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                    <Button Content="Open folder  [O]" Padding="18,10" Margin="0,0,12,0" Click="OnOpenFolder" Cursor="Hand"/>
+                    <Button x:Name="ResumeButton" Content="Resume" Padding="18,10" Click="OnResume" Cursor="Hand" Visibility="Collapsed"/>
+                </StackPanel>
+                <TextBlock x:Name="StartError" TextWrapping="Wrap" Foreground="#FF8888" Margin="0,0,0,12"/>
+                <TextBlock Opacity="0.45" FontSize="13" LineHeight="20"
+                           Text="← / → vote    ↓ or S skip    Esc quit"/>
+            </StackPanel>
+        </Grid>
+
+        <Grid x:Name="RankPanel" Visibility="Collapsed" Background="#000000" SizeChanged="OnRankSizeChanged">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Grid x:Name="LeftPane" Grid.Column="0" Background="#000000" MouseLeftButtonDown="OnLeftClick" Cursor="Hand">
+                <Image x:Name="LeftImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <MediaElement x:Name="LeftVideo" Stretch="Uniform" Volume="0" IsMuted="True"
+                              LoadedBehavior="Manual" UnloadedBehavior="Manual"
+                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
+                <TextBlock x:Name="LeftSpinner" Text="…" FontSize="48" Opacity="0.35"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <TextBlock x:Name="LeftName" Margin="16,0,16,20" VerticalAlignment="Bottom"
+                           HorizontalAlignment="Center" FontSize="14" Opacity="0.8"
+                           TextWrapping="Wrap" TextAlignment="Center"/>
+            </Grid>
+
+            <Grid x:Name="RightPane" Grid.Column="1" Background="#000000" MouseLeftButtonDown="OnRightClick" Cursor="Hand">
+                <Image x:Name="RightImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <MediaElement x:Name="RightVideo" Stretch="Uniform" Volume="0" IsMuted="True"
+                              LoadedBehavior="Manual" UnloadedBehavior="Manual"
+                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
+                <TextBlock x:Name="RightSpinner" Text="…" FontSize="48" Opacity="0.35"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <TextBlock x:Name="RightName" Margin="16,0,16,20" VerticalAlignment="Bottom"
+                           HorizontalAlignment="Center" FontSize="14" Opacity="0.8"
+                           TextWrapping="Wrap" TextAlignment="Center"/>
+            </Grid>
+
+            <Border Grid.Column="0" Grid.ColumnSpan="2" Width="56" Height="56"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="#CC000000" BorderBrush="#555555" BorderThickness="2"
+                    CornerRadius="28" IsHitTestVisible="False">
+                <TextBlock Text="VS" FontWeight="Bold" FontSize="16"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+
+            <StackPanel Grid.Column="0" Margin="16,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
+                        IsHitTestVisible="False">
+                <TextBlock x:Name="OverlayFolder" FontWeight="SemiBold" FontSize="14"/>
+                <TextBlock x:Name="OverlayStats" Opacity="0.7" FontSize="13" Margin="0,4,0,0"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>

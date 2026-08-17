@@ -7,7 +7,10 @@ public interface IRatingEngine
 
 public interface IPairSelector
 {
-    Pair? SelectNextPair(IReadOnlyList<MediaRecord> records, IReadOnlySet<MediaId> recentShownIds);
+    Pair? SelectNextPair(
+        IReadOnlyList<MediaRecord> records,
+        IReadOnlySet<MediaId> recentShownIds,
+        IReadOnlySet<MediaId>? reservedIds = null);
 }
 
 public interface ICatalog

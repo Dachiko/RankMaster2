@@ -6,14 +6,15 @@ This is a remake. Behavior is defined in [SPEC.md](SPEC.md). If the code disagre
 
 ## Status
 
-Spec is the source of truth. Solution compiles. Ranking and Catalog have tests. Pipeline and the compare window are stubs (next).
+Spec is the source of truth. Compare loop runs: fullscreen, save on each choice, Esc quits without touching the pair on screen. Discard / special / rename are not wired yet.
 
 | Piece | State |
 |---|---|
 | SPEC.md / this README | Living docs — update when behavior changes |
 | Ranking (TrueSkill + pair picker) | Implemented + tests |
 | Catalog (scan, v1 JSON, media policy) | Implemented + tests |
-| Pipeline / Actions / compare UI | Stubbed |
+| Pipeline / compare UI | Fullscreen compare, sequential prefetch (`PrefetchPairs = 2`), save on each vote/skip |
+| Actions (discard / special / rename) | Stubbed |
 
 `PrefetchPairs` defaults to **2**. Change `MediaPipeline.DefaultPrefetchPairs` (the one knob).
 
@@ -48,7 +49,7 @@ Opens the same `rankmaster_db.json` as Rank Master 1 (`version: 1`). You do not 
 | `O` | Open folder |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` | Undo last move |
-| `Esc` | Save and leave the compare screen |
+| `Esc` | Quit immediately (current pair is not saved as seen) |
 
 ## Docs
 
