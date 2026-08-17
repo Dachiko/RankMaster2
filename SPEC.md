@@ -271,7 +271,7 @@ Release(id)                 // drop decode + file lock
 CancelWarmContaining(id)    // discard any queued pair that includes id
 ```
 
-When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: spinner). `MediaFailed` drops that id only for a real open failure — ignore `MediaFailed` from `Stop`/`Close`/`Source = null` or it will discard the whole video library. Play starts on `MediaOpened`, not immediately after setting `Source`.
+When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: spinner). `MediaFailed` drops that id only when the failing `Source` still matches the path this pane was asked to open. `Stop`/`Close` events are posted later on the dispatcher — do not set the next `Source` on the same turn as `Close()`, and ignore `MediaEnded` until `MediaOpened` for that generation. Otherwise teardown `Drop`s the next pair and Unranked falls with no vote.
 
 ### Actions (`RankMaster2.Actions`)
 

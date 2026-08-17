@@ -24,8 +24,17 @@ public partial class MainWindow : Window
     private bool _renaming;
     private bool _suppressMediaFailed;
     private bool _inShowCurrent;
+    private readonly VideoSlot _leftSlot = new();
+    private readonly VideoSlot _rightSlot = new();
     private Storyboard? _selectCue;
     private DispatcherTimer? _toastTimer;
+
+    private sealed class VideoSlot
+    {
+        public int Generation;
+        public bool Opened;
+        public string? ExpectedPath;
+    }
 
     public MainWindow()
     {
@@ -187,8 +196,10 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _suppressMediaFailed = false;
             _inShowCurrent = false;
+            // WPF posts MediaFailed at DispatcherPriority.Normal after Close().
+            // Clear the suppress flag only after those queued events run.
+            Dispatcher.BeginInvoke(() => { _suppressMediaFailed = false; }, DispatcherPriority.Background);
         }
     }
 
@@ -228,16 +239,19 @@ public partial class MainWindow : Window
 
     private void OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
     {
-        if (_suppressMediaFailed || _inShowCurrent)
+        if (_suppressMediaFailed || _inShowCurrent || _exiting)
             return;
-        if (sender is not MediaElement el || el.Source is null)
+        if (RankPanel.Visibility != Visibility.Visible)
             return;
-        if (_session?.Current is not { } pair)
+        if (sender is not MediaElement el)
             return;
-        if (sender == LeftVideo)
-            OnFrameFailed(pair.Left);
-        else if (sender == RightVideo)
-            OnFrameFailed(pair.Right);
+        var slot = SlotOf(el);
+        if (slot.ExpectedPath is null || el.Source is null)
+            return;
+        if (!SameVideo(el, slot.ExpectedPath))
+            return;
+        var id = new MediaId(Path.GetFileName(slot.ExpectedPath));
+        OnFrameFailed(id);
     }
 
     private void ApplyFrame(
@@ -248,12 +262,24 @@ public partial class MainWindow : Window
     {
         if (frame.Kind == MediaKind.Video)
         {
-            if (video.Source?.LocalPath == frame.VideoPath)
+            var slot = SlotOf(video);
+            if (slot.Opened && SameVideo(video, frame.VideoPath))
                 return;
             StopVideo(video);
             if (frame.VideoPath is null)
                 return;
-            video.Source = new Uri(frame.VideoPath);
+            var gen = slot.Generation;
+            var path = frame.VideoPath;
+            slot.ExpectedPath = path;
+            // Assign Source after Normal-priority MediaFailed from Close() has run.
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (slot.Generation != gen || slot.ExpectedPath != path)
+                    return;
+                if (_session?.Current is not { } pair || !pair.Contains(new MediaId(Path.GetFileName(path))))
+                    return;
+                video.Source = new Uri(path);
+            }, DispatcherPriority.Background);
             return;
         }
 
@@ -262,8 +288,29 @@ public partial class MainWindow : Window
         spinner.Visibility = Visibility.Collapsed;
     }
 
+    private VideoSlot SlotOf(MediaElement video) =>
+        video == LeftVideo ? _leftSlot : _rightSlot;
+
+    private static bool SameVideo(MediaElement video, string? path)
+    {
+        if (path is null || video.Source is null)
+            return false;
+        try
+        {
+            return string.Equals(video.Source.LocalPath, path, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     private void StopVideo(MediaElement video)
     {
+        var slot = SlotOf(video);
+        slot.Generation++;
+        slot.Opened = false;
+        slot.ExpectedPath = null;
         var prior = _suppressMediaFailed;
         _suppressMediaFailed = true;
         try
@@ -280,29 +327,34 @@ public partial class MainWindow : Window
 
     private void OnVideoEnded(object sender, RoutedEventArgs e)
     {
-        if (RankPanel.Visibility != Visibility.Visible)
+        if (RankPanel.Visibility != Visibility.Visible || _exiting)
             return;
-        if (sender is MediaElement el && el.Source is not null)
-        {
-            el.Position = TimeSpan.Zero;
-            el.Play();
-        }
+        if (sender is not MediaElement el)
+            return;
+        var slot = SlotOf(el);
+        if (!slot.Opened || !SameVideo(el, slot.ExpectedPath))
+            return;
+        el.Position = TimeSpan.Zero;
+        el.Play();
     }
 
     private void OnVideoOpened(object sender, RoutedEventArgs e)
     {
-        if (RankPanel.Visibility != Visibility.Visible)
+        if (RankPanel.Visibility != Visibility.Visible || _exiting)
             return;
+        if (sender is not MediaElement el)
+            return;
+        var slot = SlotOf(el);
+        if (!SameVideo(el, slot.ExpectedPath))
+            return;
+        slot.Opened = true;
         if (sender == LeftVideo)
             LeftSpinner.Visibility = Visibility.Collapsed;
         if (sender == RightVideo)
             RightSpinner.Visibility = Visibility.Collapsed;
-        if (sender is MediaElement el && el.Source is not null)
-        {
-            el.Volume = 0;
-            el.IsMuted = true;
-            el.Play();
-        }
+        el.Volume = 0;
+        el.IsMuted = true;
+        el.Play();
     }
 
     private void OnLeftClick(object sender, MouseButtonEventArgs e) => _ = ChooseAsync(left: true);
