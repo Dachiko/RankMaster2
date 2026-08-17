@@ -29,8 +29,9 @@ public sealed class RankingSession
     public Pair? Current { get; private set; }
     public int SessionVotes { get; private set; }
     public IReadOnlyList<MediaRecord> Records => _records;
+    public IReadOnlyList<MediaRecord> Rankable => Eligible();
     public IEnumerable<Pair> WarmPairs => _warm;
-    public int UnrankedCount => _records.Count(r => r.Matches == 0);
+    public int UnrankedCount => Eligible().Count(r => r.Matches == 0);
     public string FolderName => Path.GetFileName(Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
     public bool Start()
@@ -50,11 +51,20 @@ public sealed class RankingSession
     {
         if (Current is null)
             return;
-        Replace(RecordUpdates.ApplySkip(Find(Current.Value.Left)));
-        Replace(RecordUpdates.ApplySkip(Find(Current.Value.Right)));
-        Remember(Current.Value);
-        _catalog.Save(Folder, _records);
-        Advance();
+        var rollback = Snapshot();
+        try
+        {
+            Replace(RecordUpdates.ApplySkip(Find(Current.Value.Left)));
+            Replace(RecordUpdates.ApplySkip(Find(Current.Value.Right)));
+            Remember(Current.Value);
+            _catalog.Save(Folder, _records);
+            Advance();
+        }
+        catch
+        {
+            RestoreSnapshot(rollback);
+            throw;
+        }
     }
 
     public void Save() => _catalog.Save(Folder, _records);
@@ -138,18 +148,33 @@ public sealed class RankingSession
         if (Current is null)
             return;
 
-        var left = Find(Current.Value.Left);
-        var right = Find(Current.Value.Right);
-        var winner = leftWins ? left : right;
-        var loser = leftWins ? right : left;
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var (w, l) = RecordUpdates.ApplyVote(_engine, winner, loser, now);
-        Replace(w);
-        Replace(l);
-        Remember(Current.Value);
-        SessionVotes++;
-        _catalog.Save(Folder, _records);
-        Advance();
+        var rollback = Snapshot();
+        try
+        {
+            var left = Find(Current.Value.Left);
+            var right = Find(Current.Value.Right);
+            var winner = leftWins ? left : right;
+            var loser = leftWins ? right : left;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var (w, l) = RecordUpdates.ApplyVote(_engine, winner, loser, now);
+            Replace(w);
+            Replace(l);
+            Remember(Current.Value);
+            SessionVotes++;
+            _catalog.Save(Folder, _records);
+            Advance();
+        }
+        catch
+        {
+            RestoreSnapshot(rollback);
+            throw;
+        }
+    }
+
+    private IReadOnlyList<MediaRecord> Eligible()
+    {
+        var policy = MediaExtensions.RankPolicy(_records.Select(r => r.Kind));
+        return _records.Where(r => r.Kind == policy).ToList();
     }
 
     private void Advance()
@@ -183,7 +208,7 @@ public sealed class RankingSession
             reserved.Add(p.Right);
         }
 
-        return _selector.SelectNextPair(_records, _recent, reserved);
+        return _selector.SelectNextPair(Eligible(), _recent, reserved);
     }
 
     private void Remember(Pair pair)
@@ -194,14 +219,56 @@ public sealed class RankingSession
 
     private void RememberId(MediaId id)
     {
-        if (_recent.Add(id))
-            _recentOrder.Enqueue(id);
+        if (_recent.Contains(id))
+        {
+            var kept = _recentOrder.Where(x => x != id).ToList();
+            _recentOrder.Clear();
+            foreach (var item in kept)
+                _recentOrder.Enqueue(item);
+        }
+
+        _recent.Add(id);
+        _recentOrder.Enqueue(id);
         while (_recentOrder.Count > RankingConstants.RecentShownLimit)
         {
             var old = _recentOrder.Dequeue();
-            _recent.Remove(old);
+            if (!_recentOrder.Contains(old))
+                _recent.Remove(old);
         }
     }
+
+    private SessionSnap Snapshot() => new(
+        _records.ToList(),
+        Current,
+        SessionVotes,
+        _warm.ToList(),
+        _recent.ToHashSet(),
+        _recentOrder.ToList());
+
+    private void RestoreSnapshot(SessionSnap snap)
+    {
+        _records.Clear();
+        _records.AddRange(snap.Records);
+        Current = snap.Current;
+        SessionVotes = snap.SessionVotes;
+        _warm.Clear();
+        foreach (var p in snap.Warm)
+            _warm.Enqueue(p);
+        _recent.Clear();
+        foreach (var id in snap.Recent)
+            _recent.Add(id);
+        _recentOrder.Clear();
+        foreach (var id in snap.RecentOrder)
+            _recentOrder.Enqueue(id);
+    }
+
+    private readonly record struct SessionSnap(
+        List<MediaRecord> Records,
+        Pair? Current,
+        int SessionVotes,
+        List<Pair> Warm,
+        HashSet<MediaId> Recent,
+        List<MediaId> RecentOrder);
 
     private void Replace(MediaRecord record)
     {

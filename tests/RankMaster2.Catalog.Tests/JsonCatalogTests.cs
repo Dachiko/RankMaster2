@@ -72,15 +72,45 @@ public class JsonCatalogTests
     }
 
     [Fact]
-    public void Scan_MixedFolder_KeepsOnlyStills()
+    public void Scan_MixedFolder_ReturnsAllFiles_PolicyIsStills()
     {
         var dir = CreateTempFolder();
         File.WriteAllBytes(Path.Combine(dir, "pic.jpg"), [0]);
         File.WriteAllBytes(Path.Combine(dir, "clip.mp4"), [0]);
 
         var records = new JsonCatalog().Scan(dir);
-        Assert.Single(records);
-        Assert.Equal("pic.jpg", records[0].Filename);
+        Assert.Equal(2, records.Count);
+        Assert.Equal(MediaKind.Still, JsonCatalog.Classify(records.Select(r => r.Kind)));
+    }
+
+    [Fact]
+    public void Save_MixedFolder_KeepsVideoRows()
+    {
+        var dir = CreateTempFolder();
+        File.WriteAllBytes(Path.Combine(dir, "pic.jpg"), [0]);
+        File.WriteAllBytes(Path.Combine(dir, "clip.mp4"), [0]);
+        var catalog = new JsonCatalog();
+        catalog.Save(dir, catalog.Scan(dir));
+
+        var onlyStill = catalog.Scan(dir).Where(r => r.Kind == MediaKind.Still).ToList();
+        onlyStill[0] = onlyStill[0] with { Matches = 3, Rating = new Rating(30, 4) };
+        catalog.Save(dir, onlyStill);
+
+        var again = catalog.Scan(dir);
+        Assert.Contains(again, r => r.Filename == "clip.mp4");
+        Assert.Equal(3, again.Single(r => r.Filename == "pic.jpg").Matches);
+    }
+
+    [Fact]
+    public void Scan_CorruptJson_DoesNotOverwrite()
+    {
+        var dir = CreateTempFolder();
+        File.WriteAllBytes(Path.Combine(dir, "a.jpg"), [0]);
+        var db = Path.Combine(dir, JsonCatalog.FileName);
+        File.WriteAllText(db, "{not-json");
+        var before = File.ReadAllText(db);
+        Assert.Throws<InvalidDataException>(() => new JsonCatalog().Scan(dir));
+        Assert.Equal(before, File.ReadAllText(db));
     }
 
     [Fact]

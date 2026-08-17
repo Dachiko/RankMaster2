@@ -20,6 +20,8 @@ public partial class MainWindow : Window
     private MediaPipeline _pipeline;
     private RankingSession? _session;
     private bool _busy;
+    private bool _exiting;
+    private Storyboard? _selectCue;
     private DispatcherTimer? _toastTimer;
 
     public MainWindow()
@@ -49,11 +51,7 @@ public partial class MainWindow : Window
     {
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
-        WindowState = WindowState.Normal;
-        Left = 0;
-        Top = 0;
-        Width = SystemParameters.PrimaryScreenWidth;
-        Height = SystemParameters.PrimaryScreenHeight;
+        WindowState = WindowState.Maximized;
     }
 
     private void RefreshResumeButton()
@@ -109,6 +107,7 @@ public partial class MainWindow : Window
             }
 
             _session = session;
+            _actions.ClearLastMove();
             LastFolderStore.Save(folder);
             StartPanel.Visibility = Visibility.Collapsed;
             RankPanel.Visibility = Visibility.Visible;
@@ -144,7 +143,7 @@ public partial class MainWindow : Window
         OverlayFolder.Text = _session.FolderName;
         OverlayUnranked.Text = _session.UnrankedCount.ToString("N0");
         OverlaySession.Text = _session.SessionVotes.ToString("N0");
-        var progress = LibraryProgress.Of(_session.Records);
+        var progress = LibraryProgress.Of(_session.Rankable);
         OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
         ConfidenceFill.Width = 232 * progress;
 
@@ -179,11 +178,22 @@ public partial class MainWindow : Window
 
     private void OnFrameFailed(MediaId id)
     {
-        if (_session?.Current is { } pair && pair.Contains(id) && !_busy)
-        {
-            _session.AbandonCurrent();
-            ShowCurrent();
-        }
+        if (_session is null || _busy)
+            return;
+        if (_session.Current is not { } pair || !pair.Contains(id))
+            return;
+        _session.Drop(id);
+        ShowCurrent();
+    }
+
+    private void OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
+    {
+        if (_session?.Current is not { } pair)
+            return;
+        if (sender == LeftVideo)
+            OnFrameFailed(pair.Left);
+        else if (sender == RightVideo)
+            OnFrameFailed(pair.Right);
     }
 
     private static void ApplyFrame(
@@ -210,6 +220,7 @@ public partial class MainWindow : Window
     private static void StopVideo(MediaElement video)
     {
         try { video.Stop(); } catch { /* not opened */ }
+        try { video.Close(); } catch { /* not opened */ }
         video.Source = null;
     }
 
@@ -247,7 +258,7 @@ public partial class MainWindow : Window
     private void OnSpecialLeft(object sender, RoutedEventArgs e) => MoveCurrent(left: true, special: true);
     private void OnSpecialRight(object sender, RoutedEventArgs e) => MoveCurrent(left: false, special: true);
 
-    private void OnRename(object sender, RoutedEventArgs e)
+    private async void OnRename(object sender, RoutedEventArgs e)
     {
         var folder = LastFolderStore.Load();
         if (folder is null)
@@ -262,15 +273,21 @@ public partial class MainWindow : Window
         if (confirm != MessageBoxResult.OK)
             return;
 
+        RenamePanel.Visibility = Visibility.Visible;
+        RenameStatus.Text = "Backing up and renaming…";
         try
         {
-            _actions.RenameByRank();
+            await Task.Run(() => _actions.RenameByRank());
             SetStartError("");
             ShowToast("Renamed files by rank.");
         }
         catch (Exception ex)
         {
-            SetStartError("Rename failed (folder restored from backup): " + ex.Message);
+            SetStartError(ex.Message);
+        }
+        finally
+        {
+            RenamePanel.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -291,6 +308,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             ShowToast(ex.Message);
+            ShowCurrent();
         }
         finally
         {
@@ -356,6 +374,8 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             e.Handled = true;
+            _exiting = true;
+            StopSelectCue();
             Application.Current.Shutdown();
             return;
         }
@@ -424,15 +444,21 @@ public partial class MainWindow : Window
 
     private async Task ChooseAsync(bool left)
     {
-        if (_busy || _session is null)
+        if (_busy || _session is null || _exiting)
             return;
         _busy = true;
         try
         {
             await PlaySelectCueAsync(left);
+            if (_exiting)
+                return;
             if (left) _session.VoteLeft();
             else _session.VoteRight();
             ShowCurrent();
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
         }
         finally
         {
@@ -443,9 +469,8 @@ public partial class MainWindow : Window
 
     private Task PlaySelectCueAsync(bool left)
     {
+        StopSelectCue();
         var winScale = left ? LeftScale : RightScale;
-        var loseScale = left ? RightScale : LeftScale;
-        var losePane = left ? RightPane : LeftPane;
         var flash = left ? LeftFlash : RightFlash;
         var ring = left ? LeftRing : RightRing;
         var done = new TaskCompletionSource();
@@ -454,19 +479,17 @@ public partial class MainWindow : Window
         var easeIn = new QuadraticEase { EasingMode = EasingMode.EaseIn };
         var story = new Storyboard();
 
-        story.Children.Add(Anim(flash, UIElement.OpacityProperty, 0, 0.28, 50, easeOut));
-        story.Children.Add(Anim(flash, UIElement.OpacityProperty, 0.28, 0, 160, easeIn, beginMs: 50));
-        story.Children.Add(Anim(ring, UIElement.OpacityProperty, 0, 1, 70, easeOut));
-        story.Children.Add(Anim(ring, UIElement.OpacityProperty, 1, 0, 150, easeIn, beginMs: 70));
-        story.Children.Add(Anim(winScale, ScaleTransform.ScaleXProperty, 1, 1.035, 90, easeOut));
-        story.Children.Add(Anim(winScale, ScaleTransform.ScaleYProperty, 1, 1.035, 90, easeOut));
-        story.Children.Add(Anim(winScale, ScaleTransform.ScaleXProperty, 1.035, 1, 130, easeIn, beginMs: 90));
-        story.Children.Add(Anim(winScale, ScaleTransform.ScaleYProperty, 1.035, 1, 130, easeIn, beginMs: 90));
-        story.Children.Add(Anim(loseScale, ScaleTransform.ScaleXProperty, 1, 0.97, 180, easeOut));
-        story.Children.Add(Anim(loseScale, ScaleTransform.ScaleYProperty, 1, 0.97, 180, easeOut));
-        story.Children.Add(Anim(losePane, UIElement.OpacityProperty, 1, 0.35, 180, easeOut));
+        story.Children.Add(Anim(flash, UIElement.OpacityProperty, 0, 0.22, 35, easeOut));
+        story.Children.Add(Anim(flash, UIElement.OpacityProperty, 0.22, 0, 65, easeIn, beginMs: 35));
+        story.Children.Add(Anim(ring, UIElement.OpacityProperty, 0, 1, 40, easeOut));
+        story.Children.Add(Anim(ring, UIElement.OpacityProperty, 1, 0, 60, easeIn, beginMs: 40));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleXProperty, 1, 1.03, 45, easeOut));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleYProperty, 1, 1.03, 45, easeOut));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleXProperty, 1.03, 1, 55, easeIn, beginMs: 45));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleYProperty, 1.03, 1, 55, easeIn, beginMs: 45));
 
         story.Completed += (_, _) => done.TrySetResult();
+        _selectCue = story;
         story.Begin();
         return done.Task;
     }
@@ -483,11 +506,22 @@ public partial class MainWindow : Window
         var anim = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(ms))
         {
             EasingFunction = ease,
-            BeginTime = TimeSpan.FromMilliseconds(beginMs)
+            BeginTime = TimeSpan.FromMilliseconds(beginMs),
+            FillBehavior = FillBehavior.Stop
         };
         Storyboard.SetTarget(anim, target);
         Storyboard.SetTargetProperty(anim, new PropertyPath(property));
         return anim;
+    }
+
+    private void StopSelectCue()
+    {
+        if (_selectCue is null)
+            return;
+        _selectCue.Stop();
+        _selectCue.Remove();
+        _selectCue = null;
+        ResetPaneTransforms();
     }
 
     private void ResetPaneTransforms()

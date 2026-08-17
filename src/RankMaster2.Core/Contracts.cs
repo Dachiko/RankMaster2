@@ -28,6 +28,7 @@ public interface IMediaPipeline
     void Show(MediaId left, MediaId right);
     void Enqueue(Pair pair);
     void Release(MediaId id);
+    void ReleaseAll();
     void CancelWarmContaining(MediaId id);
 }
 

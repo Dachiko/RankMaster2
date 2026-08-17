@@ -55,7 +55,9 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
     {
         lock (_gate)
         {
-            _visible = new Pair(left, right);
+            var pair = new Pair(left, right);
+            _visible = pair;
+            _warm.RemoveAll(p => p.Equals(pair));
             RebuildWanted();
             EvictUnwanted();
         }
@@ -88,6 +90,39 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
         {
             _cache.Remove(id);
             _wanted.Remove(id);
+        }
+
+        if (_folder is null)
+            return;
+        var path = Path.Combine(_folder, id.Filename);
+        try
+        {
+            Catalog.FileOps.WaitUntilUnlocked(path);
+        }
+        catch (IOException)
+        {
+            // move retry will try again
+        }
+    }
+
+    public void ReleaseAll()
+    {
+        List<MediaId> ids;
+        lock (_gate)
+        {
+            ids = _wanted.Concat(_cache.Keys).Distinct().ToList();
+            _cache.Clear();
+            _wanted.Clear();
+            _warm.Clear();
+            _visible = null;
+        }
+
+        if (_folder is null)
+            return;
+        foreach (var id in ids)
+        {
+            try { Catalog.FileOps.WaitUntilUnlocked(Path.Combine(_folder, id.Filename)); }
+            catch (IOException) { }
         }
     }
 

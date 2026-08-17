@@ -77,18 +77,17 @@
                 <Image x:Name="LeftImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <MediaElement x:Name="LeftVideo" Stretch="Uniform" Volume="0" IsMuted="True"
                               LoadedBehavior="Manual" UnloadedBehavior="Manual"
-                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
+                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"
+                              MediaFailed="OnMediaFailed"/>
                 <Border x:Name="LeftFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
                 <Border x:Name="LeftRing" BorderBrush="#34D399" BorderThickness="5" Opacity="0" IsHitTestVisible="False"/>
                 <TextBlock x:Name="LeftSpinner" FontFamily="{StaticResource Icons}" Text="&#xE895;"
                            FontSize="40" Foreground="#6B7280"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="16,0,16,20"
-                        Background="#80000000" CornerRadius="4" Padding="8,4"
-                        IsHitTestVisible="False">
-                    <TextBlock x:Name="LeftName" FontSize="12" Foreground="#D4D4D8"
-                               TextWrapping="Wrap" TextAlignment="Center"/>
-                </Border>
+                <TextBlock x:Name="LeftName" Margin="280,18,16,0" VerticalAlignment="Top"
+                           HorizontalAlignment="Left" FontSize="11" Foreground="#66FFFFFF"
+                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                           IsHitTestVisible="False"/>
             </Grid>
 
             <Border Grid.Column="0" Width="1" HorizontalAlignment="Right" Background="#111827"
@@ -103,18 +102,17 @@
                 <Image x:Name="RightImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <MediaElement x:Name="RightVideo" Stretch="Uniform" Volume="0" IsMuted="True"
                               LoadedBehavior="Manual" UnloadedBehavior="Manual"
-                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
+                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"
+                              MediaFailed="OnMediaFailed"/>
                 <Border x:Name="RightFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
                 <Border x:Name="RightRing" BorderBrush="#34D399" BorderThickness="5" Opacity="0" IsHitTestVisible="False"/>
                 <TextBlock x:Name="RightSpinner" FontFamily="{StaticResource Icons}" Text="&#xE895;"
                            FontSize="40" Foreground="#6B7280"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="16,0,16,20"
-                        Background="#80000000" CornerRadius="4" Padding="8,4"
-                        IsHitTestVisible="False">
-                    <TextBlock x:Name="RightName" FontSize="12" Foreground="#D4D4D8"
-                               TextWrapping="Wrap" TextAlignment="Center"/>
-                </Border>
+                <TextBlock x:Name="RightName" Margin="16,18,64,0" VerticalAlignment="Top"
+                           HorizontalAlignment="Right" FontSize="11" Foreground="#66FFFFFF"
+                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                           IsHitTestVisible="False"/>
             </Grid>
 
             <!-- Action bar: [1][4]  ……  [5][2]  top center, same as RankMaster -->
@@ -154,18 +152,6 @@
                     </StackPanel>
                 </StackPanel>
             </StackPanel>
-
-            <!-- VS badge: 56×56, black/80, gray-700 ring, font-black -->
-            <Border Grid.Column="0" Grid.ColumnSpan="2" Width="56" Height="56"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Background="#CC000000" BorderBrush="#374151" BorderThickness="2"
-                    CornerRadius="28" IsHitTestVisible="False">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.8"/>
-                </Border.Effect>
-                <TextBlock Text="VS" FontWeight="Black" FontSize="20" Foreground="White"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
 
             <!-- Left info card: top-4 left-4, w-64 -->
             <Border Grid.Column="0" Width="256" HorizontalAlignment="Left" VerticalAlignment="Top"
@@ -262,6 +248,13 @@
                 </Border>
             </StackPanel>
 
+        </Grid>
+
+        <Grid x:Name="RenamePanel" Visibility="Collapsed" Background="#E0000000">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock Text="Renaming" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="RenameStatus" Margin="0,16,0,0" Opacity="0.7" HorizontalAlignment="Center"/>
+            </StackPanel>
         </Grid>
 
         <Border x:Name="Toast" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,32"

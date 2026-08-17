@@ -36,6 +36,19 @@ public class RankingSessionTests
     }
 
     [Fact]
+    public void MixedLibrary_OnlyPairsStills()
+    {
+        var catalog = new MemoryCatalog(
+            Rec("a.jpg"), Rec("b.jpg"), Rec("c.mp4"), Rec("d.mp4"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), 1);
+        Assert.True(session.Start());
+        Assert.NotNull(session.Current);
+        Assert.EndsWith(".jpg", session.Current!.Value.Left.Filename);
+        Assert.EndsWith(".jpg", session.Current.Value.Right.Filename);
+        Assert.Equal(2, session.Rankable.Count);
+    }
+
+    [Fact]
     public void Restore_PutsFileBack()
     {
         var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"));
@@ -48,7 +61,7 @@ public class RankingSessionTests
     }
 
     private static MediaRecord Rec(string name) =>
-        new(new MediaId(name), MediaKind.Still, RankingConstants.DefaultRating, 0, 0, 0);
+        new(new MediaId(name), MediaExtensions.KindOf(name) ?? MediaKind.Still, RankingConstants.DefaultRating, 0, 0, 0);
 
     private sealed class MemoryCatalog : ICatalog
     {

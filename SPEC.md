@@ -71,10 +71,10 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 
 - The window is borderless and fills the monitor, **including over the taskbar**.
 - Two panes, each exactly half the screen. Each still or video is scaled with **uniform** aspect (`Stretch.Uniform`) so it is as large as possible on its half without cropping or stretching. Black letterbox if the aspect does not match the pane.
-- Visual chrome matches RankMaster 1: zinc→black start screen, blue→emerald title, left info card (256px, top/left 16), help circle top-right, VS badge 56px gray-700 ring, discard/star buttons top-center with `[1][4]` / `[5][2]`. No “Professional Grade” tier names — the confidence bar is a quiet percent only.
-- **Filename** on each pane (Rank Master 2 addition), small caption at the bottom.
+- Visual chrome matches RankMaster 1: zinc→black start screen, blue→emerald title, left info card (256px, top/left 16), help circle top-right, discard/star buttons top-center with `[1][4]` / `[5][2]`. No VS badge. No “Professional Grade” tier names — the confidence bar is a quiet percent only.
+- **Filename** dim, top-left of the left pane (after the info card) and top-right of the right pane.
 - Click a pane to vote for it. Keys also work.
-- **Select cue (~220 ms):** winner gets a white flash, an emerald inset ring, and a short scale punch; loser eases down and dims. Then the vote is applied.
+- **Select cue (~100 ms):** winner gets a short white flash, emerald ring, and scale punch. The other pane is not dimmed (that left a leftover tint). Storyboard is stopped/`FillBehavior.Stop` so nothing sticks. Esc during the cue must not vote.
 - Vote applies immediately after the cue. The new pair’s IDs come on screen at once even if pixels are not ready.
 - **Still:** paint the first decodable image as soon as one exists; refine in place if a better decode arrives. No spinner if any pixels can be shown. Baseline JPEG/PNG on a slow disk may have no pixels until the read finishes — that is acceptable.
 - **Video:** spinner until a frame can play, then autoplay, loop, muted, no controls. Two videos may play at once.
@@ -92,7 +92,7 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 | `O` | Open folder |
 | `Ctrl+S` | Save JSON now (redundant if the last action already saved) |
 | `Ctrl+Z` | Undo **last move** only |
-| `Esc` | **Quit immediately.** The pair on screen is treated as unseen: no rating change, no `matches` / `impressions` / `lastPlayed` bump, not added to recents. Prior choices are already on disk. |
+| `Esc` | **Quit immediately.** Cancel any in-flight select cue (do not vote). The pair on screen is unseen. Prior choices are already on disk. |
 
 Ignore keys while a move is in flight.
 
@@ -119,8 +119,9 @@ File: `<folder>/rankmaster_db.json`
 ```
 
 - Identity is the **filename** (the object key and the `filename` field must match).
-- Scan disk, then merge: existing rows kept, missing files dropped from the in-memory session (leave orphan keys out of the next save), new files get default rating.
-- Atomic save: write `rankmaster_db.json.tmp`, flush, replace `rankmaster_db.json`.
+- Scan loads **every** on-disk media file (stills and videos). Ranking eligibility is a filter (mixed folder → stills only). `Save` merges: keep rows for files still on disk even if this session did not rank them; drop only files that vanished.
+- If `rankmaster_db.json` exists and does not parse, **refuse to start** and never overwrite it.
+- Atomic save: write tmp, `Flush(true)`, `File.Replace` (or `Move` if the file is new). If save throws, roll back the in-memory vote.
 - **Save on every choice** (vote or skip), atomically, before the next pair is requested. Not batched every N pairs. `Ctrl+S` is a manual extra save. `Esc` does not write (nothing new to write). Save also before rename.
 - `μ − 3σ` is computed, never stored.
 - Keep writing `impressions` and `lastPlayed` for compatibility. **Do not use `impressions` to pick pairs.**
@@ -255,7 +256,7 @@ That is **pairs ahead of the current pair**. Current + 2 warm pairs = up to 6 it
 
 Most files are a few MB; some are 100–200 MB on USB 2 (~30–40 MB/s). Depth is for the small ones. Large files still queue in single file.
 
-**Stills:** decode to **panel pixel size** (include DPI), long edge capped at 2560. Prefer shrink-on-load (WIC scaled decode) over full-res then scale. Honor EXIF. Paint first available bitmap; optional refine to the cap. Evict the previous pair’s bitmaps on swap (do not wait for GC).
+**Stills:** decode from a disposed `FileStream` (no `Uri` cache). Honor color profile. Fit to **panel physical pixels**, never upscale in the decoder, long edge capped at **4096**. Optional 720px first paint for files > 4 MB, then replace with the full-size frame. Evict previous bitmaps on swap.
 
 **Video:** at most **two live decoders** (the visible pair). Warm video pairs may hold a path or a first-frame still, not four running players. On `Release`, clear `Source` / close the player and do not return until the file can be moved.
 
@@ -270,7 +271,7 @@ Release(id)                 // drop decode + file lock
 CancelWarmContaining(id)    // discard any queued pair that includes id
 ```
 
-When `Show` targets a pair that is already warm, swap it up. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: spinner).
+When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: spinner). `MediaFailed` drops that id like a still decode failure.
 
 ### Actions (`RankMaster2.Actions`)
 
@@ -321,8 +322,9 @@ dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained
 1. This spec + repo — **done**
 2. Solution + contracts that compile — **done**
 3. Ranking + tests, Catalog + tests — **done**
-4. Pipeline + compare shell (fullscreen, save-on-choice, `Esc` quits unseen) — **done**
-5. Actions (discard / special 1 / undo last move / rename by μ − 3σ) — **done**
+4. Pipeline + compare shell — **done**
+5. Actions — **done**
+6. Pre-exe audit fixes (JSON merge, locks, prefetch promote, cue/tint, still quality) — **done**
 
 Do not start a later phase by opening any other ranking app. This file is the brief.
 

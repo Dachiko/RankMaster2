@@ -33,10 +33,19 @@ public sealed class LibraryActions : ILibraryActions
 
     public void MoveToSpecial(MediaId id) => Move(id, FileOps.SpecialFolder);
 
+    public void ClearLastMove() => LastMove = null;
+
     public bool UndoLastMove()
     {
         if (LastMove is not { } move)
             return false;
+
+        var session = _session();
+        if (session is null || !string.Equals(move.Folder, session.Folder, StringComparison.OrdinalIgnoreCase))
+        {
+            LastMove = null;
+            return false;
+        }
 
         var destDir = Path.GetDirectoryName(move.SourcePath);
         if (string.IsNullOrEmpty(destDir))
@@ -67,6 +76,7 @@ public sealed class LibraryActions : ILibraryActions
             throw new InvalidOperationException("Nothing to rename.");
 
         _catalog.Save(folder, records);
+        _pipeline().ReleaseAll();
         var backup = FileOps.BackupLibrary(folder, DateTimeOffset.Now);
         try
         {
@@ -75,10 +85,20 @@ public sealed class LibraryActions : ILibraryActions
             _catalog.Save(folder, remapped);
             _session()?.ReplaceAll(remapped);
         }
-        catch
+        catch (Exception ex)
         {
-            FileOps.RestoreLibrary(folder, backup);
-            throw;
+            try
+            {
+                FileOps.RestoreLibrary(folder, backup);
+            }
+            catch (Exception restoreEx)
+            {
+                throw new IOException(
+                    $"Rename failed and restore did not finish. Backup is at:{Environment.NewLine}{backup}{Environment.NewLine}{restoreEx.Message}",
+                    ex);
+            }
+
+            throw new IOException($"Rename failed. Folder restored from:{Environment.NewLine}{backup}", ex);
         }
     }
 
@@ -88,9 +108,9 @@ public sealed class LibraryActions : ILibraryActions
         if (!session.TryFind(id, out var record))
             throw new InvalidOperationException("Unknown file: " + id.Filename);
 
-        _releaseUi(id);
         _pipeline().Release(id);
         _pipeline().CancelWarmContaining(id);
+        _releaseUi(id);
 
         var destName = FileOps.MoveToSubfolder(session.Folder, id.Filename, subfolder);
         session.Drop(id);

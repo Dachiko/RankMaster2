@@ -79,16 +79,46 @@ public static class FileOps
         if (!Directory.Exists(backup))
             throw new DirectoryNotFoundException(backup);
 
-        foreach (var path in Directory.EnumerateFiles(folder))
+        var backupNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in Directory.GetFiles(backup))
         {
-            var file = Path.GetFileName(path);
-            if (file.StartsWith(BackupPrefix, StringComparison.OrdinalIgnoreCase))
-                continue;
-            File.Delete(path);
+            var name = Path.GetFileName(path);
+            backupNames.Add(name);
+            File.Copy(path, Path.Combine(folder, name), overwrite: true);
         }
 
-        foreach (var path in Directory.EnumerateFiles(backup))
-            File.Copy(path, Path.Combine(folder, Path.GetFileName(path)), overwrite: true);
+        foreach (var path in Directory.GetFiles(folder))
+        {
+            var name = Path.GetFileName(path);
+            if (name.StartsWith(BackupPrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!backupNames.Contains(name))
+                File.Delete(path);
+        }
+    }
+
+    public static void WaitUntilUnlocked(string path, int retries = 40)
+    {
+        if (!File.Exists(path))
+            return;
+
+        IOException? last = null;
+        for (var i = 0; i < retries; i++)
+        {
+            try
+            {
+                using var stream = new FileStream(
+                    path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                return;
+            }
+            catch (IOException ex)
+            {
+                last = ex;
+                Thread.Sleep(50);
+            }
+        }
+
+        throw last ?? new IOException("File still locked: " + path);
     }
 
     /// <summary>

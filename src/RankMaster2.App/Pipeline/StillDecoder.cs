@@ -6,7 +6,7 @@ namespace RankMaster2;
 internal static class StillDecoder
 {
     public const int PreviewLongEdge = 720;
-    public const int MaxLongEdge = 2560;
+    public const int MaxLongEdge = 4096;
     public const long PreviewIfLargerThanBytes = 4L * 1024 * 1024;
 
     public static PreparedFrame Decode(string path, int panelWidth, int panelHeight, bool preview)
@@ -15,32 +15,29 @@ internal static class StillDecoder
         panelWidth = Math.Max(panelWidth, 16);
         panelHeight = Math.Max(panelHeight, 16);
 
-        int srcW;
-        int srcH;
-        var uri = new Uri(path);
-        var decoder = BitmapDecoder.Create(uri, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         var source = decoder.Frames[0];
-        srcW = Math.Max(source.PixelWidth, 1);
-        srcH = Math.Max(source.PixelHeight, 1);
-
+        var srcW = Math.Max(source.PixelWidth, 1);
+        var srcH = Math.Max(source.PixelHeight, 1);
         var (dw, dh) = Fit(srcW, srcH, panelWidth, panelHeight, cap);
 
-        var bmp = new BitmapImage();
-        bmp.BeginInit();
-        bmp.UriSource = uri;
-        bmp.CacheOption = BitmapCacheOption.OnLoad;
-        bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-        if (dw >= dh)
-            bmp.DecodePixelWidth = dw;
-        else
-            bmp.DecodePixelHeight = dh;
-        bmp.EndInit();
-        bmp.Freeze();
+        BitmapSource bitmap = source;
+        if (dw != srcW || dh != srcH)
+        {
+            var scaled = new TransformedBitmap(source, new System.Windows.Media.ScaleTransform(
+                dw / (double)srcW, dh / (double)srcH));
+            scaled.Freeze();
+            bitmap = scaled;
+        }
+
+        if (!bitmap.IsFrozen)
+            bitmap.Freeze();
 
         return new PreparedFrame
         {
             Kind = MediaKind.Still,
-            Still = bmp,
+            Still = bitmap,
             IsPreview = preview
         };
     }
@@ -48,6 +45,9 @@ internal static class StillDecoder
     public static (int Width, int Height) Fit(int srcW, int srcH, int panelW, int panelH, int longEdgeCap)
     {
         var scale = Math.Min(panelW / (double)srcW, panelH / (double)srcH);
+        if (scale > 1)
+            scale = 1;
+
         var longEdge = Math.Max(srcW, srcH) * scale;
         if (longEdge > longEdgeCap)
             scale *= longEdgeCap / longEdge;

@@ -46,8 +46,7 @@ public enum AppScreen
     Start,
     Loading,
     Ranking,
-    Renaming,
-    Saved
+    Renaming
 }
 
 public static class MediaExtensions
@@ -68,5 +67,21 @@ public static class MediaExtensions
         if (Still.Contains(ext)) return MediaKind.Still;
         if (Video.Contains(ext)) return MediaKind.Video;
         return null;
+    }
+
+    /// <summary>Mixed folder → stills only. Videos-only folder → videos.</summary>
+    public static MediaKind RankPolicy(IEnumerable<MediaKind> kinds)
+    {
+        var sawStill = false;
+        var sawVideo = false;
+        foreach (var k in kinds)
+        {
+            if (k == MediaKind.Still) sawStill = true;
+            else sawVideo = true;
+        }
+
+        if (sawVideo && !sawStill)
+            return MediaKind.Video;
+        return MediaKind.Still;
     }
 }

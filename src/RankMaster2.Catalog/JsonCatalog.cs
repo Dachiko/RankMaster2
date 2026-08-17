@@ -16,15 +16,11 @@ public sealed class JsonCatalog : ICatalog
     public IReadOnlyList<MediaRecord> Scan(string folder)
     {
         var onDisk = ListTopLevelMedia(folder);
-        var db = TryLoad(Path.Combine(folder, FileName));
-        var policy = Classify(onDisk.Select(x => x.Kind));
+        var db = LoadRequired(Path.Combine(folder, FileName));
 
         var result = new List<MediaRecord>();
         foreach (var (id, kind) in onDisk)
         {
-            if (policy == MediaKind.Still && kind != MediaKind.Still)
-                continue;
-
             if (db.Images.TryGetValue(id.Filename, out var row))
             {
                 result.Add(new MediaRecord(
@@ -54,29 +50,60 @@ public sealed class JsonCatalog : ICatalog
     {
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, FileName);
-        var tmp = path + ".tmp";
+        var onDisk = ListTopLevelMedia(folder);
+        var existing = File.Exists(path) ? LoadRequired(path) : new RankingDatabaseDto();
+        var session = records.ToDictionary(r => r.Filename, StringComparer.OrdinalIgnoreCase);
+
+        var images = new Dictionary<string, ImageRecordDto>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, kind) in onDisk)
+        {
+            if (session.TryGetValue(id.Filename, out var rec))
+            {
+                images[id.Filename] = ToDto(rec);
+                continue;
+            }
+
+            if (existing.Images.TryGetValue(id.Filename, out var row))
+            {
+                images[id.Filename] = row;
+                continue;
+            }
+
+            images[id.Filename] = ToDto(new MediaRecord(
+                id, kind, RankingConstants.DefaultRating, 0, 0, 0));
+        }
 
         var dto = new RankingDatabaseDto
         {
             Version = 1,
             LastUpdated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Images = records.ToDictionary(
-                r => r.Filename,
-                r => new ImageRecordDto
-                {
-                    Filename = r.Filename,
-                    Rating = new RatingDto { Mu = r.Rating.Mu, Sigma = r.Rating.Sigma },
-                    Matches = r.Matches,
-                    Impressions = r.Impressions,
-                    LastPlayed = r.LastPlayed
-                },
-                StringComparer.OrdinalIgnoreCase)
+            Images = images
         };
 
+        var tmp = path + ".tmp";
         var json = JsonSerializer.Serialize(dto, JsonOptions);
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, path, overwrite: true);
+        using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new StreamWriter(stream))
+        {
+            writer.Write(json);
+            writer.Flush();
+            stream.Flush(true);
+        }
+
+        if (File.Exists(path))
+            File.Replace(tmp, path, destinationBackupFileName: null);
+        else
+            File.Move(tmp, path);
     }
+
+    private static ImageRecordDto ToDto(MediaRecord r) => new()
+    {
+        Filename = r.Filename,
+        Rating = new RatingDto { Mu = r.Rating.Mu, Sigma = r.Rating.Sigma },
+        Matches = r.Matches,
+        Impressions = r.Impressions,
+        LastPlayed = r.LastPlayed
+    };
 
     public IReadOnlyList<MediaRecord> RemapIds(
         IReadOnlyList<MediaRecord> records,
@@ -90,22 +117,10 @@ public sealed class JsonCatalog : ICatalog
         }).ToList();
     }
 
-    public static MediaKind Classify(IEnumerable<MediaKind> kinds)
-    {
-        var sawStill = false;
-        var sawVideo = false;
-        foreach (var k in kinds)
-        {
-            if (k == MediaKind.Still) sawStill = true;
-            else sawVideo = true;
-        }
+    public static MediaKind Classify(IEnumerable<MediaKind> kinds) =>
+        MediaExtensions.RankPolicy(kinds);
 
-        if (sawVideo && !sawStill)
-            return MediaKind.Video;
-        return MediaKind.Still;
-    }
-
-    internal static RankingDatabaseDto TryLoad(string path)
+    internal static RankingDatabaseDto LoadRequired(string path)
     {
         if (!File.Exists(path))
             return new RankingDatabaseDto();
@@ -114,11 +129,14 @@ public sealed class JsonCatalog : ICatalog
         {
             var json = File.ReadAllText(path);
             var dto = JsonSerializer.Deserialize<RankingDatabaseDto>(json, JsonOptions);
-            return dto ?? new RankingDatabaseDto();
+            if (dto is null)
+                throw new InvalidDataException("Ranking file is empty: " + path);
+            return dto;
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            return new RankingDatabaseDto();
+            throw new InvalidDataException(
+                "Ranking file is unreadable and was not overwritten: " + path, ex);
         }
     }
 
