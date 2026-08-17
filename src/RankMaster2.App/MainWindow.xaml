@@ -78,6 +78,8 @@
                 <MediaElement x:Name="LeftVideo" Stretch="Uniform" Volume="0" IsMuted="True"
                               LoadedBehavior="Manual" UnloadedBehavior="Manual"
                               MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
+                <Border x:Name="LeftFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
+                <Border x:Name="LeftRing" BorderBrush="#34D399" BorderThickness="5" Opacity="0" IsHitTestVisible="False"/>
                 <TextBlock x:Name="LeftSpinner" FontFamily="{StaticResource Icons}" Text="&#xE895;"
                            FontSize="40" Foreground="#6B7280"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
@@ -102,6 +104,8 @@
                 <MediaElement x:Name="RightVideo" Stretch="Uniform" Volume="0" IsMuted="True"
                               LoadedBehavior="Manual" UnloadedBehavior="Manual"
                               MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
+                <Border x:Name="RightFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
+                <Border x:Name="RightRing" BorderBrush="#34D399" BorderThickness="5" Opacity="0" IsHitTestVisible="False"/>
                 <TextBlock x:Name="RightSpinner" FontFamily="{StaticResource Icons}" Text="&#xE895;"
                            FontSize="40" Foreground="#6B7280"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>

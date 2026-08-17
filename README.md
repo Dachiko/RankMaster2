@@ -13,7 +13,7 @@ Spec is the source of truth. Compare loop, prefetch, and file actions are wired.
 | SPEC.md / this README | Living docs — update when behavior changes |
 | Ranking (TrueSkill + pair picker) | Implemented + tests |
 | Catalog (scan, v1 JSON, media policy) | Implemented + tests |
-| Pipeline / compare UI | Fullscreen compare (RankMaster chrome), sequential prefetch (`PrefetchPairs = 2`), save on each vote/skip |
+| Pipeline / compare UI | Fullscreen compare (RankMaster chrome), sequential prefetch (`PrefetchPairs = 2`), save on each vote/skip, ~220 ms select flash |
 | Actions | Discard → `discarded/`, special → `special 1/`, `Ctrl+Z` undoes last move, start-screen rename by `μ − 3σ` |
 
 `PrefetchPairs` defaults to **2**. Change `MediaPipeline.DefaultPrefetchPairs` (the one knob).

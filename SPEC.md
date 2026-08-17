@@ -74,7 +74,8 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 - Visual chrome matches RankMaster 1: zinc→black start screen, blue→emerald title, left info card (256px, top/left 16), help circle top-right, VS badge 56px gray-700 ring, discard/star buttons top-center with `[1][4]` / `[5][2]`. No “Professional Grade” tier names — the confidence bar is a quiet percent only.
 - **Filename** on each pane (Rank Master 2 addition), small caption at the bottom.
 - Click a pane to vote for it. Keys also work.
-- Vote applies immediately. The new pair’s IDs come on screen at once even if pixels are not ready.
+- **Select cue (~220 ms):** winner gets a white flash, an emerald inset ring, and a short scale punch; loser eases down and dims. Then the vote is applied.
+- Vote applies immediately after the cue. The new pair’s IDs come on screen at once even if pixels are not ready.
 - **Still:** paint the first decodable image as soon as one exists; refine in place if a better decode arrives. No spinner if any pixels can be shown. Baseline JPEG/PNG on a slow disk may have no pixels until the read finishes — that is acceptable.
 - **Video:** spinner until a frame can play, then autoplay, loop, muted, no controls. Two videos may play at once.
 - Overlay (start + ranking): folder name, session vote count, unranked count (`matches == 0`). No tier names, no match-history dots.

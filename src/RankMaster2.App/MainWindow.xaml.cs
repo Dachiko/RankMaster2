@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using RankMaster2.Catalog;
@@ -428,18 +429,7 @@ public partial class MainWindow : Window
         _busy = true;
         try
         {
-            if (left)
-            {
-                LeftScale.ScaleX = LeftScale.ScaleY = 0.95;
-                RightPane.Opacity = 0.4;
-            }
-            else
-            {
-                RightScale.ScaleX = RightScale.ScaleY = 0.95;
-                LeftPane.Opacity = 0.4;
-            }
-
-            await Task.Delay(150);
+            await PlaySelectCueAsync(left);
             if (left) _session.VoteLeft();
             else _session.VoteRight();
             ShowCurrent();
@@ -451,12 +441,65 @@ public partial class MainWindow : Window
         }
     }
 
+    private Task PlaySelectCueAsync(bool left)
+    {
+        var winScale = left ? LeftScale : RightScale;
+        var loseScale = left ? RightScale : LeftScale;
+        var losePane = left ? RightPane : LeftPane;
+        var flash = left ? LeftFlash : RightFlash;
+        var ring = left ? LeftRing : RightRing;
+        var done = new TaskCompletionSource();
+
+        var easeOut = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+        var easeIn = new QuadraticEase { EasingMode = EasingMode.EaseIn };
+        var story = new Storyboard();
+
+        story.Children.Add(Anim(flash, UIElement.OpacityProperty, 0, 0.28, 50, easeOut));
+        story.Children.Add(Anim(flash, UIElement.OpacityProperty, 0.28, 0, 160, easeIn, beginMs: 50));
+        story.Children.Add(Anim(ring, UIElement.OpacityProperty, 0, 1, 70, easeOut));
+        story.Children.Add(Anim(ring, UIElement.OpacityProperty, 1, 0, 150, easeIn, beginMs: 70));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleXProperty, 1, 1.035, 90, easeOut));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleYProperty, 1, 1.035, 90, easeOut));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleXProperty, 1.035, 1, 130, easeIn, beginMs: 90));
+        story.Children.Add(Anim(winScale, ScaleTransform.ScaleYProperty, 1.035, 1, 130, easeIn, beginMs: 90));
+        story.Children.Add(Anim(loseScale, ScaleTransform.ScaleXProperty, 1, 0.97, 180, easeOut));
+        story.Children.Add(Anim(loseScale, ScaleTransform.ScaleYProperty, 1, 0.97, 180, easeOut));
+        story.Children.Add(Anim(losePane, UIElement.OpacityProperty, 1, 0.35, 180, easeOut));
+
+        story.Completed += (_, _) => done.TrySetResult();
+        story.Begin();
+        return done.Task;
+    }
+
+    private static DoubleAnimation Anim(
+        DependencyObject target,
+        DependencyProperty property,
+        double from,
+        double to,
+        int ms,
+        IEasingFunction ease,
+        int beginMs = 0)
+    {
+        var anim = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(ms))
+        {
+            EasingFunction = ease,
+            BeginTime = TimeSpan.FromMilliseconds(beginMs)
+        };
+        Storyboard.SetTarget(anim, target);
+        Storyboard.SetTargetProperty(anim, new PropertyPath(property));
+        return anim;
+    }
+
     private void ResetPaneTransforms()
     {
         LeftScale.ScaleX = LeftScale.ScaleY = 1;
         RightScale.ScaleX = RightScale.ScaleY = 1;
         LeftPane.Opacity = 1;
         RightPane.Opacity = 1;
+        LeftFlash.Opacity = 0;
+        RightFlash.Opacity = 0;
+        LeftRing.Opacity = 0;
+        RightRing.Opacity = 0;
     }
 
     private void Skip()
