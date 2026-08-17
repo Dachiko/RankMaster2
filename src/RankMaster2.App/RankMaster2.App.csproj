@@ -8,7 +8,11 @@
     <ApplicationTitle>Rank Master 2</ApplicationTitle>
     <RootNamespace>RankMaster2</RootNamespace>
     <AssemblyName>RankMaster2</AssemblyName>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="icon.ico" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RankMaster2.Core\RankMaster2.Core.csproj" />
     <ProjectReference Include="..\RankMaster2.Ranking\RankMaster2.Ranking.csproj" />
