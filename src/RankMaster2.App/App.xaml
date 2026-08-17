@@ -54,6 +54,12 @@
             <Setter Property="BorderBrush" Value="#4D3B82F6"/>
         </Style>
 
+        <Style x:Key="RenameButton" TargetType="Button" BasedOn="{StaticResource StartButton}">
+            <Setter Property="Background" Value="#1AF59E0B"/>
+            <Setter Property="BorderBrush" Value="#4DF59E0B"/>
+            <Setter Property="Foreground" Value="#F59E0B"/>
+        </Style>
+
         <Style x:Key="IconCircle" TargetType="Button">
             <Setter Property="Width" Value="48"/>
             <Setter Property="Height" Value="48"/>

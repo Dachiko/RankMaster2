@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using RankMaster2.Catalog;
 using RankMaster2.Ranking;
@@ -14,14 +15,22 @@ public partial class MainWindow : Window
     private readonly JsonCatalog _catalog = new();
     private readonly TrueSkill _engine = new();
     private readonly PairSelector _selector = new();
+    private readonly LibraryActions _actions;
     private MediaPipeline _pipeline;
     private RankingSession? _session;
     private bool _busy;
+    private DispatcherTimer? _toastTimer;
 
     public MainWindow()
     {
         InitializeComponent();
         _pipeline = CreatePipeline();
+        _actions = new LibraryActions(
+            folder: () => _session?.Folder ?? LastFolderStore.Load() ?? "",
+            catalog: _catalog,
+            pipeline: () => _pipeline,
+            session: () => _session,
+            releaseUi: ReleaseUi);
         ApplyExclusiveFullscreen();
         RefreshResumeButton();
         Closed += (_, _) => _pipeline.Dispose();
@@ -52,12 +61,14 @@ public partial class MainWindow : Window
         if (last is null)
         {
             ResumeButton.Visibility = Visibility.Collapsed;
+            RenameButton.Visibility = Visibility.Collapsed;
             return;
         }
 
         ResumeButton.Visibility = Visibility.Visible;
         ResumeHint.Text = Path.GetFileName(last.TrimEnd('\\'));
         ResumeButton.Tag = last;
+        RenameButton.Visibility = Visibility.Visible;
     }
 
     private void OnOpenFolder(object sender, RoutedEventArgs e) => PickFolder();
@@ -230,10 +241,114 @@ public partial class MainWindow : Window
     private void OnHelpEnter(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Visible;
     private void OnHelpLeave(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Collapsed;
 
-    private void OnDiscardLeft(object sender, RoutedEventArgs e) { /* wired in the actions slice */ }
-    private void OnDiscardRight(object sender, RoutedEventArgs e) { }
-    private void OnSpecialLeft(object sender, RoutedEventArgs e) { }
-    private void OnSpecialRight(object sender, RoutedEventArgs e) { }
+    private void OnDiscardLeft(object sender, RoutedEventArgs e) => MoveCurrent(left: true, special: false);
+    private void OnDiscardRight(object sender, RoutedEventArgs e) => MoveCurrent(left: false, special: false);
+    private void OnSpecialLeft(object sender, RoutedEventArgs e) => MoveCurrent(left: true, special: true);
+    private void OnSpecialRight(object sender, RoutedEventArgs e) => MoveCurrent(left: false, special: true);
+
+    private void OnRename(object sender, RoutedEventArgs e)
+    {
+        var folder = LastFolderStore.Load();
+        if (folder is null)
+            return;
+
+        var confirm = MessageBox.Show(
+            this,
+            "Backup this folder, then rename files to 000001, 000002, … by rank (μ − 3σ).\n\nContinue?",
+            "Rename Files by Rank",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.OK)
+            return;
+
+        try
+        {
+            _actions.RenameByRank();
+            SetStartError("");
+            ShowToast("Renamed files by rank.");
+        }
+        catch (Exception ex)
+        {
+            SetStartError("Rename failed (folder restored from backup): " + ex.Message);
+        }
+    }
+
+    private void MoveCurrent(bool left, bool special)
+    {
+        if (_busy || _session?.Current is null)
+            return;
+        _busy = true;
+        try
+        {
+            var id = left ? _session.Current.Value.Left : _session.Current.Value.Right;
+            var name = id.Filename;
+            if (special) _actions.MoveToSpecial(id);
+            else _actions.Discard(id);
+            ShowToast(special ? $"Moved {name} to special 1" : $"Discarded {name}");
+            ShowCurrent();
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void UndoMove()
+    {
+        if (_busy)
+            return;
+        _busy = true;
+        try
+        {
+            if (_actions.UndoLastMove())
+            {
+                ShowToast("Move undone");
+                ShowCurrent();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ReleaseUi(MediaId id)
+    {
+        if (_session?.Current is not { } pair)
+            return;
+        if (pair.Left == id)
+        {
+            StopVideo(LeftVideo);
+            LeftImage.Source = null;
+        }
+        if (pair.Right == id)
+        {
+            StopVideo(RightVideo);
+            RightImage.Source = null;
+        }
+    }
+
+    private void ShowToast(string message)
+    {
+        ToastText.Text = message;
+        Toast.Visibility = Visibility.Visible;
+        _toastTimer?.Stop();
+        _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _toastTimer.Tick += (_, _) =>
+        {
+            _toastTimer.Stop();
+            Toast.Visibility = Visibility.Collapsed;
+        };
+        _toastTimer.Start();
+    }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
@@ -261,6 +376,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            e.Handled = true;
+            UndoMove();
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.Left:
@@ -274,6 +396,26 @@ public partial class MainWindow : Window
             case Key.Down:
             case Key.S:
                 Skip();
+                e.Handled = true;
+                break;
+            case Key.D1:
+            case Key.NumPad1:
+                MoveCurrent(left: true, special: false);
+                e.Handled = true;
+                break;
+            case Key.D2:
+            case Key.NumPad2:
+                MoveCurrent(left: false, special: false);
+                e.Handled = true;
+                break;
+            case Key.D4:
+            case Key.NumPad4:
+                MoveCurrent(left: true, special: true);
+                e.Handled = true;
+                break;
+            case Key.D5:
+            case Key.NumPad5:
+                MoveCurrent(left: false, special: true);
                 e.Handled = true;
                 break;
         }

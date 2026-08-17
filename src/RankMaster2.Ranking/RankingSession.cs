@@ -1,9 +1,6 @@
-using System.IO;
-using RankMaster2.Ranking;
+namespace RankMaster2.Ranking;
 
-namespace RankMaster2;
-
-internal sealed class RankingSession
+public sealed class RankingSession
 {
     private readonly ICatalog _catalog;
     private readonly IRatingEngine _engine;
@@ -62,11 +59,79 @@ internal sealed class RankingSession
 
     public void Save() => _catalog.Save(Folder, _records);
 
-    /// <summary>Drop the on-screen pair without treating it as seen (corrupt file, etc.).</summary>
     public void AbandonCurrent() => Advance();
+
+    public MediaRecord? Drop(MediaId id)
+    {
+        var i = _records.FindIndex(r => r.Id == id);
+        if (i < 0)
+            return null;
+
+        var removed = _records[i];
+        _records.RemoveAt(i);
+        _recent.Remove(id);
+
+        var warmKept = new Queue<Pair>();
+        foreach (var pair in _warm)
+        {
+            if (!pair.Contains(id))
+                warmKept.Enqueue(pair);
+        }
+        _warm.Clear();
+        foreach (var pair in warmKept)
+            _warm.Enqueue(pair);
+
+        if (Current is { } cur && cur.Contains(id))
+            Current = null;
+
+        if (_records.Count < 2)
+        {
+            Current = null;
+            _warm.Clear();
+            return removed;
+        }
+
+        if (Current is null)
+            Advance();
+        else
+            FillWarm();
+
+        return removed;
+    }
+
+    public void Restore(MediaRecord record)
+    {
+        if (_records.Any(r => r.Id == record.Id))
+            return;
+        _records.Add(record);
+        FillWarm();
+    }
+
+    public void ReplaceAll(IReadOnlyList<MediaRecord> records)
+    {
+        _records.Clear();
+        _records.AddRange(records);
+        _warm.Clear();
+        _recent.Clear();
+        _recentOrder.Clear();
+        Current = Pick();
+        FillWarm();
+    }
 
     public MediaRecord Find(MediaId id) =>
         _records.First(r => r.Id == id);
+
+    public bool TryFind(MediaId id, out MediaRecord record)
+    {
+        var found = _records.FirstOrDefault(r => r.Id == id);
+        if (found is null)
+        {
+            record = default!;
+            return false;
+        }
+        record = found;
+        return true;
+    }
 
     private void ApplyVote(bool leftWins)
     {

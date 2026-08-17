@@ -321,7 +321,7 @@ dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained
 2. Solution + contracts that compile — **done**
 3. Ranking + tests, Catalog + tests — **done**
 4. Pipeline + compare shell (fullscreen, save-on-choice, `Esc` quits unseen) — **done**
-5. Actions (discard / special 1 / undo / rename) still to wire
+5. Actions (discard / special 1 / undo last move / rename by μ − 3σ) — **done**
 
 Do not start a later phase by opening any other ranking app. This file is the brief.
 

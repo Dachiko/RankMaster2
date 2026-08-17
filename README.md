@@ -6,7 +6,7 @@ This is a remake. Behavior is defined in [SPEC.md](SPEC.md). If the code disagre
 
 ## Status
 
-Spec is the source of truth. Compare loop runs: fullscreen, save on each choice, Esc quits without touching the pair on screen. Discard / special / rename are not wired yet.
+Spec is the source of truth. Compare loop, prefetch, and file actions are wired. Update this file and SPEC.md when behavior changes.
 
 | Piece | State |
 |---|---|
@@ -14,7 +14,7 @@ Spec is the source of truth. Compare loop runs: fullscreen, save on each choice,
 | Ranking (TrueSkill + pair picker) | Implemented + tests |
 | Catalog (scan, v1 JSON, media policy) | Implemented + tests |
 | Pipeline / compare UI | Fullscreen compare (RankMaster chrome), sequential prefetch (`PrefetchPairs = 2`), save on each vote/skip |
-| Actions (discard / special / rename) | Stubbed |
+| Actions | Discard → `discarded/`, special → `special 1/`, `Ctrl+Z` undoes last move, start-screen rename by `μ − 3σ` |
 
 `PrefetchPairs` defaults to **2**. Change `MediaPipeline.DefaultPrefetchPairs` (the one knob).
 
@@ -44,8 +44,8 @@ Opens the same `rankmaster_db.json` as Rank Master 1 (`version: 1`). You do not 
 |---|---|
 | `←` `→` | Vote |
 | `↓` / `S` | Skip |
-| `1` `2` | Discard |
-| `4` `5` | Move to `special 1` |
+| `1` `2` | Discard (to `discarded/`) |
+| `4` `5` | Move to `special 1/` |
 | `O` | Open folder |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` | Undo last move |

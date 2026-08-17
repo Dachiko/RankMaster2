@@ -45,6 +45,14 @@
                                    TextAlignment="Center" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Button>
+                <Button x:Name="RenameButton" Style="{StaticResource RenameButton}" Click="OnRename"
+                        Visibility="Collapsed" Margin="0,0,0,12">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE8A5;" FontSize="20"
+                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock Text="Rename Files by Rank" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
 
                 <Border x:Name="StartErrorBox" Visibility="Collapsed" Background="#1AEF4444"
                         BorderBrush="#80EF4444" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,4,0,0">
@@ -249,6 +257,13 @@
                     </StackPanel>
                 </Border>
             </StackPanel>
+
         </Grid>
+
+        <Border x:Name="Toast" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,32"
+                Background="#CC18181B" BorderBrush="#33FFFFFF" BorderThickness="1"
+                CornerRadius="20" Padding="20,10" Visibility="Collapsed" IsHitTestVisible="False">
+            <TextBlock x:Name="ToastText" FontSize="14" Foreground="White"/>
+        </Border>
     </Grid>
 </Window>
