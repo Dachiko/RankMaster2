@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F5907D14-6930-4F6C-BDE2-DD81FF1966C0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RankMaster2.Core", "src\RankMaster2.Core\RankMaster2.Core.csproj", "{A9395307-988F-413E-887E-11EE91899548}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RankMaster2.Ranking", "src\RankMaster2.Ranking\RankMaster2.Ranking.csproj", "{4045853B-095F-4A01-BBA4-360E4FC29416}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RankMaster2.Catalog", "src\RankMaster2.Catalog\RankMaster2.Catalog.csproj", "{11BCAC08-CF00-47E8-B11E-7D5ADAB03DB3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RankMaster2.App", "src\RankMaster2.App\RankMaster2.App.csproj", "{C12FE66D-C68E-4919-A591-52DB2F9CC1B7}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A656B5AE-8C93-41EE-925A-94EAC1B704D2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RankMaster2.Ranking.Tests", "tests\RankMaster2.Ranking.Tests\RankMaster2.Ranking.Tests.csproj", "{A1BADCB8-FE49-4F99-88F7-ED215C410E9D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RankMaster2.Catalog.Tests", "tests\RankMaster2.Catalog.Tests\RankMaster2.Catalog.Tests.csproj", "{8F433312-BE34-4921-ACFB-B4E08B462F46}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A9395307-988F-413E-887E-11EE91899548}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9395307-988F-413E-887E-11EE91899548}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9395307-988F-413E-887E-11EE91899548}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9395307-988F-413E-887E-11EE91899548}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4045853B-095F-4A01-BBA4-360E4FC29416}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4045853B-095F-4A01-BBA4-360E4FC29416}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4045853B-095F-4A01-BBA4-360E4FC29416}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4045853B-095F-4A01-BBA4-360E4FC29416}.Release|Any CPU.Build.0 = Release|Any CPU
+		{11BCAC08-CF00-47E8-B11E-7D5ADAB03DB3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{11BCAC08-CF00-47E8-B11E-7D5ADAB03DB3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{11BCAC08-CF00-47E8-B11E-7D5ADAB03DB3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{11BCAC08-CF00-47E8-B11E-7D5ADAB03DB3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C12FE66D-C68E-4919-A591-52DB2F9CC1B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C12FE66D-C68E-4919-A591-52DB2F9CC1B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C12FE66D-C68E-4919-A591-52DB2F9CC1B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C12FE66D-C68E-4919-A591-52DB2F9CC1B7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1BADCB8-FE49-4F99-88F7-ED215C410E9D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1BADCB8-FE49-4F99-88F7-ED215C410E9D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1BADCB8-FE49-4F99-88F7-ED215C410E9D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1BADCB8-FE49-4F99-88F7-ED215C410E9D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8F433312-BE34-4921-ACFB-B4E08B462F46}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8F433312-BE34-4921-ACFB-B4E08B462F46}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8F433312-BE34-4921-ACFB-B4E08B462F46}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8F433312-BE34-4921-ACFB-B4E08B462F46}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A9395307-988F-413E-887E-11EE91899548} = {F5907D14-6930-4F6C-BDE2-DD81FF1966C0}
+		{4045853B-095F-4A01-BBA4-360E4FC29416} = {F5907D14-6930-4F6C-BDE2-DD81FF1966C0}
+		{11BCAC08-CF00-47E8-B11E-7D5ADAB03DB3} = {F5907D14-6930-4F6C-BDE2-DD81FF1966C0}
+		{C12FE66D-C68E-4919-A591-52DB2F9CC1B7} = {F5907D14-6930-4F6C-BDE2-DD81FF1966C0}
+		{A1BADCB8-FE49-4F99-88F7-ED215C410E9D} = {A656B5AE-8C93-41EE-925A-94EAC1B704D2}
+		{8F433312-BE34-4921-ACFB-B4E08B462F46} = {A656B5AE-8C93-41EE-925A-94EAC1B704D2}
+	EndGlobalSection
+EndGlobal

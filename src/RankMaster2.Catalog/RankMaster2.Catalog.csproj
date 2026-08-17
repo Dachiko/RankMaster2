@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RankMaster2.Catalog</RootNamespace>
+    <AssemblyName>RankMaster2.Catalog</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RankMaster2.Core\RankMaster2.Core.csproj" />
+    <ProjectReference Include="..\RankMaster2.Ranking\RankMaster2.Ranking.csproj" />
+  </ItemGroup>
+</Project>

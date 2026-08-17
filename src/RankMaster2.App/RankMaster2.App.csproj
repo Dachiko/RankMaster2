@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationTitle>Rank Master 2</ApplicationTitle>
+    <RootNamespace>RankMaster2</RootNamespace>
+    <AssemblyName>RankMaster2</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RankMaster2.Core\RankMaster2.Core.csproj" />
+    <ProjectReference Include="..\RankMaster2.Ranking\RankMaster2.Ranking.csproj" />
+    <ProjectReference Include="..\RankMaster2.Catalog\RankMaster2.Catalog.csproj" />
+  </ItemGroup>
+</Project>
