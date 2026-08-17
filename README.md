@@ -34,13 +34,13 @@ dotnet run --project src/RankMaster2.App
 
 No installer. The window and `.exe` use the same icon as Rank Master 1 (`src/RankMaster2.App/icon.ico`).
 
-Self-contained publish (no extra .NET install to run it):
+Self-contained **single-file** publish (no extra .NET install):
 
 ```
-dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained -o publish
+dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-Then run `publish\RankMaster2.exe`. Copy the whole `publish` folder, not just the exe.
+Then run `publish\RankMaster2.exe`. That file is the whole app. First launch can be a bit slower while native bits unpack.
 
 ## Existing rankings
 
