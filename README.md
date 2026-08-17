@@ -37,7 +37,7 @@ No installer. The window and `.exe` use the same icon as Rank Master 1 (`src/Ran
 Self-contained **single-file** publish (no extra .NET install):
 
 ```
-dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
+dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish
 ```
 
 Then run `publish\RankMaster2.exe`. That file is the whole app. First launch can be a bit slower while native bits unpack.
