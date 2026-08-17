@@ -111,9 +111,9 @@ public sealed class LibraryActions : ILibraryActions
         if (!session.TryFind(id, out var record))
             throw new InvalidOperationException("Unknown file: " + id.Filename);
 
+        _releaseUi(id);
         _pipeline().Release(id);
         _pipeline().CancelWarmContaining(id);
-        _releaseUi(id);
 
         var destName = FileOps.MoveToSubfolder(session.Folder, id.Filename, subfolder);
         session.Drop(id);

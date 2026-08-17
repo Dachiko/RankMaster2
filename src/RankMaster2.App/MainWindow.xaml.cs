@@ -99,37 +99,37 @@ public partial class MainWindow : Window
         if (_renaming)
             return;
         SetStartError("");
+        RankingSession next;
         try
         {
-            LeaveCompare();
-            _pipeline.Ready -= OnFrameReady;
-            _pipeline.Failed -= OnFrameFailed;
-            _pipeline.Dispose();
-            _pipeline = CreatePipeline();
-            _pipeline.SetFolder(folder);
-
-            var session = new RankingSession(folder, _catalog, _engine, _selector, _pipeline.PrefetchPairs);
-            if (!session.Start())
+            next = new RankingSession(folder, _catalog, _engine, _selector, MediaPipeline.DefaultPrefetchPairs);
+            if (!next.Start())
             {
                 SetStartError("Folder needs at least two supported media files.");
-                StartPanel.Visibility = Visibility.Visible;
-                RankPanel.Visibility = Visibility.Collapsed;
                 return;
             }
-
-            _session = session;
-            _actions.ClearLastMove();
-            LastFolderStore.Save(folder);
-            StartPanel.Visibility = Visibility.Collapsed;
-            RankPanel.Visibility = Visibility.Visible;
-            RankPanel.UpdateLayout();
-            UpdatePanelSize();
-            ShowCurrent();
         }
         catch (Exception ex)
         {
             SetStartError("Could not open folder: " + ex.Message);
+            return;
         }
+
+        LeaveCompare();
+        _pipeline.Ready -= OnFrameReady;
+        _pipeline.Failed -= OnFrameFailed;
+        _pipeline.Dispose();
+        _pipeline = CreatePipeline();
+        _pipeline.SetFolder(folder);
+
+        _session = next;
+        _actions.ClearLastMove();
+        LastFolderStore.Save(folder);
+        StartPanel.Visibility = Visibility.Collapsed;
+        RankPanel.Visibility = Visibility.Visible;
+        RankPanel.UpdateLayout();
+        UpdatePanelSize();
+        ShowCurrent();
     }
 
     private void LeaveCompare()
@@ -249,7 +249,9 @@ public partial class MainWindow : Window
 
     private void OnVideoEnded(object sender, RoutedEventArgs e)
     {
-        if (sender is MediaElement el)
+        if (RankPanel.Visibility != Visibility.Visible)
+            return;
+        if (sender is MediaElement el && el.Source is not null)
         {
             el.Position = TimeSpan.Zero;
             el.Play();
@@ -258,11 +260,13 @@ public partial class MainWindow : Window
 
     private void OnVideoOpened(object sender, RoutedEventArgs e)
     {
+        if (RankPanel.Visibility != Visibility.Visible)
+            return;
         if (sender == LeftVideo)
             LeftSpinner.Visibility = Visibility.Collapsed;
         if (sender == RightVideo)
             RightSpinner.Visibility = Visibility.Collapsed;
-        if (sender is MediaElement el)
+        if (sender is MediaElement el && el.Source is not null)
         {
             el.Volume = 0;
             el.IsMuted = true;
@@ -400,6 +404,8 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             e.Handled = true;
+            if (_renaming)
+                return;
             _exiting = true;
             StopSelectCue();
             Application.Current.Shutdown();

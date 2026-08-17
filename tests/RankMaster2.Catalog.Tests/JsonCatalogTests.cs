@@ -102,6 +102,33 @@ public class JsonCatalogTests
     }
 
     [Fact]
+    public void Scan_MatchesJsonKeysIgnoringCase()
+    {
+        var dir = CreateTempFolder();
+        File.WriteAllBytes(Path.Combine(dir, "Photo.JPG"), [0]);
+        File.WriteAllText(Path.Combine(dir, JsonCatalog.FileName), """
+            {
+              "version": 1,
+              "lastUpdated": 1,
+              "images": {
+                "photo.jpg": {
+                  "filename": "photo.jpg",
+                  "rating": { "mu": 30, "sigma": 2 },
+                  "matches": 4,
+                  "impressions": 4,
+                  "lastPlayed": 1
+                }
+              }
+            }
+            """);
+
+        var rec = new JsonCatalog().Scan(dir).Single();
+        Assert.Equal("Photo.JPG", rec.Filename);
+        Assert.Equal(30, rec.Rating.Mu);
+        Assert.Equal(4, rec.Matches);
+    }
+
+    [Fact]
     public void Scan_CorruptJson_DoesNotOverwrite()
     {
         var dir = CreateTempFolder();

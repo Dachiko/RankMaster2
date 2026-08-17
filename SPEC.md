@@ -325,7 +325,8 @@ dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained
 4. Pipeline + compare shell — **done**
 5. Actions — **done**
 6. Pre-exe audit fixes — **done**
-7. Second-audit follow-up (restore resumes pair, rename lock, pipeline dispose, EXIF, leave-compare unlocks) — **done**
+7. Second-audit follow-up — **done**
+8. Third-audit follow-up (open-folder does not tear down until Scan succeeds) — **done**
 
 Do not start a later phase by opening any other ranking app. This file is the brief.
 

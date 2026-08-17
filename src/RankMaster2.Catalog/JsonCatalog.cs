@@ -131,6 +131,8 @@ public sealed class JsonCatalog : ICatalog
             var dto = JsonSerializer.Deserialize<RankingDatabaseDto>(json, JsonOptions);
             if (dto is null)
                 throw new InvalidDataException("Ranking file is empty: " + path);
+            dto.Images = new Dictionary<string, ImageRecordDto>(
+                dto.Images, StringComparer.OrdinalIgnoreCase);
             return dto;
         }
         catch (JsonException ex)
