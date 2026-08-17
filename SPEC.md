@@ -70,8 +70,9 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 ### Compare UI
 
 - The window is borderless and fills the monitor, **including over the taskbar**.
-- Two panes, each exactly half the screen. Each still or video is scaled with **uniform** aspect (`Stretch.Uniform`) so it is as large as possible on its half without cropping or stretching. Black letterbox if the aspect does not match the pane. A neutral VS mark in the center.
-- **Filename** visible on each pane.
+- Two panes, each exactly half the screen. Each still or video is scaled with **uniform** aspect (`Stretch.Uniform`) so it is as large as possible on its half without cropping or stretching. Black letterbox if the aspect does not match the pane.
+- Visual chrome matches RankMaster 1: zinc→black start screen, blue→emerald title, left info card (256px, top/left 16), help circle top-right, VS badge 56px gray-700 ring, discard/star buttons top-center with `[1][4]` / `[5][2]`. No “Professional Grade” tier names — the confidence bar is a quiet percent only.
+- **Filename** on each pane (Rank Master 2 addition), small caption at the bottom.
 - Click a pane to vote for it. Keys also work.
 - Vote applies immediately. The new pair’s IDs come on screen at once even if pixels are not ready.
 - **Still:** paint the first decodable image as soon as one exists; refine in place if a better decode arrives. No spinner if any pixels can be shown. Baseline JPEG/PNG on a slow disk may have no pixels until the read finishes — that is acceptable.

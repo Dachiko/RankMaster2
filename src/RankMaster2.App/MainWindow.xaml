@@ -3,69 +3,251 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Rank Master 2"
         Background="#000000"
-        Foreground="#EEEEEE"
+        Foreground="#E5E7EB"
+        FontFamily="Segoe UI, sans-serif"
         WindowStyle="None"
         ResizeMode="NoResize"
         WindowState="Maximized"
         KeyDown="OnKeyDown">
     <Grid>
-        <Grid x:Name="StartPanel" Background="#000000">
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="640">
-                <TextBlock FontSize="36" FontWeight="SemiBold" Text="Rank Master 2" Margin="0,0,0,16"/>
-                <TextBlock TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,28" FontSize="16"
-                           Text="Pick a folder. Two files at a time. Arrow keys choose the better one. Esc quits; the pair on screen is not recorded."/>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                    <Button Content="Open folder  [O]" Padding="18,10" Margin="0,0,12,0" Click="OnOpenFolder" Cursor="Hand"/>
-                    <Button x:Name="ResumeButton" Content="Resume" Padding="18,10" Click="OnResume" Cursor="Hand" Visibility="Collapsed"/>
-                </StackPanel>
-                <TextBlock x:Name="StartError" TextWrapping="Wrap" Foreground="#FF8888" Margin="0,0,0,12"/>
-                <TextBlock Opacity="0.45" FontSize="13" LineHeight="20"
-                           Text="← / → vote    ↓ or S skip    Esc quit"/>
+        <!-- Start / idle — zinc-900 → black, same button stack as RankMaster -->
+        <Grid x:Name="StartPanel">
+            <Grid.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#18181B" Offset="0"/>
+                    <GradientStop Color="#000000" Offset="1"/>
+                </LinearGradientBrush>
+            </Grid.Background>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="512">
+                <TextBlock FontSize="48" FontWeight="Black" TextAlignment="Center" Margin="0,0,0,8">
+                    <TextBlock.Foreground>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#60A5FA" Offset="0"/>
+                            <GradientStop Color="#34D399" Offset="1"/>
+                        </LinearGradientBrush>
+                    </TextBlock.Foreground>
+                    RankMaster
+                </TextBlock>
+                <TextBlock Text="2" Foreground="#A1A1AA" TextAlignment="Center" Margin="0,0,0,28"/>
+
+                <Button Style="{StaticResource StartButton}" Click="OnOpenFolder" Margin="0,0,0,12">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE8B7;" Foreground="#60A5FA"
+                                   FontSize="22" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock Text="Select Folder [O]" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="ResumeButton" Style="{StaticResource ResumeButton}" Click="OnResume"
+                        Visibility="Collapsed" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="Resume Session" TextAlignment="Center"/>
+                        <TextBlock x:Name="ResumeHint" FontSize="10" Foreground="#60A5FA"
+                                   TextAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Button>
+
+                <Border x:Name="StartErrorBox" Visibility="Collapsed" Background="#1AEF4444"
+                        BorderBrush="#80EF4444" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,4,0,0">
+                    <TextBlock x:Name="StartError" Foreground="#F87171" TextWrapping="Wrap" FontSize="13"/>
+                </Border>
             </StackPanel>
         </Grid>
 
+        <!-- Compare -->
         <Grid x:Name="RankPanel" Visibility="Collapsed" Background="#000000" SizeChanged="OnRankSizeChanged">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <Grid x:Name="LeftPane" Grid.Column="0" Background="#000000" MouseLeftButtonDown="OnLeftClick" Cursor="Hand">
+            <Grid x:Name="LeftPane" Grid.Column="0" Background="#000000"
+                  MouseLeftButtonDown="OnLeftClick" Cursor="Hand"
+                  RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <ScaleTransform x:Name="LeftScale" ScaleX="1" ScaleY="1"/>
+                </Grid.RenderTransform>
                 <Image x:Name="LeftImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <MediaElement x:Name="LeftVideo" Stretch="Uniform" Volume="0" IsMuted="True"
                               LoadedBehavior="Manual" UnloadedBehavior="Manual"
                               MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
-                <TextBlock x:Name="LeftSpinner" Text="…" FontSize="48" Opacity="0.35"
+                <TextBlock x:Name="LeftSpinner" FontFamily="{StaticResource Icons}" Text="&#xE895;"
+                           FontSize="40" Foreground="#6B7280"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                <TextBlock x:Name="LeftName" Margin="16,0,16,20" VerticalAlignment="Bottom"
-                           HorizontalAlignment="Center" FontSize="14" Opacity="0.8"
-                           TextWrapping="Wrap" TextAlignment="Center"/>
+                <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="16,0,16,20"
+                        Background="#80000000" CornerRadius="4" Padding="8,4"
+                        IsHitTestVisible="False">
+                    <TextBlock x:Name="LeftName" FontSize="12" Foreground="#D4D4D8"
+                               TextWrapping="Wrap" TextAlignment="Center"/>
+                </Border>
             </Grid>
 
-            <Grid x:Name="RightPane" Grid.Column="1" Background="#000000" MouseLeftButtonDown="OnRightClick" Cursor="Hand">
+            <Border Grid.Column="0" Width="1" HorizontalAlignment="Right" Background="#111827"
+                    IsHitTestVisible="False"/>
+
+            <Grid x:Name="RightPane" Grid.Column="1" Background="#000000"
+                  MouseLeftButtonDown="OnRightClick" Cursor="Hand"
+                  RenderTransformOrigin="0.5,0.5">
+                <Grid.RenderTransform>
+                    <ScaleTransform x:Name="RightScale" ScaleX="1" ScaleY="1"/>
+                </Grid.RenderTransform>
                 <Image x:Name="RightImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <MediaElement x:Name="RightVideo" Stretch="Uniform" Volume="0" IsMuted="True"
                               LoadedBehavior="Manual" UnloadedBehavior="Manual"
                               MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"/>
-                <TextBlock x:Name="RightSpinner" Text="…" FontSize="48" Opacity="0.35"
+                <TextBlock x:Name="RightSpinner" FontFamily="{StaticResource Icons}" Text="&#xE895;"
+                           FontSize="40" Foreground="#6B7280"
                            HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                <TextBlock x:Name="RightName" Margin="16,0,16,20" VerticalAlignment="Bottom"
-                           HorizontalAlignment="Center" FontSize="14" Opacity="0.8"
-                           TextWrapping="Wrap" TextAlignment="Center"/>
+                <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="16,0,16,20"
+                        Background="#80000000" CornerRadius="4" Padding="8,4"
+                        IsHitTestVisible="False">
+                    <TextBlock x:Name="RightName" FontSize="12" Foreground="#D4D4D8"
+                               TextWrapping="Wrap" TextAlignment="Center"/>
+                </Border>
             </Grid>
 
+            <!-- Action bar: [1][4]  ……  [5][2]  top center, same as RankMaster -->
+            <StackPanel Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal"
+                        HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0"
+                        IsHitTestVisible="True">
+                <StackPanel Orientation="Horizontal" Margin="0,0,64,0">
+                    <StackPanel Margin="0,0,12,0">
+                        <Button Style="{StaticResource IconCircle}" Click="OnDiscardLeft" ToolTip="Discard left">
+                            <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE74D;" FontSize="20"/>
+                        </Button>
+                        <TextBlock Text="[1]" FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                   Foreground="#4DFFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                    <StackPanel>
+                        <Button Style="{StaticResource IconCircle}" Click="OnSpecialLeft" ToolTip="Special 1, left">
+                            <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE734;" FontSize="20"/>
+                        </Button>
+                        <TextBlock Text="[4]" FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                   Foreground="#4DFFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="64,0,0,0">
+                    <StackPanel Margin="0,0,12,0">
+                        <Button Style="{StaticResource IconCircle}" Click="OnSpecialRight" ToolTip="Special 1, right">
+                            <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE734;" FontSize="20"/>
+                        </Button>
+                        <TextBlock Text="[5]" FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                   Foreground="#4DFFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                    <StackPanel>
+                        <Button Style="{StaticResource IconCircle}" Click="OnDiscardRight" ToolTip="Discard right">
+                            <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE74D;" FontSize="20"/>
+                        </Button>
+                        <TextBlock Text="[2]" FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                   Foreground="#4DFFFFFF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- VS badge: 56×56, black/80, gray-700 ring, font-black -->
             <Border Grid.Column="0" Grid.ColumnSpan="2" Width="56" Height="56"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Background="#CC000000" BorderBrush="#555555" BorderThickness="2"
+                    Background="#CC000000" BorderBrush="#374151" BorderThickness="2"
                     CornerRadius="28" IsHitTestVisible="False">
-                <TextBlock Text="VS" FontWeight="Bold" FontSize="16"
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="0" Opacity="0.8"/>
+                </Border.Effect>
+                <TextBlock Text="VS" FontWeight="Black" FontSize="20" Foreground="White"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
 
-            <StackPanel Grid.Column="0" Margin="16,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
-                        IsHitTestVisible="False">
-                <TextBlock x:Name="OverlayFolder" FontWeight="SemiBold" FontSize="14"/>
-                <TextBlock x:Name="OverlayStats" Opacity="0.7" FontSize="13" Margin="0,4,0,0"/>
+            <!-- Left info card: top-4 left-4, w-64 -->
+            <Border Grid.Column="0" Width="256" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    Margin="16,16,0,0" Background="#99000000" BorderBrush="#1AFFFFFF" BorderThickness="1"
+                    CornerRadius="8" Padding="12" IsHitTestVisible="True">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                        <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE8B7;" Foreground="#60A5FA"
+                                   FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="OverlayFolder" FontWeight="Bold" Foreground="White" FontSize="12"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="200" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <DockPanel Margin="0,0,0,4">
+                        <TextBlock DockPanel.Dock="Right" x:Name="OverlayConfidencePct"
+                                   FontFamily="Consolas" FontWeight="Bold" FontSize="12" Foreground="#60A5FA"/>
+                        <TextBlock Text="CONFIDENCE" FontSize="10" FontWeight="Bold"
+                                   Foreground="#71717A" VerticalAlignment="Bottom"/>
+                    </DockPanel>
+                    <Grid Height="6" Margin="0,0,0,12">
+                        <Border Background="#0DFFFFFF" CornerRadius="3"/>
+                        <Border x:Name="ConfidenceFill" HorizontalAlignment="Left" Width="0"
+                                Background="#60A5FA" CornerRadius="3"/>
+                    </Grid>
+                    <Border BorderBrush="#0DFFFFFF" BorderThickness="0,1,0,0" Padding="0,8,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="UNRANKED" FontSize="10" Foreground="#71717A"/>
+                                <TextBlock x:Name="OverlayUnranked" FontFamily="Consolas" FontSize="14"
+                                           Foreground="#FB923C"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="SESSION" FontSize="10" Foreground="#71717A"/>
+                                <TextBlock x:Name="OverlaySession" FontFamily="Consolas" FontSize="14"
+                                           Foreground="#93C5FD"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Help: top-4 right-4 -->
+            <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,16,16,0" IsHitTestVisible="True"
+                        MouseEnter="OnHelpEnter" MouseLeave="OnHelpLeave">
+                <Border x:Name="HelpButton" Width="36" Height="36" CornerRadius="18"
+                        Background="#99000000" BorderBrush="#1AFFFFFF" BorderThickness="1"
+                        Cursor="Help">
+                    <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE897;" FontSize="16"
+                               Foreground="#9CA3AF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <Border x:Name="HelpPanel" Width="208" Visibility="Collapsed" Margin="0,8,0,0"
+                        Background="#CC000000" BorderBrush="#1AFFFFFF" BorderThickness="1"
+                        CornerRadius="8" Padding="16">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock FontFamily="{StaticResource Icons}" Text="&#xE765;" FontSize="14"
+                                       Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="Controls" FontWeight="Bold" Foreground="White"/>
+                        </StackPanel>
+                        <Border BorderBrush="#1AFFFFFF" BorderThickness="0,0,0,1" Margin="0,0,0,8"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="22"/><RowDefinition Height="22"/>
+                                <RowDefinition Height="22"/><RowDefinition Height="22"/>
+                                <RowDefinition Height="22"/><RowDefinition Height="22"/>
+                                <RowDefinition Height="22"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Foreground="#9CA3AF" Text="Select Left"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" FontFamily="Consolas" Text="[←]"/>
+                            <TextBlock Grid.Row="1" Foreground="#9CA3AF" Text="Select Right"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" FontFamily="Consolas" Text="[→]"/>
+                            <TextBlock Grid.Row="2" Foreground="#9CA3AF" Text="Skip"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" FontFamily="Consolas" Text="[S]"/>
+                            <TextBlock Grid.Row="3" Foreground="#9CA3AF" Text="Discard"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" FontFamily="Consolas" Text="[1] / [2]"/>
+                            <TextBlock Grid.Row="4" Foreground="#9CA3AF" Text="Special"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1" FontFamily="Consolas" Text="[4] / [5]"/>
+                            <TextBlock Grid.Row="5" Foreground="#9CA3AF" Text="Open"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" FontFamily="Consolas" Text="[O]"/>
+                            <TextBlock Grid.Row="6" Foreground="#9CA3AF" Text="Exit"/>
+                            <TextBlock Grid.Row="6" Grid.Column="1" FontFamily="Consolas" Text="[Esc]"/>
+                        </Grid>
+                        <TextBlock Text="RankMaster 2" FontFamily="Consolas" FontSize="10"
+                                   Foreground="#52525B" TextAlignment="Center" Margin="0,12,0,0"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Grid>
     </Grid>

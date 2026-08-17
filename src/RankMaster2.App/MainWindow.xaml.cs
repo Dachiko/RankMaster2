@@ -56,7 +56,7 @@ public partial class MainWindow : Window
         }
 
         ResumeButton.Visibility = Visibility.Visible;
-        ResumeButton.Content = $"Resume  {Path.GetFileName(last.TrimEnd('\\'))}";
+        ResumeHint.Text = Path.GetFileName(last.TrimEnd('\\'));
         ResumeButton.Tag = last;
     }
 
@@ -79,7 +79,7 @@ public partial class MainWindow : Window
 
     private void BeginSession(string folder)
     {
-        StartError.Text = "";
+        SetStartError("");
         try
         {
             _pipeline.Dispose();
@@ -90,7 +90,7 @@ public partial class MainWindow : Window
             var session = new RankingSession(folder, _catalog, _engine, _selector, _pipeline.PrefetchPairs);
             if (!session.Start())
             {
-                StartError.Text = "Folder needs at least two supported media files.";
+                SetStartError("Folder needs at least two supported media files.");
                 StartPanel.Visibility = Visibility.Visible;
                 RankPanel.Visibility = Visibility.Collapsed;
                 return;
@@ -104,26 +104,37 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StartError.Text = "Could not open folder: " + ex.Message;
+            SetStartError("Could not open folder: " + ex.Message);
         }
+    }
+
+    private void SetStartError(string message)
+    {
+        StartError.Text = message;
+        StartErrorBox.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void ShowCurrent()
     {
         if (_session?.Current is null)
         {
-            StartError.Text = "No pair left to compare.";
+            SetStartError("No pair left to compare.");
             RankPanel.Visibility = Visibility.Collapsed;
             StartPanel.Visibility = Visibility.Visible;
             RefreshResumeButton();
             return;
         }
 
+        ResetPaneTransforms();
         var pair = _session.Current.Value;
-        ResetPane(LeftImage, LeftVideo, LeftSpinner, LeftName, pair.Left, _session.Find(pair.Left));
-        ResetPane(RightImage, RightVideo, RightSpinner, RightName, pair.Right, _session.Find(pair.Right));
+        ResetPane(LeftImage, LeftVideo, LeftSpinner, LeftName, pair.Left);
+        ResetPane(RightImage, RightVideo, RightSpinner, RightName, pair.Right);
         OverlayFolder.Text = _session.FolderName;
-        OverlayStats.Text = $"Session {_session.SessionVotes}   ·   Unranked {_session.UnrankedCount}";
+        OverlayUnranked.Text = _session.UnrankedCount.ToString("N0");
+        OverlaySession.Text = _session.SessionVotes.ToString("N0");
+        var progress = LibraryProgress.Of(_session.Records);
+        OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
+        ConfidenceFill.Width = 232 * progress;
 
         _pipeline.Show(pair.Left, pair.Right);
         foreach (var warm in _session.WarmPairs)
@@ -135,13 +146,12 @@ public partial class MainWindow : Window
         MediaElement video,
         TextBlock spinner,
         TextBlock name,
-        MediaId id,
-        MediaRecord record)
+        MediaId id)
     {
         StopVideo(video);
         image.Source = null;
         name.Text = id.Filename;
-        spinner.Visibility = record.Kind == MediaKind.Video ? Visibility.Visible : Visibility.Collapsed;
+        spinner.Visibility = Visibility.Visible;
     }
 
     private void OnFrameReady(MediaId id, PreparedFrame frame)
@@ -214,8 +224,16 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnLeftClick(object sender, MouseButtonEventArgs e) => Choose(left: true);
-    private void OnRightClick(object sender, MouseButtonEventArgs e) => Choose(left: false);
+    private void OnLeftClick(object sender, MouseButtonEventArgs e) => _ = ChooseAsync(left: true);
+    private void OnRightClick(object sender, MouseButtonEventArgs e) => _ = ChooseAsync(left: false);
+
+    private void OnHelpEnter(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Visible;
+    private void OnHelpLeave(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Collapsed;
+
+    private void OnDiscardLeft(object sender, RoutedEventArgs e) { /* wired in the actions slice */ }
+    private void OnDiscardRight(object sender, RoutedEventArgs e) { }
+    private void OnSpecialLeft(object sender, RoutedEventArgs e) { }
+    private void OnSpecialRight(object sender, RoutedEventArgs e) { }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
@@ -246,11 +264,11 @@ public partial class MainWindow : Window
         switch (e.Key)
         {
             case Key.Left:
-                Choose(left: true);
+                _ = ChooseAsync(left: true);
                 e.Handled = true;
                 break;
             case Key.Right:
-                Choose(left: false);
+                _ = ChooseAsync(left: false);
                 e.Handled = true;
                 break;
             case Key.Down:
@@ -261,21 +279,42 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Choose(bool left)
+    private async Task ChooseAsync(bool left)
     {
         if (_busy || _session is null)
             return;
         _busy = true;
         try
         {
+            if (left)
+            {
+                LeftScale.ScaleX = LeftScale.ScaleY = 0.95;
+                RightPane.Opacity = 0.4;
+            }
+            else
+            {
+                RightScale.ScaleX = RightScale.ScaleY = 0.95;
+                LeftPane.Opacity = 0.4;
+            }
+
+            await Task.Delay(150);
             if (left) _session.VoteLeft();
             else _session.VoteRight();
             ShowCurrent();
         }
         finally
         {
+            ResetPaneTransforms();
             _busy = false;
         }
+    }
+
+    private void ResetPaneTransforms()
+    {
+        LeftScale.ScaleX = LeftScale.ScaleY = 1;
+        RightScale.ScaleX = RightScale.ScaleY = 1;
+        LeftPane.Opacity = 1;
+        RightPane.Opacity = 1;
     }
 
     private void Skip()

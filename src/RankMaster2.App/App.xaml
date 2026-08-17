@@ -3,5 +3,85 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <FontFamily x:Key="Icons">Segoe MDL2 Assets</FontFamily>
+
+        <SolidColorBrush x:Key="Ink" Color="#E5E7EB"/>
+        <SolidColorBrush x:Key="Muted" Color="#71717A"/>
+        <SolidColorBrush x:Key="Blue400" Color="#60A5FA"/>
+        <SolidColorBrush x:Key="Blue300" Color="#93C5FD"/>
+        <SolidColorBrush x:Key="Orange400" Color="#FB923C"/>
+        <SolidColorBrush x:Key="Red400" Color="#F87171"/>
+        <SolidColorBrush x:Key="Purple400" Color="#C084FC"/>
+        <SolidColorBrush x:Key="CardBg" Color="#99000000"/>
+        <SolidColorBrush x:Key="CardBorder" Color="#1AFFFFFF"/>
+        <SolidColorBrush x:Key="PaneRule" Color="#111827"/>
+
+        <Style x:Key="StartButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#1AFFFFFF"/>
+            <Setter Property="BorderBrush" Value="#1AFFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="16,16"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ResumeButton" TargetType="Button" BasedOn="{StaticResource StartButton}">
+            <Setter Property="Background" Value="#332563EB"/>
+            <Setter Property="BorderBrush" Value="#4D3B82F6"/>
+        </Style>
+
+        <Style x:Key="IconCircle" TargetType="Button">
+            <Setter Property="Width" Value="48"/>
+            <Setter Property="Height" Value="48"/>
+            <Setter Property="Foreground" Value="#80FFFFFF"/>
+            <Setter Property="Background" Value="#66000000"/>
+            <Setter Property="BorderBrush" Value="#1AFFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="24">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1AFFFFFF"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Resources>
 </Application>

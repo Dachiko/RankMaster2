@@ -19,6 +19,13 @@ public class TrueSkillTests
     }
 
     [Fact]
+    public void LibraryProgress_IsZeroOnFreshLibrary()
+    {
+        var rec = new MediaRecord(new MediaId("a.jpg"), MediaKind.Still, RankingConstants.DefaultRating, 0, 0, 0);
+        Assert.Equal(0, LibraryProgress.Of([rec]));
+    }
+
+    [Fact]
     public void ConservativeScore_IsMuMinusThreeSigma()
     {
         var r = new Rating(26, 2);

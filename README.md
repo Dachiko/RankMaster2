@@ -13,7 +13,7 @@ Spec is the source of truth. Compare loop runs: fullscreen, save on each choice,
 | SPEC.md / this README | Living docs — update when behavior changes |
 | Ranking (TrueSkill + pair picker) | Implemented + tests |
 | Catalog (scan, v1 JSON, media policy) | Implemented + tests |
-| Pipeline / compare UI | Fullscreen compare, sequential prefetch (`PrefetchPairs = 2`), save on each vote/skip |
+| Pipeline / compare UI | Fullscreen compare (RankMaster chrome), sequential prefetch (`PrefetchPairs = 2`), save on each vote/skip |
 | Actions (discard / special / rename) | Stubbed |
 
 `PrefetchPairs` defaults to **2**. Change `MediaPipeline.DefaultPrefetchPairs` (the one knob).
