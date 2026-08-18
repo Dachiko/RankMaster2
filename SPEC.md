@@ -79,7 +79,7 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 - **Still:** paint the first decodable image as soon as one exists; refine in place if a better decode arrives. No spinner if any pixels can be shown. Baseline JPEG/PNG on a slow disk may have no pixels until the read finishes — that is acceptable.
 - **Video:** spinner until a frame can play, then autoplay, loop, muted, no controls. Two videos may play at once.
 - Overlay (start + ranking): folder name, session vote count, unranked count (`matches == 0`). No tier names, no match-history dots.
-- Help: a small hover/click cheat sheet of keys is fine.
+- Help: a small cheat sheet of keys. Hover the `?` to show it; move away to hide it (unless F1 opened it). `F1` toggles it. `Esc` still quits the process.
 
 ### Keys
 
@@ -90,6 +90,7 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 | `1` / `2` | Move left / right to `discarded/` |
 | `4` / `5` | Move left / right to `special 1/` |
 | `O` | Open folder |
+| `F1` | Toggle the help sheet (does not quit) |
 | `Ctrl+S` | Save JSON now (redundant if the last action already saved) |
 | `Ctrl+Z` | Undo **last move** only |
 | `Esc` | **Quit immediately.** Cancel any in-flight select cue (do not vote). The pair on screen is unseen. Prior choices are already on disk. |

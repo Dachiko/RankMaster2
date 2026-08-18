@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private bool _exiting;
     private bool _renaming;
     private bool _inShowCurrent;
+    private bool _helpPinned;
     private readonly VlcRuntime _vlc;
     private readonly VlcFramePlayer _leftVideo;
     private readonly VlcFramePlayer _rightVideo;
@@ -49,6 +50,7 @@ public partial class MainWindow : Window
         _loadTimer.Tick += (_, _) => RefreshLoadProgress();
         Closed += (_, _) =>
         {
+            CloseHelp();
             _loadTimer.Stop();
             _leftVideo.Dispose();
             _rightVideo.Dispose();
@@ -367,8 +369,48 @@ public partial class MainWindow : Window
             _ = ChooseAsync(left: false);
     }
 
-    private void OnHelpEnter(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Visible;
-    private void OnHelpLeave(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Collapsed;
+    private void OnHelpEnter(object sender, MouseEventArgs e) => SetHelpOpen(true);
+
+    private void OnHelpLeave(object sender, MouseEventArgs e) =>
+        Dispatcher.BeginInvoke(HideHelpIfUnpinned, DispatcherPriority.Input);
+
+    private void HideHelpIfUnpinned()
+    {
+        if (_helpPinned || _exiting)
+            return;
+        if (HelpButton.IsMouseOver)
+            return;
+        if (HelpPopup.IsOpen && HelpPopup.Child is { IsMouseOver: true })
+            return;
+        SetHelpOpen(false);
+    }
+
+    private void ToggleHelp()
+    {
+        if (HelpPopup.IsOpen)
+        {
+            _helpPinned = false;
+            SetHelpOpen(false);
+        }
+        else
+        {
+            _helpPinned = true;
+            SetHelpOpen(true);
+        }
+    }
+
+    private void SetHelpOpen(bool open)
+    {
+        if (HelpPopup.IsOpen == open)
+            return;
+        HelpPopup.IsOpen = open;
+    }
+
+    private void CloseHelp()
+    {
+        _helpPinned = false;
+        SetHelpOpen(false);
+    }
 
     private void OnDiscardLeft(object sender, RoutedEventArgs e) => MoveCurrent(left: true, special: false);
     private void OnDiscardRight(object sender, RoutedEventArgs e) => MoveCurrent(left: false, special: false);
@@ -391,6 +433,7 @@ public partial class MainWindow : Window
             return;
 
         _renaming = true;
+        CloseHelp();
         LeaveCompare();
         RenamePanel.Visibility = Visibility.Visible;
         RenameStatus.Text = "Backing up and renaming…";
@@ -497,8 +540,17 @@ public partial class MainWindow : Window
             if (_renaming)
                 return;
             _exiting = true;
+            CloseHelp();
             StopSelectCue();
             Application.Current.Shutdown();
+            return;
+        }
+
+        if (e.Key == Key.F1)
+        {
+            e.Handled = true;
+            if (!_renaming)
+                ToggleHelp();
             return;
         }
 

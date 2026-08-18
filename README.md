@@ -55,6 +55,7 @@ Opens the same `rankmaster_db.json` as Rank Master 1 (`version: 1`). You do not 
 | `1` `2` | Discard (to `discarded/`) |
 | `4` `5` | Move to `special 1/` |
 | `O` | Open folder |
+| `F1` | Toggle help |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` | Undo last move |
 | `Esc` | Quit immediately (current pair is not saved as seen) |
