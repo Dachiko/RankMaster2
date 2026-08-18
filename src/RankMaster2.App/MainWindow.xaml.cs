@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly VideoSlot _rightSlot = new();
     private Storyboard? _selectCue;
     private DispatcherTimer? _toastTimer;
+    private DispatcherTimer? _loadTimer;
 
     private sealed class VideoSlot
     {
@@ -48,7 +49,13 @@ public partial class MainWindow : Window
             releaseUi: ReleaseUi);
         ApplyExclusiveFullscreen();
         RefreshResumeButton();
-        Closed += (_, _) => _pipeline.Dispose();
+        _loadTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        _loadTimer.Tick += (_, _) => RefreshLoadProgress();
+        Closed += (_, _) =>
+        {
+            _loadTimer.Stop();
+            _pipeline.Dispose();
+        };
     }
 
     private MediaPipeline CreatePipeline()
@@ -150,6 +157,9 @@ public partial class MainWindow : Window
         StopVideo(RightVideo);
         LeftImage.Source = null;
         RightImage.Source = null;
+        LeftLoad.Visibility = Visibility.Collapsed;
+        RightLoad.Visibility = Visibility.Collapsed;
+        _loadTimer?.Stop();
         try { _pipeline.ReleaseAll(); } catch { /* disposed */ }
         if (!_inShowCurrent)
             _suppressMediaFailed = false;
@@ -187,8 +197,9 @@ public partial class MainWindow : Window
 
             ResetPaneTransforms();
             var pair = _session.Current.Value;
-            ResetPane(LeftImage, LeftVideo, LeftSpinner, LeftName, pair.Left);
-            ResetPane(RightImage, RightVideo, RightSpinner, RightName, pair.Right);
+            ResetPane(LeftImage, LeftVideo, LeftLoad, LeftLoadPct, LeftName, pair.Left);
+            ResetPane(RightImage, RightVideo, RightLoad, RightLoadPct, RightName, pair.Right);
+            _loadTimer?.Start();
             OverlayFolder.Text = _session.FolderName;
             OverlayUnranked.Text = _session.UnrankedCount.ToString("N0");
             OverlaySession.Text = _session.SessionVotes.ToString("N0");
@@ -212,14 +223,16 @@ public partial class MainWindow : Window
     private void ResetPane(
         System.Windows.Controls.Image image,
         MediaElement video,
-        TextBlock spinner,
+        UIElement load,
+        TextBlock loadPct,
         TextBlock name,
         MediaId id)
     {
         StopVideo(video);
         image.Source = null;
         name.Text = id.Filename;
-        spinner.Visibility = Visibility.Visible;
+        loadPct.Text = "0%";
+        load.Visibility = Visibility.Visible;
     }
 
     private void OnFrameReady(MediaId id, PreparedFrame frame)
@@ -228,9 +241,9 @@ public partial class MainWindow : Window
             return;
         var pair = _session.Current.Value;
         if (pair.Left == id)
-            ApplyFrame(LeftImage, LeftVideo, LeftSpinner, frame);
+            ApplyFrame(LeftImage, LeftVideo, LeftLoad, frame);
         else if (pair.Right == id)
-            ApplyFrame(RightImage, RightVideo, RightSpinner, frame);
+            ApplyFrame(RightImage, RightVideo, RightLoad, frame);
     }
 
     private void OnFrameFailed(MediaId id)
@@ -263,7 +276,7 @@ public partial class MainWindow : Window
     private void ApplyFrame(
         System.Windows.Controls.Image image,
         MediaElement video,
-        TextBlock spinner,
+        UIElement load,
         PreparedFrame frame)
     {
         if (frame.Kind == MediaKind.Video)
@@ -277,21 +290,24 @@ public partial class MainWindow : Window
             var gen = slot.Generation;
             var path = frame.VideoPath;
             slot.ExpectedPath = path;
+            load.Visibility = Visibility.Visible;
             // Assign Source after Normal-priority MediaFailed from Close() has run.
+            // Manual LoadedBehavior does not open until Play() is called.
             Dispatcher.BeginInvoke(() =>
             {
                 if (slot.Generation != gen || slot.ExpectedPath != path)
                     return;
                 if (_session?.Current is not { } pair || !pair.Contains(new MediaId(Path.GetFileName(path))))
                     return;
-                video.Source = new Uri(path);
+                video.Source = new Uri(path, UriKind.Absolute);
+                try { video.Play(); } catch { /* MediaOpened retries */ }
             }, DispatcherPriority.Background);
             return;
         }
 
         StopVideo(video);
         image.Source = frame.Still;
-        spinner.Visibility = Visibility.Collapsed;
+        load.Visibility = Visibility.Collapsed;
     }
 
     private VideoSlot SlotOf(MediaElement video) =>
@@ -355,16 +371,86 @@ public partial class MainWindow : Window
             return;
         slot.Opened = true;
         if (sender == LeftVideo)
-            LeftSpinner.Visibility = Visibility.Collapsed;
+            LeftLoad.Visibility = Visibility.Collapsed;
         if (sender == RightVideo)
-            RightSpinner.Visibility = Visibility.Collapsed;
+            RightLoad.Visibility = Visibility.Collapsed;
         el.Volume = 0;
         el.IsMuted = true;
-        el.Play();
+        try { el.Play(); } catch { /* already playing */ }
     }
 
-    private void OnLeftClick(object sender, MouseButtonEventArgs e) => _ = ChooseAsync(left: true);
-    private void OnRightClick(object sender, MouseButtonEventArgs e) => _ = ChooseAsync(left: false);
+    private bool BothPanesReady()
+    {
+        if (_session?.Current is not { } pair)
+            return false;
+        return PaneReady(pair.Left, LeftImage, _leftSlot) &&
+               PaneReady(pair.Right, RightImage, _rightSlot);
+    }
+
+    private static bool PaneReady(MediaId id, System.Windows.Controls.Image image, VideoSlot slot)
+    {
+        var kind = MediaExtensions.KindOf(id.Filename);
+        if (kind == MediaKind.Video)
+            return slot.Opened;
+        return image.Source is not null;
+    }
+
+    private void RefreshLoadProgress()
+    {
+        if (RankPanel.Visibility != Visibility.Visible)
+        {
+            _loadTimer?.Stop();
+            return;
+        }
+
+        UpdateLoadChrome(LeftVideo, LeftLoad, LeftLoadPct, _leftSlot, LeftImage);
+        UpdateLoadChrome(RightVideo, RightLoad, RightLoadPct, _rightSlot, RightImage);
+        if (BothPanesReady())
+            _loadTimer?.Stop();
+    }
+
+    private static void UpdateLoadChrome(
+        MediaElement video,
+        UIElement load,
+        TextBlock pct,
+        VideoSlot slot,
+        System.Windows.Controls.Image image)
+    {
+        if (load.Visibility != Visibility.Visible)
+            return;
+        if (slot.Opened || image.Source is not null)
+        {
+            load.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        double progress = 0;
+        if (video.Source is not null)
+        {
+            try
+            {
+                progress = Math.Max(video.DownloadProgress, video.BufferingProgress);
+            }
+            catch (InvalidOperationException)
+            {
+                progress = 0;
+            }
+        }
+
+        pct.Text = $"{Math.Clamp((int)Math.Round(progress * 100), 0, 99)}%";
+    }
+
+    private void OnLeftClick(object sender, MouseButtonEventArgs e)
+    {
+        if (BothPanesReady())
+            _ = ChooseAsync(left: true);
+    }
+
+    private void OnRightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (BothPanesReady())
+            _ = ChooseAsync(left: false);
+    }
 
     private void OnHelpEnter(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Visible;
     private void OnHelpLeave(object sender, MouseEventArgs e) => HelpPanel.Visibility = Visibility.Collapsed;
@@ -412,7 +498,7 @@ public partial class MainWindow : Window
 
     private void MoveCurrent(bool left, bool special)
     {
-        if (_busy || _session?.Current is null)
+        if (_busy || _session?.Current is null || !BothPanesReady())
             return;
         _busy = true;
         try
@@ -568,7 +654,7 @@ public partial class MainWindow : Window
 
     private async Task ChooseAsync(bool left)
     {
-        if (_busy || _session is null || _exiting)
+        if (_busy || _session is null || _exiting || !BothPanesReady())
             return;
         _busy = true;
         try
@@ -662,7 +748,7 @@ public partial class MainWindow : Window
 
     private void Skip()
     {
-        if (_busy || _session is null)
+        if (_busy || _session is null || !BothPanesReady())
             return;
         _busy = true;
         try
