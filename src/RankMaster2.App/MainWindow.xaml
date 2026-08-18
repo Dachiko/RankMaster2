@@ -226,7 +226,7 @@
                                 <RowDefinition Height="22"/><RowDefinition Height="22"/>
                                 <RowDefinition Height="22"/><RowDefinition Height="22"/>
                                 <RowDefinition Height="22"/><RowDefinition Height="22"/>
-                                <RowDefinition Height="22"/>
+                                <RowDefinition Height="22"/><RowDefinition Height="22"/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Foreground="#9CA3AF" Text="Select Left"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" FontFamily="Consolas" Text="[←]"/>
@@ -240,8 +240,10 @@
                             <TextBlock Grid.Row="4" Grid.Column="1" FontFamily="Consolas" Text="[4] / [5]"/>
                             <TextBlock Grid.Row="5" Foreground="#9CA3AF" Text="Open"/>
                             <TextBlock Grid.Row="5" Grid.Column="1" FontFamily="Consolas" Text="[O]"/>
-                            <TextBlock Grid.Row="6" Foreground="#9CA3AF" Text="Exit"/>
-                            <TextBlock Grid.Row="6" Grid.Column="1" FontFamily="Consolas" Text="[Esc]"/>
+                            <TextBlock Grid.Row="6" Foreground="#9CA3AF" Text="Undo move"/>
+                            <TextBlock Grid.Row="6" Grid.Column="1" FontFamily="Consolas" Text="[Ctrl+Z]"/>
+                            <TextBlock Grid.Row="7" Foreground="#9CA3AF" Text="Exit"/>
+                            <TextBlock Grid.Row="7" Grid.Column="1" FontFamily="Consolas" Text="[Esc]"/>
                         </Grid>
                         <TextBlock Text="RankMaster 2" FontFamily="Consolas" FontSize="10"
                                    Foreground="#52525B" TextAlignment="Center" Margin="0,12,0,0"/>

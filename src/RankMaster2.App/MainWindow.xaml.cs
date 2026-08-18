@@ -229,7 +229,7 @@ public partial class MainWindow : Window
 
     private void OnFrameFailed(MediaId id)
     {
-        if (_session is null || _busy || _suppressMediaFailed || _inShowCurrent)
+        if (_session is null || _busy || _inShowCurrent)
             return;
         if (_session.Current is not { } pair || !pair.Contains(id))
             return;
@@ -503,6 +503,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            e.Handled = true;
+            if (_session is not null && !_renaming)
+                UndoMove();
+            return;
+        }
+
         if (RankPanel.Visibility != Visibility.Visible || _session is null)
             return;
 
@@ -511,13 +519,6 @@ public partial class MainWindow : Window
             e.Handled = true;
             try { _session.Save(); }
             catch (Exception ex) { ShowToast(ex.Message); }
-            return;
-        }
-
-        if (e.Key == Key.Z && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
-        {
-            e.Handled = true;
-            UndoMove();
             return;
         }
 

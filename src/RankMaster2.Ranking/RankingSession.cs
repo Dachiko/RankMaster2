@@ -179,6 +179,7 @@ public sealed class RankingSession
 
     private void Advance()
     {
+        Current = null;
         Current = _warm.Count > 0 ? _warm.Dequeue() : Pick();
         FillWarm();
     }

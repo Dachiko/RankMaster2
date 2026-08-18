@@ -233,7 +233,7 @@ If applying recent would leave fewer than 2 candidates, ignore **recent** only. 
 
 Do **not** sample 50 random files. Sorting 20k records is fine.
 
-Prefetch: the Shell may ask for the next pair before the current vote. That pair is allowed to be one vote stale. Do not increment `impressions` until the user votes or skips that pair.
+Prefetch: the Shell may ask for the next pair before the current vote. That pair is allowed to be one vote stale. Do not increment `impressions` until the user votes or skips that pair. After a vote/skip, clear `Current` before `Pick()` so a 2–3 file library can pair again (the just-finished pair must not stay reserved).
 
 ### Catalog (`RankMaster2.Catalog`) — disk names and JSON only
 

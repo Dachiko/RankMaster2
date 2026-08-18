@@ -60,6 +60,47 @@ public class RankingSessionTests
         Assert.Contains(session.Records, r => r.Id == gone!.Id);
     }
 
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Vote_OnSmallLibrary_KeepsACurrentPair(int count)
+    {
+        var files = Enumerable.Range(0, count).Select(i => Rec($"{(char)('a' + i)}.jpg")).ToArray();
+        var session = new RankingSession("mem", new MemoryCatalog(files), new TrueSkill(), new PairSelector(), 2);
+        Assert.True(session.Start());
+        Assert.NotNull(session.Current);
+        session.VoteLeft();
+        Assert.NotNull(session.Current);
+        Assert.Equal(2, session.Current!.Value.Left == session.Current.Value.Right ? 0 : 2);
+        Assert.NotEqual(session.Current.Value.Left, session.Current.Value.Right);
+    }
+
+    [Fact]
+    public void Skip_OnTwoFiles_KeepsACurrentPair()
+    {
+        var session = new RankingSession("mem", new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg")), new TrueSkill(), new PairSelector(), 2);
+        Assert.True(session.Start());
+        session.Skip();
+        Assert.NotNull(session.Current);
+        Assert.NotEqual(session.Current!.Value.Left, session.Current.Value.Right);
+    }
+
+    [Fact]
+    public void Vote_MixedTwoStillsAndVideo_KeepsACurrentPair()
+    {
+        var session = new RankingSession(
+            "mem",
+            new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.mp4")),
+            new TrueSkill(),
+            new PairSelector(),
+            2);
+        Assert.True(session.Start());
+        session.VoteLeft();
+        Assert.NotNull(session.Current);
+        Assert.EndsWith(".jpg", session.Current!.Value.Left.Filename);
+        Assert.EndsWith(".jpg", session.Current.Value.Right.Filename);
+    }
+
     [Fact]
     public void Restore_AfterLastDrop_ResumesPair()
     {
