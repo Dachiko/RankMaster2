@@ -23,6 +23,9 @@ publish/
 AppPackages/
 BundleArtifacts/
 
+# Debug
+debug.log
+
 # OS
 Thumbs.db
 Desktop.ini

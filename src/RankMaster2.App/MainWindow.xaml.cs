@@ -47,6 +47,8 @@ public partial class MainWindow : Window
             pipeline: () => _pipeline,
             session: () => _session,
             releaseUi: ReleaseUi);
+        DebugLog.DiskSavesEnabled = false;
+        DebugLog.Write("==== app start (disk ranking saves OFF) ====");
         ApplyExclusiveFullscreen();
         RefreshResumeButton();
         _loadTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
@@ -174,9 +176,13 @@ public partial class MainWindow : Window
     private void ShowCurrent()
     {
         if (_inShowCurrent)
+        {
+            DebugLog.Write("ShowCurrent REENTER ignored");
             return;
+        }
         _inShowCurrent = true;
         _suppressMediaFailed = true;
+        DebugLog.Write($"ShowCurrent ENTER current={_session?.Current} unranked={_session?.UnrankedCount} suppress=1");
         try
         {
             if (_session?.Current is null)
@@ -207,6 +213,7 @@ public partial class MainWindow : Window
             OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
             ConfidenceFill.Width = 232 * progress;
 
+            DebugLog.Write($"ShowCurrent pair={pair.Left.Filename}|{pair.Right.Filename}");
             _pipeline.Show(pair.Left, pair.Right);
             foreach (var warm in _session.WarmPairs)
                 _pipeline.Enqueue(warm);
@@ -214,9 +221,11 @@ public partial class MainWindow : Window
         finally
         {
             _inShowCurrent = false;
-            // WPF posts MediaFailed at DispatcherPriority.Normal after Close().
-            // Clear the suppress flag only after those queued events run.
-            Dispatcher.BeginInvoke(() => { _suppressMediaFailed = false; }, DispatcherPriority.Background);
+            Dispatcher.BeginInvoke(() =>
+            {
+                _suppressMediaFailed = false;
+                DebugLog.Write("ShowCurrent suppress->0 (Background)");
+            }, DispatcherPriority.Background);
         }
     }
 
@@ -237,6 +246,7 @@ public partial class MainWindow : Window
 
     private void OnFrameReady(MediaId id, PreparedFrame frame)
     {
+        DebugLog.Write($"OnFrameReady {id.Filename} kind={frame.Kind} preview={frame.IsPreview} current={_session?.Current}");
         if (_session?.Current is null)
             return;
         var pair = _session.Current.Value;
@@ -248,16 +258,28 @@ public partial class MainWindow : Window
 
     private void OnFrameFailed(MediaId id)
     {
+        DebugLog.Write($"OnFrameFailed {id.Filename} busy={_busy} inShow={_inShowCurrent} suppress={_suppressMediaFailed} current={_session?.Current}");
         if (_session is null || _busy || _inShowCurrent)
+        {
+            DebugLog.Write($"OnFrameFailed IGNORE {id.Filename}");
             return;
+        }
         if (_session.Current is not { } pair || !pair.Contains(id))
+        {
+            DebugLog.Write($"OnFrameFailed IGNORE not-in-current {id.Filename}");
             return;
+        }
+        DebugLog.Write($"OnFrameFailed DROP {id.Filename}");
         _session.Drop(id);
         ShowCurrent();
     }
 
     private void OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
     {
+        var side = sender == LeftVideo ? "L" : sender == RightVideo ? "R" : "?";
+        var err = e.ErrorException;
+        var failedEl = sender as MediaElement;
+        DebugLog.Write($"OnMediaFailed {side} suppress={_suppressMediaFailed} inShow={_inShowCurrent} src={(failedEl is null ? "" : SourcePath(failedEl))} expected={SlotOfOrNull(failedEl)?.ExpectedPath} err={err?.GetType().Name}:{err?.Message}");
         if (_suppressMediaFailed || _inShowCurrent || _exiting)
             return;
         if (RankPanel.Visibility != Visibility.Visible)
@@ -266,12 +288,21 @@ public partial class MainWindow : Window
             return;
         var slot = SlotOf(el);
         if (slot.ExpectedPath is null || el.Source is null)
+        {
+            DebugLog.Write($"OnMediaFailed {side} IGNORE src/expected null");
             return;
+        }
         if (!PathsMatch(SourcePath(el), slot.ExpectedPath))
+        {
+            DebugLog.Write($"OnMediaFailed {side} IGNORE path mismatch");
             return;
+        }
         var id = new MediaId(Path.GetFileName(slot.ExpectedPath));
         OnFrameFailed(id);
     }
+
+    private VideoSlot? SlotOfOrNull(MediaElement? video) =>
+        video is null ? null : SlotOf(video);
 
     private void ApplyFrame(
         System.Windows.Controls.Image image,
@@ -291,16 +322,24 @@ public partial class MainWindow : Window
             var path = frame.VideoPath;
             slot.ExpectedPath = path;
             load.Visibility = Visibility.Visible;
+            DebugLog.Write($"ApplyFrame video {path} gen={gen} queue Source+Play");
             // Assign Source after Normal-priority MediaFailed from Close() has run.
             // Manual LoadedBehavior does not open until Play() is called.
             Dispatcher.BeginInvoke(() =>
             {
                 if (slot.Generation != gen || slot.ExpectedPath != path)
+                {
+                    DebugLog.Write($"ApplyFrame ABORT stale gen={slot.Generation}/{gen} {path}");
                     return;
+                }
                 if (_session?.Current is not { } pair || !pair.Contains(new MediaId(Path.GetFileName(path))))
+                {
+                    DebugLog.Write($"ApplyFrame ABORT not current {path}");
                     return;
+                }
+                DebugLog.Write($"ApplyFrame SET Source+Play {path}");
                 video.Source = new Uri(Path.GetFullPath(path));
-                try { video.Play(); } catch { /* MediaOpened retries */ }
+                try { video.Play(); } catch (Exception ex) { DebugLog.Write($"Play threw {ex.Message}"); }
             }, DispatcherPriority.Background);
             return;
         }
@@ -346,6 +385,7 @@ public partial class MainWindow : Window
         slot.Generation++;
         slot.Opened = false;
         slot.ExpectedPath = null;
+        DebugLog.Write($"StopVideo gen={slot.Generation} hadSrc={video.Source}");
         var prior = _suppressMediaFailed;
         _suppressMediaFailed = true;
         try
@@ -381,10 +421,17 @@ public partial class MainWindow : Window
             return;
         var slot = SlotOf(el);
         if (slot.ExpectedPath is null)
+        {
+            DebugLog.Write($"OnVideoOpened IGNORE no expected src={SourcePath(el)}");
             return;
+        }
         if (!PathsMatch(SourcePath(el), slot.ExpectedPath))
+        {
+            DebugLog.Write($"OnVideoOpened IGNORE mismatch src={SourcePath(el)} expected={slot.ExpectedPath}");
             return;
+        }
         slot.Opened = true;
+        DebugLog.Write($"OnVideoOpened OK {slot.ExpectedPath}");
         if (sender == LeftVideo)
             LeftLoad.Visibility = Visibility.Collapsed;
         if (sender == RightVideo)
@@ -670,7 +717,10 @@ public partial class MainWindow : Window
     private async Task ChooseAsync(bool left)
     {
         if (_busy || _session is null || _exiting || !BothPanesReady())
+        {
+            DebugLog.Write($"Choose IGNORE busy={_busy} ready={BothPanesReady()} exiting={_exiting}");
             return;
+        }
         _busy = true;
         try
         {
