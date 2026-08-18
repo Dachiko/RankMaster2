@@ -179,6 +179,12 @@ public partial class MainWindow : Window
                 return;
             }
 
+            SetStartError("");
+            StartPanel.Visibility = Visibility.Collapsed;
+            RankPanel.Visibility = Visibility.Visible;
+            RankPanel.UpdateLayout();
+            UpdatePanelSize();
+
             ResetPaneTransforms();
             var pair = _session.Current.Value;
             ResetPane(LeftImage, LeftVideo, LeftSpinner, LeftName, pair.Left);
