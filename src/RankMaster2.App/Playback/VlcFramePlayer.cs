@@ -47,7 +47,6 @@ internal sealed class VlcFramePlayer : IDisposable
         _player.SetVideoCallbacks(OnLock, null, OnDisplay);
         _player.EncounteredError += OnEncounteredError;
         _player.Buffering += OnBuffering;
-        _player.Playing += OnPlaying;
         _player.EndReached += OnEndReached;
     }
 
@@ -75,7 +74,6 @@ internal sealed class VlcFramePlayer : IDisposable
         ExpectedPath = path;
         BufferPercent = 0;
         Opened = false;
-        DebugLog.Write($"VlcPlay {path} panel={PanelWidth}x{PanelHeight}");
 
         try
         {
@@ -84,14 +82,10 @@ internal sealed class VlcFramePlayer : IDisposable
             media.AddOption(":input-repeat=65535");
             media.AddOption(":avcodec-hw=none");
             if (!_player.Play(media))
-            {
-                DebugLog.Write($"VlcPlay returned false {path}");
                 RaiseFailed(path);
-            }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            DebugLog.Write($"VlcPlay EX {path} {ex.GetType().Name}:{ex.Message}");
             RaiseFailed(path);
         }
     }
@@ -101,21 +95,17 @@ internal sealed class VlcFramePlayer : IDisposable
         _generation++;
         Opened = false;
         BufferPercent = 0;
-        var path = ExpectedPath;
         ExpectedPath = null;
         _suppressError = true;
         try
         {
             var state = _player.State;
             if (state is not VLCState.NothingSpecial and not VLCState.Stopped and not VLCState.Error)
-            {
-                DebugLog.Write($"VlcStop {path} state={state}");
                 _player.Stop();
-            }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            DebugLog.Write($"VlcStop EX {ex.Message}");
+            // not opened
         }
         finally
         {
@@ -141,11 +131,13 @@ internal sealed class VlcFramePlayer : IDisposable
         _disposed = true;
         _player.EncounteredError -= OnEncounteredError;
         _player.Buffering -= OnBuffering;
-        _player.Playing -= OnPlaying;
         _player.EndReached -= OnEndReached;
         Stop();
         try { _player.Dispose(); }
-        catch (Exception ex) { DebugLog.Write($"VlcDispose player {ex.Message}"); }
+        catch (Exception)
+        {
+            // shutting down
+        }
         FreeBuffer();
     }
 
@@ -158,8 +150,6 @@ internal sealed class VlcFramePlayer : IDisposable
         ref uint lines)
     {
         WriteFourCc(chroma, "RV32");
-        var srcW = width;
-        var srcH = height;
         Fit(ref width, ref height);
         width = Math.Max(2, width & ~1u);
         height = Math.Max(2, height & ~1u);
@@ -188,7 +178,6 @@ internal sealed class VlcFramePlayer : IDisposable
             _bitmap = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
         });
 
-        DebugLog.Write($"VlcFormat {ExpectedPath} src={srcW}x{srcH} out={width}x{height} pitch={pitches}");
         return 1;
     }
 
@@ -233,7 +222,6 @@ internal sealed class VlcFramePlayer : IDisposable
 
         Opened = true;
         BufferPercent = 100;
-        DebugLog.Write($"VlcFirstFrame {ExpectedPath} {_width}x{_height}");
         FirstFrame?.Invoke(_bitmap);
     }
 
@@ -241,26 +229,18 @@ internal sealed class VlcFramePlayer : IDisposable
     {
         var path = ExpectedPath;
         var gen = _generation;
-        DebugLog.Write($"VlcError path={path} suppress={_suppressError} state={_player.State}");
         if (_suppressError || path is null)
             return;
         _dispatcher.BeginInvoke(() =>
         {
             if (gen != _generation || ExpectedPath != path)
-            {
-                DebugLog.Write($"VlcError IGNORE stale {path}");
                 return;
-            }
-
             RaiseFailed(path);
         });
     }
 
     private void OnBuffering(object? sender, MediaPlayerBufferingEventArgs e) =>
         BufferPercent = e.Cache;
-
-    private void OnPlaying(object? sender, EventArgs e) =>
-        DebugLog.Write($"VlcPlaying {ExpectedPath}");
 
     private void OnEndReached(object? sender, EventArgs e)
     {
@@ -275,18 +255,14 @@ internal sealed class VlcFramePlayer : IDisposable
                 _player.Position = 0;
                 _player.Play();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                DebugLog.Write($"VlcLoop EX {ex.Message}");
+                // loop restart can fail if Stop already ran
             }
         });
     }
 
-    private void RaiseFailed(string path)
-    {
-        DebugLog.Write($"VlcFailed {path}");
-        Failed?.Invoke(path);
-    }
+    private void RaiseFailed(string path) => Failed?.Invoke(path);
 
     private void Fit(ref uint width, ref uint height)
     {

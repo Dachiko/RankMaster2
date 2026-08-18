@@ -43,8 +43,6 @@ public partial class MainWindow : Window
         _vlc = new VlcRuntime();
         _leftVideo = CreatePlayer(LeftImage, LeftLoad);
         _rightVideo = CreatePlayer(RightImage, RightLoad);
-        DebugLog.DiskSavesEnabled = false;
-        DebugLog.Write("==== app start (disk ranking saves OFF, libvlc) ====");
         ApplyExclusiveFullscreen();
         RefreshResumeButton();
         _loadTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
@@ -184,12 +182,8 @@ public partial class MainWindow : Window
     private void ShowCurrent()
     {
         if (_inShowCurrent)
-        {
-            DebugLog.Write("ShowCurrent REENTER ignored");
             return;
-        }
         _inShowCurrent = true;
-        DebugLog.Write($"ShowCurrent ENTER current={_session?.Current} unranked={_session?.UnrankedCount}");
         try
         {
             if (_session?.Current is null)
@@ -220,7 +214,6 @@ public partial class MainWindow : Window
             OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
             ConfidenceFill.Width = 232 * progress;
 
-            DebugLog.Write($"ShowCurrent pair={pair.Left.Filename}|{pair.Right.Filename}");
             _pipeline.Show(pair.Left, pair.Right);
             foreach (var warm in _session.WarmPairs)
                 _pipeline.Enqueue(warm);
@@ -248,7 +241,6 @@ public partial class MainWindow : Window
 
     private void OnFrameReady(MediaId id, PreparedFrame frame)
     {
-        DebugLog.Write($"OnFrameReady {id.Filename} kind={frame.Kind} preview={frame.IsPreview} current={_session?.Current}");
         if (_session?.Current is null)
             return;
         var pair = _session.Current.Value;
@@ -260,18 +252,10 @@ public partial class MainWindow : Window
 
     private void OnFrameFailed(MediaId id)
     {
-        DebugLog.Write($"OnFrameFailed {id.Filename} busy={_busy} inShow={_inShowCurrent} current={_session?.Current}");
         if (_session is null || _busy || _inShowCurrent)
-        {
-            DebugLog.Write($"OnFrameFailed IGNORE {id.Filename}");
             return;
-        }
         if (_session.Current is not { } pair || !pair.Contains(id))
-        {
-            DebugLog.Write($"OnFrameFailed IGNORE not-in-current {id.Filename}");
             return;
-        }
-        DebugLog.Write($"OnFrameFailed DROP {id.Filename}");
         _session.Drop(id);
         ShowCurrent();
     }
@@ -280,9 +264,7 @@ public partial class MainWindow : Window
     {
         if (_exiting || RankPanel.Visibility != Visibility.Visible)
             return;
-        var id = new MediaId(Path.GetFileName(path));
-        DebugLog.Write($"OnVideoFailed {id.Filename}");
-        OnFrameFailed(id);
+        OnFrameFailed(new MediaId(Path.GetFileName(path)));
     }
 
     private void ApplyFrame(
@@ -297,7 +279,6 @@ public partial class MainWindow : Window
                 return;
             if (player.Opened && PathsMatch(player.ExpectedPath, frame.VideoPath))
                 return;
-            DebugLog.Write($"ApplyFrame video {frame.VideoPath}");
             load.Visibility = Visibility.Visible;
             player.Play(frame.VideoPath);
             return;
@@ -589,10 +570,7 @@ public partial class MainWindow : Window
     private async Task ChooseAsync(bool left)
     {
         if (_busy || _session is null || _exiting || !BothPanesReady())
-        {
-            DebugLog.Write($"Choose IGNORE busy={_busy} ready={BothPanesReady()} exiting={_exiting}");
             return;
-        }
         _busy = true;
         try
         {

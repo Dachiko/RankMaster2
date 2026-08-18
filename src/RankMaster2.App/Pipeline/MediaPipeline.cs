@@ -63,7 +63,6 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
             EvictUnwanted();
         }
 
-        DebugLog.Write($"Pipeline.Show {left.Filename}|{right.Filename}");
         Request(left);
         Request(right);
         PublishCached(left);
@@ -190,9 +189,8 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
                 {
                     LoadOne(id);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    DebugLog.Write($"Pipeline.LoadOne EX {id.Filename} {ex.GetType().Name}:{ex.Message}");
                     RaiseFailed(id);
                 }
             }
@@ -228,7 +226,6 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
 
         if (kind == MediaKind.Video)
         {
-            DebugLog.Write($"Pipeline.LoadOne VIDEO {path}");
             var frame = new PreparedFrame { Kind = MediaKind.Video, VideoPath = path };
             Store(id, frame);
             RaiseReady(id, frame);
@@ -319,10 +316,7 @@ public sealed class MediaPipeline : IMediaPipeline, IDisposable
         void Emit()
         {
             if (!_disposed)
-            {
-                DebugLog.Write($"Pipeline.Failed {id.Filename}");
                 Failed?.Invoke(id);
-            }
         }
         if (_dispatcher.CheckAccess())
             Emit();

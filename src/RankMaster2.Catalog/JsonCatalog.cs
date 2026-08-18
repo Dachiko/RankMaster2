@@ -48,12 +48,6 @@ public sealed class JsonCatalog : ICatalog
 
     public void Save(string folder, IReadOnlyList<MediaRecord> records)
     {
-        if (!DebugLog.DiskSavesEnabled)
-        {
-            DebugLog.Write($"Save SKIPPED (disk writes disabled) folder={folder} records={records.Count}");
-            return;
-        }
-
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, FileName);
         var onDisk = ListTopLevelMedia(folder);

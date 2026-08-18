@@ -71,7 +71,6 @@ public sealed class RankingSession
 
     public MediaRecord? Drop(MediaId id)
     {
-        global::RankMaster2.DebugLog.Write($"Drop ENTER {id.Filename} current={Fmt(Current)} rankable={Eligible().Count} unranked={UnrankedCount}");
         var i = _records.FindIndex(r => r.Id == id);
         if (i < 0)
             return null;
@@ -105,7 +104,6 @@ public sealed class RankingSession
         else
             FillWarm();
 
-        global::RankMaster2.DebugLog.Write($"Drop EXIT {id.Filename} current={Fmt(Current)} rankable={Eligible().Count} unranked={UnrankedCount}");
         return removed;
     }
 
@@ -163,7 +161,6 @@ public sealed class RankingSession
             Replace(l);
             Remember(Current.Value);
             SessionVotes++;
-            global::RankMaster2.DebugLog.Write($"Vote leftWins={leftWins} {winner.Filename} vs {loser.Filename}");
             _catalog.Save(Folder, _records);
             Advance();
         }
@@ -174,9 +171,6 @@ public sealed class RankingSession
         }
     }
 
-    private static string Fmt(Pair? pair) =>
-        pair is { } p ? $"{p.Left.Filename}|{p.Right.Filename}" : "null";
-
     private IReadOnlyList<MediaRecord> Eligible()
     {
         var policy = MediaExtensions.RankPolicy(_records.Select(r => r.Kind));
@@ -185,10 +179,8 @@ public sealed class RankingSession
 
     private void Advance()
     {
-        var hadWarm = _warm.Count;
         Current = null;
-        Current = hadWarm > 0 ? _warm.Dequeue() : Pick();
-        global::RankMaster2.DebugLog.Write($"Advance warmWas={hadWarm} now={Fmt(Current)}");
+        Current = _warm.Count > 0 ? _warm.Dequeue() : Pick();
         FillWarm();
     }
 

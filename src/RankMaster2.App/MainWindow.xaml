@@ -29,7 +29,7 @@
                     </TextBlock.Foreground>
                     RankMaster
                 </TextBlock>
-                <TextBlock Text="2 · libvlc" Foreground="#A1A1AA" TextAlignment="Center" Margin="0,0,0,28"/>
+                <TextBlock Text="2" Foreground="#A1A1AA" TextAlignment="Center" Margin="0,0,0,28"/>
 
                 <Button Style="{StaticResource StartButton}" Click="OnOpenFolder" Margin="0,0,0,12">
                     <StackPanel Orientation="Horizontal">

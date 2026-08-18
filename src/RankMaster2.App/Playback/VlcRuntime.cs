@@ -14,7 +14,6 @@ internal sealed class VlcRuntime : IDisposable
         if (!File.Exists(Path.Combine(nativeDir, "libvlc.dll")))
             throw new FileNotFoundException("libvlc.dll not found next to the app.", nativeDir);
         Core.Initialize(nativeDir);
-        DebugLog.Write($"VlcRuntime natives {nativeDir}");
         Lib = new LibVLC(
             "--intf=dummy",
             "--aout=dummy",
@@ -25,12 +24,14 @@ internal sealed class VlcRuntime : IDisposable
             "--avcodec-hw=none",
             "--drop-late-frames",
             "--skip-frames");
-        DebugLog.Write("VlcRuntime ready");
     }
 
     public void Dispose()
     {
         try { Lib.Dispose(); }
-        catch (Exception ex) { DebugLog.Write($"VlcRuntime dispose {ex.Message}"); }
+        catch (Exception)
+        {
+            // shutting down
+        }
     }
 }
