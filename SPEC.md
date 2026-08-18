@@ -271,7 +271,7 @@ Release(id)                 // drop decode + file lock
 CancelWarmContaining(id)    // discard any queued pair that includes id
 ```
 
-When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: percent loader). `LoadedBehavior=Manual` does not open until `Play()` — after deferring `Source`, call `Play()` so `MediaOpened` can fire. Votes/skip/discard are ignored until both panes are ready. Each waiting pane shows `DownloadProgress`/`BufferingProgress` as a percent. `MediaFailed` drops that id only when the failing `Source` still matches the path this pane was asked to open. `Stop`/`Close` events are posted later on the dispatcher — do not set the next `Source` on the same turn as `Close()`, and ignore `MediaEnded` until `MediaOpened` for that generation.
+When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: percent loader). Use `LoadedBehavior=Pause` so setting `Source` opens the file. Do not `Close()` on pair swap — after `Close()` the player often never opens again. Votes/skip/discard are ignored until both panes are ready. Each waiting pane shows download/buffer percent. `MediaFailed` drops that id only when the failing `Source` still matches the path this pane was asked to open. Defer the next `Source` so teardown `MediaFailed` cannot `Drop` the new pair.
 
 ### Actions (`RankMaster2.Actions`)
 

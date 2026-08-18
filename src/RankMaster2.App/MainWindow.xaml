@@ -77,7 +77,7 @@
                 </Grid.RenderTransform>
                 <Image x:Name="LeftImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <MediaElement x:Name="LeftVideo" Stretch="Uniform" Volume="0" IsMuted="True"
-                              LoadedBehavior="Manual" UnloadedBehavior="Manual"
+                              LoadedBehavior="Pause" UnloadedBehavior="Manual"
                               MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"
                               MediaFailed="OnMediaFailed"/>
                 <Border x:Name="LeftFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
@@ -105,7 +105,7 @@
                 </Grid.RenderTransform>
                 <Image x:Name="RightImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <MediaElement x:Name="RightVideo" Stretch="Uniform" Volume="0" IsMuted="True"
-                              LoadedBehavior="Manual" UnloadedBehavior="Manual"
+                              LoadedBehavior="Pause" UnloadedBehavior="Manual"
                               MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"
                               MediaFailed="OnMediaFailed"/>
                 <Border x:Name="RightFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>

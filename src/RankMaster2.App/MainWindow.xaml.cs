@@ -267,7 +267,7 @@ public partial class MainWindow : Window
         var slot = SlotOf(el);
         if (slot.ExpectedPath is null || el.Source is null)
             return;
-        if (!SameVideo(el, slot.ExpectedPath))
+        if (!PathsMatch(SourcePath(el), slot.ExpectedPath))
             return;
         var id = new MediaId(Path.GetFileName(slot.ExpectedPath));
         OnFrameFailed(id);
@@ -282,7 +282,7 @@ public partial class MainWindow : Window
         if (frame.Kind == MediaKind.Video)
         {
             var slot = SlotOf(video);
-            if (slot.Opened && SameVideo(video, frame.VideoPath))
+            if (slot.Opened && PathsMatch(SourcePath(video), frame.VideoPath))
                 return;
             StopVideo(video);
             if (frame.VideoPath is null)
@@ -299,7 +299,7 @@ public partial class MainWindow : Window
                     return;
                 if (_session?.Current is not { } pair || !pair.Contains(new MediaId(Path.GetFileName(path))))
                     return;
-                video.Source = new Uri(path, UriKind.Absolute);
+                video.Source = new Uri(Path.GetFullPath(path));
                 try { video.Play(); } catch { /* MediaOpened retries */ }
             }, DispatcherPriority.Background);
             return;
@@ -313,18 +313,31 @@ public partial class MainWindow : Window
     private VideoSlot SlotOf(MediaElement video) =>
         video == LeftVideo ? _leftSlot : _rightSlot;
 
-    private static bool SameVideo(MediaElement video, string? path)
+    private static string? SourcePath(MediaElement video)
     {
-        if (path is null || video.Source is null)
+        if (video.Source is null)
+            return null;
+        try { return video.Source.LocalPath; }
+        catch (InvalidOperationException) { return video.Source.OriginalString; }
+    }
+
+    private static bool PathsMatch(string? a, string? b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
             return false;
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+            return true;
         try
         {
-            return string.Equals(video.Source.LocalPath, path, StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase))
+                return true;
         }
-        catch (InvalidOperationException)
+        catch (Exception)
         {
-            return false;
+            // not a filesystem path
         }
+
+        return string.Equals(Path.GetFileName(a), Path.GetFileName(b), StringComparison.OrdinalIgnoreCase);
     }
 
     private void StopVideo(MediaElement video)
@@ -338,7 +351,7 @@ public partial class MainWindow : Window
         try
         {
             try { video.Stop(); } catch { /* not opened */ }
-            try { video.Close(); } catch { /* not opened */ }
+            // Do not Close() — after Close a MediaElement often never opens again.
             video.Source = null;
         }
         finally
@@ -354,7 +367,7 @@ public partial class MainWindow : Window
         if (sender is not MediaElement el)
             return;
         var slot = SlotOf(el);
-        if (!slot.Opened || !SameVideo(el, slot.ExpectedPath))
+        if (!slot.Opened || !PathsMatch(SourcePath(el), slot.ExpectedPath))
             return;
         el.Position = TimeSpan.Zero;
         el.Play();
@@ -367,7 +380,9 @@ public partial class MainWindow : Window
         if (sender is not MediaElement el)
             return;
         var slot = SlotOf(el);
-        if (!SameVideo(el, slot.ExpectedPath))
+        if (slot.ExpectedPath is null)
+            return;
+        if (!PathsMatch(SourcePath(el), slot.ExpectedPath))
             return;
         slot.Opened = true;
         if (sender == LeftVideo)
