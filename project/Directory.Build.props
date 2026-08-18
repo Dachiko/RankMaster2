@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- Bump after every shipped change. Patch = tiny fix. Minor = new capability.
+         Major = large feature or engine rewrite. -->
+    <Version>1.0.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Product>Rank Master 2</Product>
+    <AssemblyTitle>Rank Master 2</AssemblyTitle>
+  </PropertyGroup>
+</Project>

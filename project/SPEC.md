@@ -12,7 +12,7 @@ Repo: `C:\Utils\rank master 2`
 ## Stack
 
 - .NET 8 (Windows), WPF
-- Portable folder publish later (`dotnet publish -r win-x64 --self-contained`). No installer, no Store, no browser shell
+- Single-file self-contained exe at `C:\Utils\rank master 2\RankMaster2.exe`. No installer, no Store, no browser shell
 - No SQLite. No Chromium. No Python
 
 ## Non-goals (v1)
@@ -288,18 +288,24 @@ Borderless fullscreen WPF window, keys, two surfaces, start/resume, overlay. Tal
 
 ```
 C:\Utils\rank master 2\
-  README.md
-  SPEC.md
-  RankMaster2.sln
-  src\
-    RankMaster2.Core\        # types + interfaces
-    RankMaster2.Ranking\
-    RankMaster2.Catalog\
-    RankMaster2.App\         # WPF Shell + Pipeline + Actions
-  tests\
-    RankMaster2.Ranking.Tests\
-    RankMaster2.Catalog.Tests\
+  RankMaster2.exe            # single-file publish; run this
+  project\                   # source, tests, this spec
+    Directory.Build.props    # Version (bump on every shipped change)
+    README.md
+    SPEC.md
+    RankMaster2.sln
+    publish.ps1
+    src\
+      RankMaster2.Core\        # types + interfaces
+      RankMaster2.Ranking\
+      RankMaster2.Catalog\
+      RankMaster2.App\         # WPF Shell + Pipeline + Actions
+    tests\
+      RankMaster2.Ranking.Tests\
+      RankMaster2.Catalog.Tests\
 ```
+
+App version is `Version` in `Directory.Build.props`. It appears on the start screen. Patch / minor / major as in the README.
 
 Pipeline and Actions live in the App project in v1 because they touch WPF media types and `File.Move`. Their interfaces still sit in Core so tests and later splits stay possible.
 
@@ -307,15 +313,17 @@ Target framework: `net8.0-windows`.
 
 ## Build / run (once the SDK is installed)
 
+From `project\`:
+
 ```
 dotnet test
 dotnet run --project src/RankMaster2.App
 ```
 
-Later:
+Ship the exe to the parent folder:
 
 ```
-dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained
+powershell -File publish.ps1
 ```
 
 ## Implementation order

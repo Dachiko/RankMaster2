@@ -9,7 +9,15 @@
     <RootNamespace>RankMaster2</RootNamespace>
     <AssemblyName>RankMaster2</AssemblyName>
     <ApplicationIcon>icon.ico</ApplicationIcon>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
   </PropertyGroup>
+  <Target Name="DropLibVlcX86" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <Content Remove="libvlc\win-x86\**" />
+      <None Remove="libvlc\win-x86\**" />
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <Resource Include="icon.ico" />
   </ItemGroup>

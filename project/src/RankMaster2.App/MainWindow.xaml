@@ -29,7 +29,9 @@
                     </TextBlock.Foreground>
                     RankMaster
                 </TextBlock>
-                <TextBlock Text="2" Foreground="#A1A1AA" TextAlignment="Center" Margin="0,0,0,28"/>
+                <TextBlock Text="2" Foreground="#A1A1AA" TextAlignment="Center" Margin="0,0,0,4"/>
+                <TextBlock x:Name="VersionLabel" Foreground="#52525B" FontSize="12"
+                           TextAlignment="Center" Margin="0,0,0,28"/>
 
                 <Button Style="{StaticResource StartButton}" Click="OnOpenFolder" Margin="0,0,0,12">
                     <StackPanel Orientation="Horizontal">
@@ -258,7 +260,7 @@
                             <TextBlock Grid.Row="8" Foreground="#9CA3AF" Text="Exit"/>
                             <TextBlock Grid.Row="8" Grid.Column="1" FontFamily="Consolas" Text="[Esc]"/>
                         </Grid>
-                        <TextBlock Text="RankMaster 2" FontFamily="Consolas" FontSize="10"
+                        <TextBlock x:Name="HelpVersion" FontFamily="Consolas" FontSize="10"
                                    Foreground="#52525B" TextAlignment="Center" Margin="0,12,0,0"/>
                     </StackPanel>
                 </Border>
