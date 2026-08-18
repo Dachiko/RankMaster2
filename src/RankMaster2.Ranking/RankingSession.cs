@@ -10,6 +10,7 @@ public sealed class RankingSession
     private readonly Queue<MediaId> _recentOrder = new();
     private readonly HashSet<MediaId> _recent = [];
     private readonly Queue<Pair> _warm = new();
+    private readonly List<MatchCue> _cues = [];
 
     public RankingSession(
         string folder,
@@ -31,6 +32,7 @@ public sealed class RankingSession
     public IReadOnlyList<MediaRecord> Records => _records;
     public IReadOnlyList<MediaRecord> Rankable => Eligible();
     public IEnumerable<Pair> WarmPairs => _warm;
+    public IReadOnlyList<MatchCue> RecentCues => _cues;
     public int UnrankedCount => Eligible().Count(r => r.Matches == 0);
     public string FolderName => Path.GetFileName(Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
@@ -39,6 +41,11 @@ public sealed class RankingSession
         _records.Clear();
         _records.AddRange(_catalog.Scan(Folder));
         _warm.Clear();
+        _cues.Clear();
+        _recent.Clear();
+        _recentOrder.Clear();
+        SessionVotes = 0;
+        Current = null;
         Current = Pick();
         FillWarm();
         return Current is not null;
@@ -124,6 +131,7 @@ public sealed class RankingSession
         _warm.Clear();
         _recent.Clear();
         _recentOrder.Clear();
+        _cues.Clear();
         Current = Pick();
         FillWarm();
     }
@@ -155,6 +163,7 @@ public sealed class RankingSession
             var right = Find(Current.Value.Right);
             var winner = leftWins ? left : right;
             var loser = leftWins ? right : left;
+            RememberCue(winner.Rating.Mu >= loser.Rating.Mu ? MatchCue.Confirmation : MatchCue.Upset);
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var (w, l) = RecordUpdates.ApplyVote(_engine, winner, loser, now);
             Replace(w);
@@ -212,6 +221,13 @@ public sealed class RankingSession
         return _selector.SelectNextPair(Eligible(), _recent, reserved);
     }
 
+    private void RememberCue(MatchCue cue)
+    {
+        _cues.Add(cue);
+        if (_cues.Count > RankingConstants.MatchCueLimit)
+            _cues.RemoveAt(0);
+    }
+
     private void Remember(Pair pair)
     {
         RememberId(pair.Left);
@@ -244,7 +260,8 @@ public sealed class RankingSession
         SessionVotes,
         _warm.ToList(),
         _recent.ToHashSet(),
-        _recentOrder.ToList());
+        _recentOrder.ToList(),
+        _cues.ToList());
 
     private void RestoreSnapshot(SessionSnap snap)
     {
@@ -261,6 +278,8 @@ public sealed class RankingSession
         _recentOrder.Clear();
         foreach (var id in snap.RecentOrder)
             _recentOrder.Enqueue(id);
+        _cues.Clear();
+        _cues.AddRange(snap.Cues);
     }
 
     private readonly record struct SessionSnap(
@@ -269,7 +288,8 @@ public sealed class RankingSession
         int SessionVotes,
         List<Pair> Warm,
         HashSet<MediaId> Recent,
-        List<MediaId> RecentOrder);
+        List<MediaId> RecentOrder,
+        List<MatchCue> Cues);
 
     private void Replace(MediaRecord record)
     {

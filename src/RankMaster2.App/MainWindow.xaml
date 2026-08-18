@@ -197,6 +197,14 @@
                 </StackPanel>
             </Border>
 
+            <Border x:Name="MatchStrip" Grid.Column="0" Grid.ColumnSpan="2"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Margin="0,0,0,32" Padding="12"
+                    Background="#66000000" BorderBrush="#0DFFFFFF" BorderThickness="1"
+                    CornerRadius="18" Visibility="Collapsed" IsHitTestVisible="False">
+                <StackPanel x:Name="MatchStripBalls" Orientation="Horizontal"/>
+            </Border>
+
         </Grid>
 
         <!-- Help sits on the window, not in a pane, so opening it cannot retrigger hover layout. -->
@@ -274,7 +282,7 @@
             </StackPanel>
         </Grid>
 
-        <Border x:Name="Toast" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,32"
+        <Border x:Name="Toast" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,72"
                 Background="#CC18181B" BorderBrush="#33FFFFFF" BorderThickness="1"
                 CornerRadius="20" Padding="20,10" Visibility="Collapsed" IsHitTestVisible="False">
             <TextBlock x:Name="ToastText" FontSize="14" Foreground="White"/>

@@ -23,7 +23,7 @@ Spec is the source of truth. Compare loop, prefetch, and file actions are wired.
 | SPEC.md / this README | Living docs — update when behavior changes |
 | Ranking (TrueSkill + pair picker) | Implemented + tests |
 | Catalog (scan, v1 JSON, media policy) | Implemented + tests |
-| Pipeline / compare UI | Fullscreen compare, LibVLC video (AV1 + H.264), no VS badge, dim top-corner filenames, ~100 ms select flash (no leftover tint), sequential prefetch |
+| Pipeline / compare UI | Fullscreen compare, LibVLC video (AV1 + H.264), no VS badge, dim top-corner filenames, ~100 ms select flash (no leftover tint), last-10 confirmation/upset strip, sequential prefetch |
 | Actions | Discard → `discarded/`, special → `special 1/`, `Ctrl+Z` undoes last move, start-screen rename by `μ − 3σ` |
 
 `PrefetchPairs` defaults to **2**. Change `MediaPipeline.DefaultPrefetchPairs` (the one knob).

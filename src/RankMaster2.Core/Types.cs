@@ -49,6 +49,13 @@ public enum AppScreen
     Renaming
 }
 
+/// <summary>Session-only vote cue. Confirmation = favorite won; Upset = underdog won.</summary>
+public enum MatchCue
+{
+    Confirmation,
+    Upset
+}
+
 public static class MediaExtensions
 {
     public static readonly HashSet<string> Still = new(StringComparer.OrdinalIgnoreCase)

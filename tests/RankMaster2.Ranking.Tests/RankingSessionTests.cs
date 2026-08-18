@@ -102,6 +102,78 @@ public class RankingSessionTests
     }
 
     [Fact]
+    public void Vote_AppendsConfirmationWhenFavoriteWins()
+    {
+        var session = Session(
+            Rec("low.jpg", mu: 20),
+            Rec("high.jpg", mu: 30));
+        Assert.True(session.Start());
+        // Pair is low vs high in some order; vote for the higher μ.
+        var left = session.Find(session.Current!.Value.Left);
+        var right = session.Find(session.Current.Value.Right);
+        if (left.Rating.Mu >= right.Rating.Mu)
+            session.VoteLeft();
+        else
+            session.VoteRight();
+        Assert.Equal(new[] { MatchCue.Confirmation }, session.RecentCues);
+    }
+
+    [Fact]
+    public void Vote_AppendsUpsetWhenUnderdogWins()
+    {
+        var session = Session(
+            Rec("low.jpg", mu: 20),
+            Rec("high.jpg", mu: 30));
+        Assert.True(session.Start());
+        var left = session.Find(session.Current!.Value.Left);
+        var right = session.Find(session.Current.Value.Right);
+        if (left.Rating.Mu < right.Rating.Mu)
+            session.VoteLeft();
+        else
+            session.VoteRight();
+        Assert.Equal(new[] { MatchCue.Upset }, session.RecentCues);
+    }
+
+    [Fact]
+    public void Vote_TiedMu_IsConfirmation()
+    {
+        var session = Session(Rec("a.jpg"), Rec("b.jpg"));
+        Assert.True(session.Start());
+        session.VoteLeft();
+        Assert.Equal(MatchCue.Confirmation, session.RecentCues.Single());
+    }
+
+    [Fact]
+    public void Skip_DoesNotAddACue()
+    {
+        var session = Session(Rec("a.jpg"), Rec("b.jpg"));
+        Assert.True(session.Start());
+        session.Skip();
+        Assert.Empty(session.RecentCues);
+    }
+
+    [Fact]
+    public void Vote_KeepsOnlyLastTenCues()
+    {
+        var session = Session(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"));
+        Assert.True(session.Start());
+        for (var i = 0; i < 11; i++)
+            session.VoteLeft();
+        Assert.Equal(10, session.RecentCues.Count);
+    }
+
+    [Fact]
+    public void Start_ClearsCues()
+    {
+        var session = Session(Rec("a.jpg"), Rec("b.jpg"));
+        Assert.True(session.Start());
+        session.VoteLeft();
+        Assert.NotEmpty(session.RecentCues);
+        Assert.True(session.Start());
+        Assert.Empty(session.RecentCues);
+    }
+
+    [Fact]
     public void Restore_AfterLastDrop_ResumesPair()
     {
         var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"));
@@ -114,8 +186,11 @@ public class RankingSessionTests
         Assert.Equal(2, session.Records.Count);
     }
 
-    private static MediaRecord Rec(string name) =>
-        new(new MediaId(name), MediaExtensions.KindOf(name) ?? MediaKind.Still, RankingConstants.DefaultRating, 0, 0, 0);
+    private static RankingSession Session(params MediaRecord[] files) =>
+        new("mem", new MemoryCatalog(files), new TrueSkill(), new PairSelector(), 2);
+
+    private static MediaRecord Rec(string name, double mu = RankingConstants.InitialMu, double sigma = RankingConstants.InitialSigma) =>
+        new(new MediaId(name), MediaExtensions.KindOf(name) ?? MediaKind.Still, new Rating(mu, sigma), 0, 0, 0);
 
     private sealed class MemoryCatalog : ICatalog
     {

@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using RankMaster2.Catalog;
@@ -217,6 +218,7 @@ public partial class MainWindow : Window
             var progress = LibraryProgress.Of(_session.Rankable);
             OverlayConfidencePct.Text = $"{Math.Round(progress * 100)}%";
             ConfidenceFill.Width = 232 * progress;
+            RefreshMatchStrip();
 
             _pipeline.Show(pair.Left, pair.Right);
             foreach (var warm in _session.WarmPairs)
@@ -520,6 +522,73 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RefreshMatchStrip()
+    {
+        var cues = _session?.RecentCues;
+        if (cues is null || cues.Count == 0)
+        {
+            MatchStrip.Visibility = Visibility.Collapsed;
+            MatchStripBalls.Children.Clear();
+            return;
+        }
+
+        MatchStripBalls.Children.Clear();
+        foreach (var cue in cues)
+            MatchStripBalls.Children.Add(MakeMatchBall(cue));
+        MatchStrip.Visibility = Visibility.Visible;
+    }
+
+    private void AnimateLastMatchBall()
+    {
+        if (MatchStripBalls.Children.Count == 0)
+            return;
+        if (MatchStripBalls.Children[^1] is not System.Windows.Shapes.Ellipse ball)
+            return;
+
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+        var story = new Storyboard();
+        story.Children.Add(Anim(ball, UIElement.OpacityProperty, 0, 1, 300, ease));
+        if (ball.RenderTransform is TransformGroup g &&
+            g.Children.Count >= 2 &&
+            g.Children[0] is ScaleTransform scale &&
+            g.Children[1] is TranslateTransform slide)
+        {
+            story.Children.Add(Anim(scale, ScaleTransform.ScaleXProperty, 0.4, 1, 300, ease));
+            story.Children.Add(Anim(scale, ScaleTransform.ScaleYProperty, 0.4, 1, 300, ease));
+            story.Children.Add(Anim(slide, TranslateTransform.XProperty, 16, 0, 300, ease));
+        }
+
+        story.Begin();
+    }
+
+    private static System.Windows.Shapes.Ellipse MakeMatchBall(MatchCue cue)
+    {
+        var color = cue == MatchCue.Confirmation
+            ? Color.FromArgb(0xB3, 0x10, 0xB9, 0x81)
+            : Color.FromArgb(0xB3, 0xF5, 0x9E, 0x0B);
+        var scale = new ScaleTransform(1, 1);
+        var slide = new TranslateTransform(0, 0);
+        var group = new TransformGroup();
+        group.Children.Add(scale);
+        group.Children.Add(slide);
+        return new System.Windows.Shapes.Ellipse
+        {
+            Width = 12,
+            Height = 12,
+            Margin = new Thickness(4, 0, 4, 0),
+            Fill = new SolidColorBrush(color),
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = group,
+            Effect = new DropShadowEffect
+            {
+                BlurRadius = 8,
+                ShadowDepth = 0,
+                Color = Colors.Black,
+                Opacity = 0.5
+            }
+        };
+    }
+
     private void ShowToast(string message)
     {
         ToastText.Text = message;
@@ -634,6 +703,7 @@ public partial class MainWindow : Window
             if (left) _session.VoteLeft();
             else _session.VoteRight();
             ShowCurrent();
+            AnimateLastMatchBall();
         }
         catch (Exception ex)
         {

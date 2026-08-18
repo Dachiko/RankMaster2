@@ -20,7 +20,7 @@ Repo: `C:\Utils\rank master 2`
 - Thumbnail grid or filmstrip
 - Recursive scan
 - HEIC / HEVC / RAW / TIFF / AVIF
-- Tie vote, vote-undo, match log
+- Tie vote, vote-undo, persisted match log
 - In-app leaderboard
 - Folder watcher
 - Play / pause / seek / volume
@@ -78,7 +78,8 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 - Vote applies immediately after the cue. The new pair’s IDs come on screen at once even if pixels are not ready.
 - **Still:** paint the first decodable image as soon as one exists; refine in place if a better decode arrives. No spinner if any pixels can be shown. Baseline JPEG/PNG on a slow disk may have no pixels until the read finishes — that is acceptable.
 - **Video:** spinner until a frame can play, then autoplay, loop, muted, no controls. Two videos may play at once.
-- Overlay (start + ranking): folder name, session vote count, unranked count (`matches == 0`). No tier names, no match-history dots.
+- Overlay (start + ranking): folder name, session vote count, unranked count (`matches == 0`). No tier names.
+- **Match strip:** after each **vote**, a bottom-center pill of up to **10** 12px balls (session only, not in JSON). **Confirmation** (emerald): winner already had `μ ≥` loser. **Upset** (amber): winner had lower `μ`. Skip / discard / special add no ball. New folder starts empty. Hidden until the first vote.
 - Help: a small cheat sheet of keys. Hover the `?` to show it; move away to hide it (unless F1 opened it). `F1` toggles it. `Esc` still quits the process.
 
 ### Keys
