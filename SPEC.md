@@ -258,7 +258,7 @@ Most files are a few MB; some are 100–200 MB on USB 2 (~30–40 MB/s). Depth i
 
 **Stills:** decode from a disposed `FileStream` (no `Uri` cache). Honor color profile. Fit to **panel physical pixels**, never upscale in the decoder, long edge capped at **4096**. Optional 720px first paint for files > 4 MB, then replace with the full-size frame. Evict previous bitmaps on swap.
 
-**Video:** at most **two live decoders** (the visible pair). Warm video pairs may hold a path or a first-frame still, not four running players. On `Release`, clear `Source` / close the player and do not return until the file can be moved.
+**Video:** at most **two live decoders** (the visible pair). Warm video pairs may hold a path or a first-frame still, not four running players. Playback is **LibVLC** (software, including AV1 in `.mp4`). Frames are painted onto the same WPF `Image` as stills so overlays stay clickable. Do **not** use WPF `MediaElement` / Media Foundation — it cannot play AV1 and was dropping those files as if they were corrupt. On `Release`, stop the player and do not return until the file can be moved.
 
 **Window resize:** do not re-decode during drag. The next fill uses the new panel size.
 
@@ -271,7 +271,7 @@ Release(id)                 // drop decode + file lock
 CancelWarmContaining(id)    // discard any queued pair that includes id
 ```
 
-When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: percent loader). Use `LoadedBehavior=Pause` so setting `Source` opens the file. Do not `Close()` on pair swap — after `Close()` the player often never opens again. Votes/skip/discard are ignored until both panes are ready. Each waiting pane shows download/buffer percent. `MediaFailed` drops that id only when the failing `Source` still matches the path this pane was asked to open. Defer the next `Source` so teardown `MediaFailed` cannot `Drop` the new pair.
+When `Show` targets a pair that is already warm, **remove it from `_warm`** so `Enqueue` can accept the next pair. When it is cold, show the ids immediately and let the reader fill the panes (still: first paint; video: percent loader). Votes/skip/discard are ignored until both panes are ready (still has pixels; video has painted a frame). Each waiting pane shows buffer percent. A video play error drops that id only when the failing path is still the one this pane was asked to open. Teardown errors during `Stop` must not `Drop`.
 
 ### Actions (`RankMaster2.Actions`)
 

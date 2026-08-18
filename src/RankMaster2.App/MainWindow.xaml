@@ -76,10 +76,6 @@
                     <ScaleTransform x:Name="LeftScale" ScaleX="1" ScaleY="1"/>
                 </Grid.RenderTransform>
                 <Image x:Name="LeftImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                <MediaElement x:Name="LeftVideo" Stretch="Uniform" Volume="0" IsMuted="True"
-                              LoadedBehavior="Pause" UnloadedBehavior="Manual"
-                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"
-                              MediaFailed="OnMediaFailed"/>
                 <Border x:Name="LeftFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
                 <Border x:Name="LeftRing" BorderBrush="#34D399" BorderThickness="5" Opacity="0" IsHitTestVisible="False"/>
                 <Grid x:Name="LeftLoad" HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -104,10 +100,6 @@
                     <ScaleTransform x:Name="RightScale" ScaleX="1" ScaleY="1"/>
                 </Grid.RenderTransform>
                 <Image x:Name="RightImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-                <MediaElement x:Name="RightVideo" Stretch="Uniform" Volume="0" IsMuted="True"
-                              LoadedBehavior="Pause" UnloadedBehavior="Manual"
-                              MediaEnded="OnVideoEnded" MediaOpened="OnVideoOpened"
-                              MediaFailed="OnMediaFailed"/>
                 <Border x:Name="RightFlash" Background="White" Opacity="0" IsHitTestVisible="False"/>
                 <Border x:Name="RightRing" BorderBrush="#34D399" BorderThickness="5" Opacity="0" IsHitTestVisible="False"/>
                 <Grid x:Name="RightLoad" HorizontalAlignment="Center" VerticalAlignment="Center"

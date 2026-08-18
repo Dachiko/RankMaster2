@@ -22,20 +22,13 @@ public partial class MainWindow : Window
     private bool _busy;
     private bool _exiting;
     private bool _renaming;
-    private bool _suppressMediaFailed;
     private bool _inShowCurrent;
-    private readonly VideoSlot _leftSlot = new();
-    private readonly VideoSlot _rightSlot = new();
+    private readonly VlcRuntime _vlc;
+    private readonly VlcFramePlayer _leftVideo;
+    private readonly VlcFramePlayer _rightVideo;
     private Storyboard? _selectCue;
     private DispatcherTimer? _toastTimer;
     private DispatcherTimer? _loadTimer;
-
-    private sealed class VideoSlot
-    {
-        public int Generation;
-        public bool Opened;
-        public string? ExpectedPath;
-    }
 
     public MainWindow()
     {
@@ -47,8 +40,11 @@ public partial class MainWindow : Window
             pipeline: () => _pipeline,
             session: () => _session,
             releaseUi: ReleaseUi);
+        _vlc = new VlcRuntime();
+        _leftVideo = CreatePlayer(LeftImage, LeftLoad);
+        _rightVideo = CreatePlayer(RightImage, RightLoad);
         DebugLog.DiskSavesEnabled = false;
-        DebugLog.Write("==== app start (disk ranking saves OFF) ====");
+        DebugLog.Write("==== app start (disk ranking saves OFF, libvlc) ====");
         ApplyExclusiveFullscreen();
         RefreshResumeButton();
         _loadTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
@@ -56,8 +52,23 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             _loadTimer.Stop();
+            _leftVideo.Dispose();
+            _rightVideo.Dispose();
+            _vlc.Dispose();
             _pipeline.Dispose();
         };
+    }
+
+    private VlcFramePlayer CreatePlayer(System.Windows.Controls.Image image, UIElement load)
+    {
+        var player = new VlcFramePlayer(_vlc, Dispatcher);
+        player.FirstFrame += bmp =>
+        {
+            image.Source = bmp;
+            load.Visibility = Visibility.Collapsed;
+        };
+        player.Failed += OnVideoFailed;
+        return player;
     }
 
     private MediaPipeline CreatePipeline()
@@ -154,17 +165,14 @@ public partial class MainWindow : Window
 
     private void LeaveCompare()
     {
-        _suppressMediaFailed = true;
-        StopVideo(LeftVideo);
-        StopVideo(RightVideo);
+        _leftVideo.Stop();
+        _rightVideo.Stop();
         LeftImage.Source = null;
         RightImage.Source = null;
         LeftLoad.Visibility = Visibility.Collapsed;
         RightLoad.Visibility = Visibility.Collapsed;
         _loadTimer?.Stop();
         try { _pipeline.ReleaseAll(); } catch { /* disposed */ }
-        if (!_inShowCurrent)
-            _suppressMediaFailed = false;
     }
 
     private void SetStartError(string message)
@@ -181,8 +189,7 @@ public partial class MainWindow : Window
             return;
         }
         _inShowCurrent = true;
-        _suppressMediaFailed = true;
-        DebugLog.Write($"ShowCurrent ENTER current={_session?.Current} unranked={_session?.UnrankedCount} suppress=1");
+        DebugLog.Write($"ShowCurrent ENTER current={_session?.Current} unranked={_session?.UnrankedCount}");
         try
         {
             if (_session?.Current is null)
@@ -203,8 +210,8 @@ public partial class MainWindow : Window
 
             ResetPaneTransforms();
             var pair = _session.Current.Value;
-            ResetPane(LeftImage, LeftVideo, LeftLoad, LeftLoadPct, LeftName, pair.Left);
-            ResetPane(RightImage, RightVideo, RightLoad, RightLoadPct, RightName, pair.Right);
+            ResetPane(LeftImage, _leftVideo, LeftLoad, LeftLoadPct, LeftName, pair.Left);
+            ResetPane(RightImage, _rightVideo, RightLoad, RightLoadPct, RightName, pair.Right);
             _loadTimer?.Start();
             OverlayFolder.Text = _session.FolderName;
             OverlayUnranked.Text = _session.UnrankedCount.ToString("N0");
@@ -221,23 +228,18 @@ public partial class MainWindow : Window
         finally
         {
             _inShowCurrent = false;
-            Dispatcher.BeginInvoke(() =>
-            {
-                _suppressMediaFailed = false;
-                DebugLog.Write("ShowCurrent suppress->0 (Background)");
-            }, DispatcherPriority.Background);
         }
     }
 
     private void ResetPane(
         System.Windows.Controls.Image image,
-        MediaElement video,
+        VlcFramePlayer player,
         UIElement load,
         TextBlock loadPct,
         TextBlock name,
         MediaId id)
     {
-        StopVideo(video);
+        player.Stop();
         image.Source = null;
         name.Text = id.Filename;
         loadPct.Text = "0%";
@@ -251,14 +253,14 @@ public partial class MainWindow : Window
             return;
         var pair = _session.Current.Value;
         if (pair.Left == id)
-            ApplyFrame(LeftImage, LeftVideo, LeftLoad, frame);
+            ApplyFrame(LeftImage, _leftVideo, LeftLoad, frame);
         else if (pair.Right == id)
-            ApplyFrame(RightImage, RightVideo, RightLoad, frame);
+            ApplyFrame(RightImage, _rightVideo, RightLoad, frame);
     }
 
     private void OnFrameFailed(MediaId id)
     {
-        DebugLog.Write($"OnFrameFailed {id.Filename} busy={_busy} inShow={_inShowCurrent} suppress={_suppressMediaFailed} current={_session?.Current}");
+        DebugLog.Write($"OnFrameFailed {id.Filename} busy={_busy} inShow={_inShowCurrent} current={_session?.Current}");
         if (_session is null || _busy || _inShowCurrent)
         {
             DebugLog.Write($"OnFrameFailed IGNORE {id.Filename}");
@@ -274,90 +276,36 @@ public partial class MainWindow : Window
         ShowCurrent();
     }
 
-    private void OnMediaFailed(object sender, ExceptionRoutedEventArgs e)
+    private void OnVideoFailed(string path)
     {
-        var side = sender == LeftVideo ? "L" : sender == RightVideo ? "R" : "?";
-        var err = e.ErrorException;
-        var failedEl = sender as MediaElement;
-        DebugLog.Write($"OnMediaFailed {side} suppress={_suppressMediaFailed} inShow={_inShowCurrent} src={(failedEl is null ? "" : SourcePath(failedEl))} expected={SlotOfOrNull(failedEl)?.ExpectedPath} err={err?.GetType().Name}:{err?.Message}");
-        if (_suppressMediaFailed || _inShowCurrent || _exiting)
+        if (_exiting || RankPanel.Visibility != Visibility.Visible)
             return;
-        if (RankPanel.Visibility != Visibility.Visible)
-            return;
-        if (sender is not MediaElement el)
-            return;
-        var slot = SlotOf(el);
-        if (slot.ExpectedPath is null || el.Source is null)
-        {
-            DebugLog.Write($"OnMediaFailed {side} IGNORE src/expected null");
-            return;
-        }
-        if (!PathsMatch(SourcePath(el), slot.ExpectedPath))
-        {
-            DebugLog.Write($"OnMediaFailed {side} IGNORE path mismatch");
-            return;
-        }
-        var id = new MediaId(Path.GetFileName(slot.ExpectedPath));
+        var id = new MediaId(Path.GetFileName(path));
+        DebugLog.Write($"OnVideoFailed {id.Filename}");
         OnFrameFailed(id);
     }
 
-    private VideoSlot? SlotOfOrNull(MediaElement? video) =>
-        video is null ? null : SlotOf(video);
-
     private void ApplyFrame(
         System.Windows.Controls.Image image,
-        MediaElement video,
+        VlcFramePlayer player,
         UIElement load,
         PreparedFrame frame)
     {
         if (frame.Kind == MediaKind.Video)
         {
-            var slot = SlotOf(video);
-            if (slot.Opened && PathsMatch(SourcePath(video), frame.VideoPath))
-                return;
-            StopVideo(video);
             if (frame.VideoPath is null)
                 return;
-            var gen = slot.Generation;
-            var path = frame.VideoPath;
-            slot.ExpectedPath = path;
+            if (player.Opened && PathsMatch(player.ExpectedPath, frame.VideoPath))
+                return;
+            DebugLog.Write($"ApplyFrame video {frame.VideoPath}");
             load.Visibility = Visibility.Visible;
-            DebugLog.Write($"ApplyFrame video {path} gen={gen} queue Source+Play");
-            // Assign Source after Normal-priority MediaFailed from Close() has run.
-            // Manual LoadedBehavior does not open until Play() is called.
-            Dispatcher.BeginInvoke(() =>
-            {
-                if (slot.Generation != gen || slot.ExpectedPath != path)
-                {
-                    DebugLog.Write($"ApplyFrame ABORT stale gen={slot.Generation}/{gen} {path}");
-                    return;
-                }
-                if (_session?.Current is not { } pair || !pair.Contains(new MediaId(Path.GetFileName(path))))
-                {
-                    DebugLog.Write($"ApplyFrame ABORT not current {path}");
-                    return;
-                }
-                DebugLog.Write($"ApplyFrame SET Source+Play {path}");
-                video.Source = new Uri(Path.GetFullPath(path));
-                try { video.Play(); } catch (Exception ex) { DebugLog.Write($"Play threw {ex.Message}"); }
-            }, DispatcherPriority.Background);
+            player.Play(frame.VideoPath);
             return;
         }
 
-        StopVideo(video);
+        player.Stop();
         image.Source = frame.Still;
         load.Visibility = Visibility.Collapsed;
-    }
-
-    private VideoSlot SlotOf(MediaElement video) =>
-        video == LeftVideo ? _leftSlot : _rightSlot;
-
-    private static string? SourcePath(MediaElement video)
-    {
-        if (video.Source is null)
-            return null;
-        try { return video.Source.LocalPath; }
-        catch (InvalidOperationException) { return video.Source.OriginalString; }
     }
 
     private static bool PathsMatch(string? a, string? b)
@@ -379,81 +327,19 @@ public partial class MainWindow : Window
         return string.Equals(Path.GetFileName(a), Path.GetFileName(b), StringComparison.OrdinalIgnoreCase);
     }
 
-    private void StopVideo(MediaElement video)
-    {
-        var slot = SlotOf(video);
-        slot.Generation++;
-        slot.Opened = false;
-        slot.ExpectedPath = null;
-        DebugLog.Write($"StopVideo gen={slot.Generation} hadSrc={video.Source}");
-        var prior = _suppressMediaFailed;
-        _suppressMediaFailed = true;
-        try
-        {
-            try { video.Stop(); } catch { /* not opened */ }
-            // Do not Close() — after Close a MediaElement often never opens again.
-            video.Source = null;
-        }
-        finally
-        {
-            _suppressMediaFailed = prior;
-        }
-    }
-
-    private void OnVideoEnded(object sender, RoutedEventArgs e)
-    {
-        if (RankPanel.Visibility != Visibility.Visible || _exiting)
-            return;
-        if (sender is not MediaElement el)
-            return;
-        var slot = SlotOf(el);
-        if (!slot.Opened || !PathsMatch(SourcePath(el), slot.ExpectedPath))
-            return;
-        el.Position = TimeSpan.Zero;
-        el.Play();
-    }
-
-    private void OnVideoOpened(object sender, RoutedEventArgs e)
-    {
-        if (RankPanel.Visibility != Visibility.Visible || _exiting)
-            return;
-        if (sender is not MediaElement el)
-            return;
-        var slot = SlotOf(el);
-        if (slot.ExpectedPath is null)
-        {
-            DebugLog.Write($"OnVideoOpened IGNORE no expected src={SourcePath(el)}");
-            return;
-        }
-        if (!PathsMatch(SourcePath(el), slot.ExpectedPath))
-        {
-            DebugLog.Write($"OnVideoOpened IGNORE mismatch src={SourcePath(el)} expected={slot.ExpectedPath}");
-            return;
-        }
-        slot.Opened = true;
-        DebugLog.Write($"OnVideoOpened OK {slot.ExpectedPath}");
-        if (sender == LeftVideo)
-            LeftLoad.Visibility = Visibility.Collapsed;
-        if (sender == RightVideo)
-            RightLoad.Visibility = Visibility.Collapsed;
-        el.Volume = 0;
-        el.IsMuted = true;
-        try { el.Play(); } catch { /* already playing */ }
-    }
-
     private bool BothPanesReady()
     {
         if (_session?.Current is not { } pair)
             return false;
-        return PaneReady(pair.Left, LeftImage, _leftSlot) &&
-               PaneReady(pair.Right, RightImage, _rightSlot);
+        return PaneReady(pair.Left, LeftImage, _leftVideo) &&
+               PaneReady(pair.Right, RightImage, _rightVideo);
     }
 
-    private static bool PaneReady(MediaId id, System.Windows.Controls.Image image, VideoSlot slot)
+    private static bool PaneReady(MediaId id, System.Windows.Controls.Image image, VlcFramePlayer player)
     {
         var kind = MediaExtensions.KindOf(id.Filename);
         if (kind == MediaKind.Video)
-            return slot.Opened;
+            return player.Opened;
         return image.Source is not null;
     }
 
@@ -465,41 +351,27 @@ public partial class MainWindow : Window
             return;
         }
 
-        UpdateLoadChrome(LeftVideo, LeftLoad, LeftLoadPct, _leftSlot, LeftImage);
-        UpdateLoadChrome(RightVideo, RightLoad, RightLoadPct, _rightSlot, RightImage);
+        UpdateLoadChrome(_leftVideo, LeftLoad, LeftLoadPct, LeftImage);
+        UpdateLoadChrome(_rightVideo, RightLoad, RightLoadPct, RightImage);
         if (BothPanesReady())
             _loadTimer?.Stop();
     }
 
     private static void UpdateLoadChrome(
-        MediaElement video,
+        VlcFramePlayer player,
         UIElement load,
         TextBlock pct,
-        VideoSlot slot,
         System.Windows.Controls.Image image)
     {
         if (load.Visibility != Visibility.Visible)
             return;
-        if (slot.Opened || image.Source is not null)
+        if (player.Opened || image.Source is not null)
         {
             load.Visibility = Visibility.Collapsed;
             return;
         }
 
-        double progress = 0;
-        if (video.Source is not null)
-        {
-            try
-            {
-                progress = Math.Max(video.DownloadProgress, video.BufferingProgress);
-            }
-            catch (InvalidOperationException)
-            {
-                progress = 0;
-            }
-        }
-
-        pct.Text = $"{Math.Clamp((int)Math.Round(progress * 100), 0, 99)}%";
+        pct.Text = $"{Math.Clamp((int)Math.Round(player.BufferPercent), 0, 99)}%";
     }
 
     private void OnLeftClick(object sender, MouseButtonEventArgs e)
@@ -612,12 +484,12 @@ public partial class MainWindow : Window
             return;
         if (pair.Left == id)
         {
-            StopVideo(LeftVideo);
+            _leftVideo.Stop();
             LeftImage.Source = null;
         }
         if (pair.Right == id)
         {
-            StopVideo(RightVideo);
+            _rightVideo.Stop();
             RightImage.Source = null;
         }
     }
@@ -843,6 +715,8 @@ public partial class MainWindow : Window
         var dpi = VisualTreeHelper.GetDpi(this);
         var w = (int)((RankPanel.ActualWidth / 2.0) * dpi.DpiScaleX);
         var h = (int)(RankPanel.ActualHeight * dpi.DpiScaleY);
+        _leftVideo.SetPanelSize(w, h);
+        _rightVideo.SetPanelSize(w, h);
         _pipeline.SetPanelPixelSize(w, h);
     }
 }

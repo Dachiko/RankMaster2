@@ -14,6 +14,10 @@
     <Resource Include="icon.ico" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\RankMaster2.Core\RankMaster2.Core.csproj" />
     <ProjectReference Include="..\RankMaster2.Ranking\RankMaster2.Ranking.csproj" />
     <ProjectReference Include="..\RankMaster2.Catalog\RankMaster2.Catalog.csproj" />
