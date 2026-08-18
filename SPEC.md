@@ -7,7 +7,8 @@ This file is the source of truth. If code and this document disagree, the docume
 A Windows 11 desktop app that ranks the photos **or** videos in one folder by pairwise comparison. You see two items, pick the better one (or skip). Ratings live in `rankmaster_db.json` in that folder so the library is portable.
 
 Working title / assembly name: **RankMaster2**  
-Repo: `C:\Utils\rank master 2`
+App version: `Directory.Build.props` (now **1.1.0**). Shown on the start screen and in the help footer.  
+Git repo: `C:\Utils\rank master 2\project`. Runnable exe: `C:\Utils\rank master 2\RankMaster2.exe` (not in git).
 
 ## Stack
 
@@ -15,7 +16,7 @@ Repo: `C:\Utils\rank master 2`
 - Single-file self-contained exe at `C:\Utils\rank master 2\RankMaster2.exe`. No installer, no Store, no browser shell
 - No SQLite. No Chromium. No Python
 
-## Non-goals (v1)
+## Non-goals
 
 - Thumbnail grid or filmstrip
 - Recursive scan
@@ -60,10 +61,9 @@ Honor EXIF orientation on stills.
 
 ### Screens
 
-1. **Start** — Open folder (`O` or button). If a last-folder path exists and is still valid, show **Resume**. Resume does **not** auto-start; the user clicks it. Last folder path lives in app local data, not in the media folder. Resume does not restore a pair (pick a new one).
-2. **Loading** — Scanning / merging JSON.
-3. **Ranking** — **True fullscreen** two-pane compare (covers the Windows taskbar / Start menu). No title bar.
-4. **Renaming** — Progress for backup + two-phase rename.
+1. **Start** — Open folder (`O` or button). App version under the title. If a last-folder path exists and is still valid, show **Resume** and **Rename**. Resume does **not** auto-start; the user clicks it. Last folder path lives in app local data, not in the media folder. Resume does not restore a pair (pick a new one). Scan/merge JSON happens here with no separate loading screen.
+2. **Ranking** — **True fullscreen** two-pane compare (covers the Windows taskbar / Start menu). No title bar.
+3. **Renaming** — Progress for backup + two-phase rename.
 
 There is no “Saved” screen. `Esc` **quits the process immediately**.
 
@@ -80,7 +80,7 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 - **Video:** spinner until a frame can play, then autoplay, loop, muted, no controls. Two videos may play at once.
 - Overlay (start + ranking): folder name, session vote count, unranked count (`matches == 0`). No tier names.
 - **Match strip:** after each **vote**, a bottom-center pill of up to **10** 12px balls (session only, not in JSON). **Confirmation** (emerald): winner already had `μ ≥` loser. **Upset** (amber): winner had lower `μ`. Skip / discard / special add no ball. New folder starts empty. Hidden until the first vote.
-- Help: a small cheat sheet of keys. Hover the `?` to show it; move away to hide it (unless F1 opened it). `F1` toggles it. `Esc` still quits the process.
+- Help: `?` top-right on the window (start and ranking). Hover to show the cheat sheet; move away to hide it (unless F1 opened it). `F1` toggles it. `Esc` still quits the process. Toasts sit above the match strip so they do not cover it.
 
 ### Keys
 
@@ -171,11 +171,12 @@ MediaKind      // Still | Video
 Rating         // Mu, Sigma
 MediaRecord    // Id, Kind, Rating, Matches, Impressions, LastPlayed
 Pair           // Left: MediaId, Right: MediaId
+MatchCue       // Confirmation | Upset (session strip only)
 ```
 
 `MediaId` is the filename. No extra GUID.
 
-### Ranking (`RankMaster2.Ranking`) — pure CLR, no `System.IO`, no WPF
+### Ranking (`RankMaster2.Ranking`) — no WPF, no media bytes
 
 Xbox TrueSkill 1v1 defaults:
 
@@ -235,6 +236,10 @@ If applying recent would leave fewer than 2 candidates, ignore **recent** only. 
 
 Do **not** sample 50 random files. Sorting 20k records is fine.
 
+**Match strip (session only):** `RecentCues`, cap `MatchCueLimit = 10`. On vote, **before** the TrueSkill update, if winner `μ ≥` loser `μ` append Confirmation, else Upset. Skip / drop do not append. `Start()` clears cues, session vote count, and the recent-shown set. Not written to JSON.
+
+`RankingSession` keeps the folder string so it can `Save`. Pair picking still uses ids only.
+
 Prefetch: the Shell may ask for the next pair before the current vote. That pair is allowed to be one vote stale. Do not increment `impressions` until the user votes or skips that pair. After a vote/skip, clear `Current` before `Pick()` so a 2–3 file library can pair again (the just-finished pair must not stay reserved).
 
 ### Catalog (`RankMaster2.Catalog`) — disk names and JSON only
@@ -281,7 +286,7 @@ Discard, special 1, undo last move, rename-by-conservative-score. Orchestrates P
 
 ### Shell (`RankMaster2.App`)
 
-Borderless fullscreen WPF window, keys, two surfaces, start/resume, overlay. Talks to the four modules. Dark compare surface. `Esc` calls `Shutdown` with no extra catalog write.
+Borderless fullscreen WPF window, keys, two surfaces, start/resume, overlay, match strip, F1/`?` help. Version on the start screen and help footer. Talks to the four modules. Dark compare surface. `Esc` calls `Shutdown` with no extra catalog write.
 
 ---
 
@@ -327,17 +332,4 @@ Ship the exe to the parent folder:
 powershell -File publish.ps1
 ```
 
-## Implementation order
-
-1. This spec + repo — **done**
-2. Solution + contracts that compile — **done**
-3. Ranking + tests, Catalog + tests — **done**
-4. Pipeline + compare shell — **done**
-5. Actions — **done**
-6. Pre-exe audit fixes — **done**
-7. Second-audit follow-up — **done**
-8. Third-audit follow-up (open-folder does not tear down until Scan succeeds) — **done**
-
-Do not start a later phase by opening any other ranking app. This file is the brief.
-
-The prefetch depth constant in code is `MediaPipeline.DefaultPrefetchPairs` (currently `2`).
+Shipped. This file stays the brief. The prefetch depth constant in code is `MediaPipeline.DefaultPrefetchPairs` (currently `2`).

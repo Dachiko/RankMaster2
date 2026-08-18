@@ -2,9 +2,9 @@
 
 Windows app for ranking a folder of photos **or** videos by pairwise comparison. Pick the better of two; a TrueSkill rating is stored in `rankmaster_db.json` next to the files.
 
-This is a remake. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
+This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
 
-**Version** is in [Directory.Build.props](Directory.Build.props) and on the start screen. Bump it in the same change as the update:
+**Current version: 1.1.0.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen. Bump it in the same change as the update, then republish:
 
 | Bump | When |
 |---|---|
@@ -12,28 +12,18 @@ This is a remake. Behavior is defined in [SPEC.md](SPEC.md). If the code disagre
 | Minor (`1.x.0`) | New capability that is not a rewrite |
 | Major (`x.0.0`) | Large new feature, or an extensive engine rework |
 
-This tree is `project\`. The runnable app is the single file one level up: `..\RankMaster2.exe`.
+This tree is `project\` (including `.git`). The runnable app is the single file one level up: `..\RankMaster2.exe`.
 
-## Status
+## What is in 1.1.0
 
-Spec is the source of truth. Compare loop, prefetch, and file actions are wired. Update this file and SPEC.md when behavior changes.
-
-| Piece | State |
-|---|---|
-| SPEC.md / this README | Living docs — update when behavior changes |
-| Ranking (TrueSkill + pair picker) | Implemented + tests |
-| Catalog (scan, v1 JSON, media policy) | Implemented + tests |
-| Pipeline / compare UI | Fullscreen compare, LibVLC video (AV1 + H.264), no VS badge, dim top-corner filenames, ~100 ms select flash (no leftover tint), last-10 confirmation/upset strip, sequential prefetch |
-| Actions | Discard → `discarded/`, special → `special 1/`, `Ctrl+Z` undoes last move, start-screen rename by `μ − 3σ` |
+Fullscreen two-pane compare, LibVLC video (including AV1), prefetch of 2 pairs, v1-compatible JSON, discard / `special 1` / rename-by-`μ − 3σ`, F1/`?` help, last-10 confirmation (emerald) / upset (amber) strip.
 
 `PrefetchPairs` defaults to **2**. Change `MediaPipeline.DefaultPrefetchPairs` (the one knob).
 
 ## Requirements
 
-- Windows 11
-- .NET 8 SDK (Windows)
-
-The machine this repo was created on had a .NET **runtime** but no SDK. Install [SDK 8](https://dotnet.microsoft.com/download/dotnet/8.0) before building.
+- **Run the exe:** Windows 11. No extra .NET install.
+- **Build from this folder:** .NET 8 SDK (Windows).
 
 ## Run
 
@@ -46,7 +36,7 @@ dotnet run --project src/RankMaster2.App
 
 No installer. The window and `.exe` use the same icon as Rank Master 1 (`src/RankMaster2.App/icon.ico`).
 
-Self-contained **single-file** publish (writes `..\RankMaster2.exe`, no extra .NET install):
+Self-contained **single-file** publish (writes `..\RankMaster2.exe`):
 
 ```
 powershell -File publish.ps1
@@ -73,7 +63,7 @@ Opens the same `rankmaster_db.json` as Rank Master 1 (`version: 1`). You do not 
 | `1` `2` | Discard (to `discarded/`) |
 | `4` `5` | Move to `special 1/` |
 | `O` | Open folder |
-| `F1` | Toggle help |
+| `F1` | Toggle help (hover `?` also works) |
 | `Ctrl+S` | Save |
 | `Ctrl+Z` | Undo last move |
 | `Esc` | Quit immediately (current pair is not saved as seen) |
@@ -83,4 +73,5 @@ Opens the same `rankmaster_db.json` as Rank Master 1 (`version: 1`). You do not 
 | File | Role |
 |---|---|
 | [SPEC.md](SPEC.md) | Product, ranking, JSON, modules, prefetch. Update it when behavior changes. |
+| [Directory.Build.props](Directory.Build.props) | App version. Bump on every shipped change. |
 | This README | How to build and what the app is. |
