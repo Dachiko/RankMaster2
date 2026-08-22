@@ -7,13 +7,13 @@ This file is the source of truth. If code and this document disagree, the docume
 A Windows 11 desktop app that ranks the photos **or** videos in one folder by pairwise comparison. You see two items, pick the better one (or skip). Ratings live in `rankmaster_db.json` in that folder so the library is portable.
 
 Working title / assembly name: **RankMaster2**  
-App version: `Directory.Build.props` (now **1.1.1**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
-Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-2\RankMaster2.exe` (not in git).
+App version: `Directory.Build.props` (now **1.1.2**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
+Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-2\RankMaster2.exe` with `libvlc\` next to it (not in git).
 
 ## Stack
 
 - .NET 8 (Windows), WPF
-- Single-file self-contained exe at `C:\Utils\rank master 2\RankMaster2.exe`. No installer, no Store, no browser shell
+- Self-contained `RankMaster2.exe` with the native `libvlc\` folder shipped next to it. No installer, no Store, no browser shell
 - No SQLite. No Chromium. No Python
 
 ## Non-goals
@@ -294,7 +294,8 @@ Borderless fullscreen WPF window, keys, two surfaces, start/resume, overlay, mat
 
 ```
 C:\Utils\rank-master-2\
-  RankMaster2.exe            # single-file publish; run this
+  RankMaster2.exe            # self-contained publish; run this
+  libvlc\                    # native VLC, must stay next to the exe
   project\                   # source, tests, this spec
     Directory.Build.props    # Version (bump on every shipped change)
     README.md

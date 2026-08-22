@@ -9,8 +9,9 @@
     <RootNamespace>RankMaster2</RootNamespace>
     <AssemblyName>RankMaster2</AssemblyName>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <!-- Ship as exe + libvlc\ folder next to it. Do NOT embed/extract native bits
+         (IncludeNativeLibrariesForSelfExtract): extraction made the first run after
+         every publish take ~12 s. VlcRuntime resolves libvlc from the app folder. -->
   </PropertyGroup>
   <Target Name="DropLibVlcX86" AfterTargets="ResolvePackageAssets">
     <ItemGroup>

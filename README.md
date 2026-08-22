@@ -4,7 +4,7 @@ Windows app for ranking a folder of photos **or** videos by pairwise comparison.
 
 This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
 
-**Current version: 1.1.1.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
+**Current version: 1.1.2.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
 
 | Bump | When |
 |---|---|
@@ -17,6 +17,10 @@ This tree is `project\` (including `.git`). The runnable app is the single file 
 ## What is in 1.1.0
 
 Fullscreen two-pane compare, LibVLC video (including AV1), prefetch of 2 pairs, v1-compatible JSON, discard / `special 1` / rename-by-`μ − 3σ`, F1/`?` help, last-10 confirmation (emerald) / upset (amber) strip.
+
+**What is in 1.1.2**
+
+Ship layout is now `RankMaster2.exe` + `libvlc\` folder instead of one self-extracting file. This removes the ~12 s first-run extraction after every published update; startup time is now the same on every launch. No app-behavior change.
 
 **What is in 1.1.1**
 
@@ -46,13 +50,15 @@ Self-contained **single-file** publish (writes `..\RankMaster2.exe`):
 powershell -File publish.ps1
 ```
 
-Or:
+Writes `..\RankMaster2.exe` and copies `..\libvlc\` next to it. The exe is self-contained but the native VLC files stay in the folder — embedding them made the first launch after every publish take ~12 s to unpack. Keep `libvlc\` next to the exe.
+
+Or directly:
 
 ```
-dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:DebugType=None -o ..
+dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:DebugType=None -o ..
 ```
 
-First launch can be a bit slower while native bits unpack.
+First launch of a fresh exe is no slower than any other launch.
 
 ## Existing rankings
 

@@ -10,7 +10,15 @@ internal sealed class VlcRuntime : IDisposable
 
     public VlcRuntime()
     {
+        // Shipped layout: libvlc\ sits next to RankMaster2.exe. The BaseDirectory
+        // fallback keeps the old build-layout (files in the project bin folder) working.
         var nativeDir = Path.Combine(AppContext.BaseDirectory, "libvlc", "win-x64");
+        if (!File.Exists(Path.Combine(nativeDir, "libvlc.dll")))
+        {
+            var exeDir = Path.GetDirectoryName(Environment.ProcessPath);
+            if (exeDir is not null)
+                nativeDir = Path.Combine(exeDir, "libvlc", "win-x64");
+        }
         if (!File.Exists(Path.Combine(nativeDir, "libvlc.dll")))
             throw new FileNotFoundException("libvlc.dll not found next to the app.", nativeDir);
         Core.Initialize(nativeDir);
