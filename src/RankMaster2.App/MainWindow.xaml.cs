@@ -35,7 +35,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        VersionLabel.Text = AppInfo.Version;
+        TitleVersion.Text = AppInfo.Version;
         HelpVersion.Text = "RankMaster 2  ·  " + AppInfo.Version;
         _pipeline = CreatePipeline();
         _actions = new LibraryActions(

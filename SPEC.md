@@ -7,8 +7,8 @@ This file is the source of truth. If code and this document disagree, the docume
 A Windows 11 desktop app that ranks the photos **or** videos in one folder by pairwise comparison. You see two items, pick the better one (or skip). Ratings live in `rankmaster_db.json` in that folder so the library is portable.
 
 Working title / assembly name: **RankMaster2**  
-App version: `Directory.Build.props` (now **1.1.0**). Shown on the start screen and in the help footer.  
-Git repo: `C:\Utils\rank master 2\project`. Runnable exe: `C:\Utils\rank master 2\RankMaster2.exe` (not in git).
+App version: `Directory.Build.props` (now **1.1.1**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
+Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-2\RankMaster2.exe` (not in git).
 
 ## Stack
 
@@ -293,7 +293,7 @@ Borderless fullscreen WPF window, keys, two surfaces, start/resume, overlay, mat
 ## Project layout
 
 ```
-C:\Utils\rank master 2\
+C:\Utils\rank-master-2\
   RankMaster2.exe            # single-file publish; run this
   project\                   # source, tests, this spec
     Directory.Build.props    # Version (bump on every shipped change)

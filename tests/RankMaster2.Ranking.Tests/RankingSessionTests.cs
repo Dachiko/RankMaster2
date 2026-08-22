@@ -186,6 +186,29 @@ public class RankingSessionTests
         Assert.Equal(2, session.Records.Count);
     }
 
+    [Fact]
+    public void Restore_WhileAPairIsOnScreen_DoesNotKeepOldPairReserved()
+    {
+        // Sigmas decide the pick order: (s1, s2) on screen, s3 first in line.
+        var catalog = new MemoryCatalog(
+            Rec("s1.jpg", sigma: 9),
+            Rec("s2.jpg", sigma: 8),
+            Rec("s3.jpg", sigma: 7));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), 1);
+        Assert.True(session.Start());
+        Assert.Equal(new MediaId("s1.jpg"), session.Current!.Value.Left);
+
+        // A file comes back while the old pair is still showing (undo path).
+        session.Restore(Rec("s4.jpg", sigma: 10));
+
+        // The restored id must be pairable now, not locked out by stale reservations.
+        var pair = session.Current;
+        Assert.NotNull(pair);
+        Assert.True(
+            pair!.Value.Contains(new MediaId("s4.jpg")),
+            $"Restored s4.jpg not paired; got {pair.Value.Left} vs {pair.Value.Right}");
+    }
+
     private static RankingSession Session(params MediaRecord[] files) =>
         new("mem", new MemoryCatalog(files), new TrueSkill(), new PairSelector(), 2);
 

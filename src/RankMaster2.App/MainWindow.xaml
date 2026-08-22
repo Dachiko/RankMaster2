@@ -20,18 +20,20 @@
                 </LinearGradientBrush>
             </Grid.Background>
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="512">
-                <TextBlock FontSize="48" FontWeight="Black" TextAlignment="Center" Margin="0,0,0,8">
-                    <TextBlock.Foreground>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                            <GradientStop Color="#60A5FA" Offset="0"/>
-                            <GradientStop Color="#34D399" Offset="1"/>
-                        </LinearGradientBrush>
-                    </TextBlock.Foreground>
-                    RankMaster
-                </TextBlock>
-                <TextBlock Text="2" Foreground="#A1A1AA" TextAlignment="Center" Margin="0,0,0,4"/>
-                <TextBlock x:Name="VersionLabel" Foreground="#52525B" FontSize="12"
-                           TextAlignment="Center" Margin="0,0,0,28"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,32">
+                    <TextBlock FontSize="48" FontWeight="Black">
+                        <TextBlock.Foreground>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#60A5FA" Offset="0"/>
+                                <GradientStop Color="#34D399" Offset="1"/>
+                            </LinearGradientBrush>
+                        </TextBlock.Foreground>
+                        RankMaster 2
+                    </TextBlock>
+                    <!-- Version set like an exponent on the 2: top right, small font -->
+                    <TextBlock x:Name="TitleVersion" Foreground="#71717A" FontSize="12"
+                               VerticalAlignment="Top" Margin="8,16,0,0"/>
+                </StackPanel>
 
                 <Button Style="{StaticResource StartButton}" Click="OnOpenFolder" Margin="0,0,0,12">
                     <StackPanel Orientation="Horizontal">

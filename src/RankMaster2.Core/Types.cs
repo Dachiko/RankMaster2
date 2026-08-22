@@ -41,14 +41,6 @@ public readonly record struct Pair(MediaId Left, MediaId Right)
     public bool Contains(MediaId id) => Left == id || Right == id;
 }
 
-public enum AppScreen
-{
-    Start,
-    Loading,
-    Ranking,
-    Renaming
-}
-
 /// <summary>Session-only vote cue. Confirmation = favorite won; Upset = underdog won.</summary>
 public enum MatchCue
 {

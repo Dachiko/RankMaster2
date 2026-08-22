@@ -119,8 +119,10 @@ public sealed class RankingSession
         if (_records.Any(r => r.Id == record.Id))
             return;
         _records.Add(record);
-        if (Current is null)
-            Current = Pick();
+        // Same rule as after a vote/skip: clear Current first so a 2-3 file
+        // library can pair again instead of staying reserved.
+        Current = null;
+        Current = Pick();
         FillWarm();
     }
 
