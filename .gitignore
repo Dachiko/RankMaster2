@@ -30,3 +30,6 @@ debug.log
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Agent harness artifact, not part of the project
+user_history.txt
