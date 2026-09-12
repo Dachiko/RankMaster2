@@ -12,4 +12,7 @@
     <ProjectReference Include="..\RankMaster2.Catalog\RankMaster2.Catalog.csproj" />
     <ProjectReference Include="..\RankMaster2.Actions\RankMaster2.Actions.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.1" />
+  </ItemGroup>
 </Project>

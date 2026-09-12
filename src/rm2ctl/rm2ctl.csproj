@@ -7,4 +7,7 @@
     <RootNamespace>RankMaster2.Cli</RootNamespace>
     <AssemblyName>rm2ctl</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
 </Project>
