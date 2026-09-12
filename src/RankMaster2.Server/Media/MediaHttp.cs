@@ -23,24 +23,17 @@ public static class MediaHttp
 
     /// <summary>
     /// § 2: every response carries <c>X-Request-Id</c> and <c>X-Content-Type-Options: nosniff</c>.
-    /// The id is whatever a server-wide middleware already put on the response; failing that, the
-    /// connection's trace identifier, which is unique per request and opaque.
+    /// <para/>
+    /// The id is whatever a server-wide middleware already put on the <b>response</b>; failing
+    /// that, the connection's trace identifier, which is opaque and unique per request. A
+    /// client-supplied <c>X-Request-Id</c> is deliberately not echoed: § 4 has the id identify one
+    /// request in the server's own log, and a value the caller chooses can neither be trusted to
+    /// be unique nor to be safe to write there.
     /// </summary>
     public static string RequestId(HttpContext context)
     {
         if (context.Response.Headers.TryGetValue("X-Request-Id", out var existing) && !StringValues.IsNullOrEmpty(existing))
             return existing.ToString();
-
-        if (context.Request.Headers.TryGetValue("X-Request-Id", out var fromClient) && !StringValues.IsNullOrEmpty(fromClient))
-        {
-            // Echoing a client-supplied id is fine; it is opaque and only ever correlates a log line.
-            var echoed = fromClient.ToString();
-            if (echoed.Length <= 128)
-            {
-                context.Response.Headers["X-Request-Id"] = echoed;
-                return echoed;
-            }
-        }
 
         var id = context.TraceIdentifier;
         context.Response.Headers["X-Request-Id"] = id;

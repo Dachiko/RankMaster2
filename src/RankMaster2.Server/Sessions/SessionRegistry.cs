@@ -80,6 +80,85 @@ public sealed class SessionRegistry : IDisposable
     /// <summary>The open folder, or null. A cheap read for <c>GET /ping</c>; not a substitute for a snapshot.</summary>
     public string? OpenFolder => Volatile.Read(ref _open)?.Folder;
 
+    private RankMaster2.Server.Media.MediaSessionView? _mediaView;
+    private OpenSession? _mediaViewOf;
+    private ulong _mediaViewSeq;
+
+    /// <summary>
+    /// The read-only window the media layer needs (<see cref="Media.IMediaSessionAccessor"/>).
+    /// <para/>
+    /// Media requests are GETs and SERVER_SPEC.md § 11.3 forbids them from mutating session state,
+    /// so they must not queue behind a vote either. But <see cref="RankingSession.Records"/> hands
+    /// back its live backing list, and copying it while a vote commits throws
+    /// "collection was modified". So: read optimistically, then confirm nothing moved underneath,
+    /// and cache the result against <c>PairSeq</c> — which every mutation bumps — so the common
+    /// case costs a reference comparison rather than rebuilding a dictionary per image.
+    /// <para/>
+    /// Only if that keeps losing the race do we take the gate and pay the wait.
+    /// </summary>
+    public Media.IMediaSessionView? CurrentForMedia
+    {
+        get
+        {
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                var open = Volatile.Read(ref _open);
+                if (open is null)
+                    return null;
+
+                var before = open.PairSeq;
+                if (ReferenceEquals(Volatile.Read(ref _mediaViewOf), open) &&
+                    Volatile.Read(ref _mediaViewSeq) == before &&
+                    Volatile.Read(ref _mediaView) is { } cached)
+                    return cached;
+
+                Media.MediaSessionView built;
+                try
+                {
+                    built = BuildMediaView(open);
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;   // a mutation committed mid-copy; take a fresh look
+                }
+
+                // If the session advanced or closed while we were copying, the view we just built
+                // may describe a pair that no longer exists. Drop it rather than cache it.
+                if (open.PairSeq != before || !ReferenceEquals(Volatile.Read(ref _open), open))
+                    continue;
+
+                Volatile.Write(ref _mediaViewOf, open);
+                Volatile.Write(ref _mediaViewSeq, before);
+                Volatile.Write(ref _mediaView, built);
+                return built;
+            }
+
+            // Persistently contended. Correctness over latency: wait for the gate.
+            if (!_gate.Wait(LockTimeout))
+                throw new TimeoutException("Timed out reading session state for a media request.");
+            try
+            {
+                var open = _open;
+                return open is null ? null : BuildMediaView(open);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+    }
+
+    private static Media.MediaSessionView BuildMediaView(OpenSession open)
+    {
+        // § 11.2 step 4: membership is against Records - videos in a mixed folder are served even
+        // though they are not rankable, and anything discarded is already gone from it.
+        var records = open.Session.Records.ToArray();
+        return new Media.MediaSessionView(
+            open.Folder,
+            MediaExtensions.RankPolicy(records.Select(r => r.Kind)),
+            records);
+    }
+
     // ---------------------------------------------------------------------------------------
     // POST /session — § 10.1
     // ---------------------------------------------------------------------------------------

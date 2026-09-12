@@ -1,4 +1,12 @@
 var builder = WebApplication.CreateBuilder(args);
+
+// The one seam between the session and media layers, and the only wiring neither of them could do
+// from inside its own folder. Media asks "is a session open, and is this id one of its records?";
+// the registry answers without taking the session gate, because a GET must not queue behind a vote.
+builder.Services.AddSingleton<RankMaster2.Server.Media.IMediaSessionAccessor>(_ =>
+    new RankMaster2.Server.Media.DelegatingMediaSessionAccessor(
+        () => RankMaster2.Server.Sessions.SessionRegistry.Shared.CurrentForMedia));
+
 var app = builder.Build();
 
 // TLS, pairing, tokens, the fail-closed auth gate, /ping and /libraries/*.
