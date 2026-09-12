@@ -30,5 +30,6 @@
     <ProjectReference Include="..\RankMaster2.Core\RankMaster2.Core.csproj" />
     <ProjectReference Include="..\RankMaster2.Ranking\RankMaster2.Ranking.csproj" />
     <ProjectReference Include="..\RankMaster2.Catalog\RankMaster2.Catalog.csproj" />
+    <ProjectReference Include="..\RankMaster2.Actions\RankMaster2.Actions.csproj" />
   </ItemGroup>
 </Project>

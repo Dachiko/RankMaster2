@@ -25,7 +25,8 @@ public class JsonCatalogTests
         var first = catalog.Scan(dir);
         Assert.Equal(2, first.Count);
 
-        var updated = first.Select((r, i) => i == 0
+        // Select by name, not by index: Directory.EnumerateFiles is not ordered.
+        var updated = first.Select(r => r.Filename == "a.jpg"
             ? r with { Rating = new Rating(30, 4), Matches = 3, Impressions = 5 }
             : r).ToList();
         catalog.Save(dir, updated);
