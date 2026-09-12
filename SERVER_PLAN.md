@@ -173,7 +173,9 @@ DELETE /session                   close and release the lock
 POST   /session/save              explicit save (Ctrl+S equivalent)
 ```
 
-**Pair + actions** — every action takes `pairToken`, every response returns the new state
+**Pair + actions** — every *pair-scoped* action takes `pairToken`, every response returns the new
+state. `undo` is the exception and takes none: the move it reverses belongs to an earlier pair
+generation, so any token for it is stale by construction.
 ```
 GET    /session/pair              current pair + warm pairs for client prefetch
 POST   /session/vote              {pairToken, winner: left|right}
@@ -219,7 +221,7 @@ I review it against `SPEC.md` before Phase 2 starts.
 | Agent | Owns | Deliverable |
 |---|---|---|
 | Session | `Server/Sessions/` | session registry, folder locking, pair tokens, action orchestration over `RankingSession` |
-| Media | `Server/Media/` | ImageSharp still pipeline, cache + ETag, range streaming, probe, poster frames |
+| Media | `Server/Media/` | ImageSharp still pipeline, cache + ETag, range streaming |
 | Security | `Server/Security/` | cert generation, pairing, token store, auth middleware, rate limiting, mDNS |
 | Harness | `Server.Tests/`, `rm2ctl/` | synthetic media fixtures, integration tests, the headless CLI client |
 
@@ -245,11 +247,19 @@ media, with the desktop app never launched:
 2. open a folder, get a pair, fetch both stills at display size
 3. vote, skip, discard, special, undo — and see `rankmaster_db.json` correct after each
 4. retry every one of those calls with a stale `pairToken` and get `409` with recoverable state
-5. kill the server mid-session and resume with no lost or double-counted votes
+5. kill the server mid-session and resume with no lost or double-counted votes **on disk**, the
+   client resyncing through `GET /session`
 6. run a 200-vote cycle and have the resulting JSON load unchanged in the desktop app
 
 Point 6 is the one that matters: **the existing app must be able to open the file the server
 wrote, with ratings intact.** That is the compatibility contract.
+
+Point 5 is deliberately scoped to what is on disk. Because the save is atomic and completes before
+the response is sent, a vote is either fully persisted or not at all — there is no torn state. What
+the server cannot do is tell a client the *outcome* of a request that was in flight when the process
+died: `lastAction` lives in memory. Closing that would need an action journal in the server's data
+directory, which is out of scope for a single user on a LAN. The client resyncs and continues; at
+worst it does not learn whether one vote landed, and `GET /session` tells it the truth either way.
 
 ---
 
