@@ -117,7 +117,6 @@ internal static class Entry
 
     private static async Task<int> PairAsync(Options options, Journal journal)
     {
-        using var api = Connect(options, journal);
         journal.Title("Pair a device");
 
         var code = options.Code;
@@ -150,8 +149,20 @@ internal static class Entry
                 return 0;
             }
 
+            // The offer names the host and port to come back on. Using the built-in default
+            // instead is how this ended up talking TLS at whatever else held the default port.
+            if (!options.BaseUrlGiven && offer.Host is not null && offer.Port is not null)
+            {
+                options.AdoptBase(offer.Host, offer.Port.Value);
+                journal.Note($"using the address from the pairing offer: {options.BaseUrl}");
+            }
+
             code = offer.Code;
         }
+
+        // Connect only now: the offer above may have just told us which address to use, and the
+        // client has to be built against the final one.
+        using var api = Connect(options, journal);
 
         journal.Step("exchange the code for a device token");
         var reply = await api.PairAsync(code, options.DeviceName ?? $"rm2ctl on {Environment.MachineName}");

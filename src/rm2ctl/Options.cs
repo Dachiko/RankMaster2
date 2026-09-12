@@ -8,6 +8,12 @@ public sealed class Options
     public bool Verbose { get; private set; }
 
     public string BaseUrl { get; private set; } = "https://127.0.0.1:8611/api/v1";
+
+    /// <summary>True once --base was actually given, so a published pairing offer can fill it in.</summary>
+    public bool BaseUrlGiven { get; private set; }
+
+    /// <summary>Adopt the host and port the server published in its pairing offer.</summary>
+    public void AdoptBase(string host, int port) => BaseUrl = Normalise($"{host}:{port}");
     public string? Token { get; private set; } = Environment.GetEnvironmentVariable("RM2_TOKEN");
     public string? Pin { get; private set; } = Environment.GetEnvironmentVariable("RM2_PIN");
     public bool Insecure { get; private set; }
@@ -42,6 +48,7 @@ public sealed class Options
                     break;
                 case "--base":
                     options.BaseUrl = Normalise(Next("--base"));
+                    options.BaseUrlGiven = true;
                     break;
                 case "--token":
                     options.Token = Next("--token");

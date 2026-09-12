@@ -1178,7 +1178,10 @@ components:
     FolderLocked:
       description: |
         `folder_locked` — `<folder>/.rankmaster.lock` is held by another process. `details.holder` is
-        read from the lock file on a best-effort basis and any field in it may be null.
+        **always null** and is kept only so a future design can fill it (`SERVER_SPEC.md` § 5.3.1):
+        the lock is opened `FileShare.None`, and that exclusivity — the whole point of the lock — is
+        exactly what stops any other process opening the file to read who holds it. Do not implement
+        a best-effort read; it cannot succeed.
 
         The desktop app does not yet respect this lock (`SERVER_PLAN.md` § 3.1): until it does, the
         absence of a 423 does **not** prove nothing else is writing the folder.
@@ -1193,7 +1196,7 @@ components:
               message: That folder is in use by another Rank Master process.
               requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
               details:
-                holder: { pid: 8123, host: DESKTOP-7K2, process: RankMaster2.Server, startedAt: "2026-09-12T17:40:02.000Z" }
+                holder: null
 
     SessionBusy:
       description: |
@@ -1489,9 +1492,16 @@ components:
           additionalProperties: true
         session:
           description: |
-            Present **iff** a session is open when the error is produced, and **required** for every
-            409 on a `/session*` endpoint. Identical to what `GET /session` would return at that
-            instant — this is what makes a stale token recoverable in one round trip.
+            Present **iff** a session is open when the error is produced **and the caller is
+            authenticated**, and **required** for every 409 on a `/session*` endpoint. Identical to
+            what `GET /session` would return at that instant — this is what makes a stale token
+            recoverable in one round trip.
+
+            MUST be omitted on **401** and **403**: the snapshot carries the open folder's absolute
+            path and its contents, so attaching it to an authentication failure would hand a caller
+            who just failed to present a token exactly what the token protects. MUST also be omitted
+            on **503 `session_busy`**, where not holding the session lock *is* the failure being
+            reported (`SERVER_SPEC.md` § 4).
           oneOf:
             - { $ref: '#/components/schemas/SessionSnapshot' }
             - { type: "null" }

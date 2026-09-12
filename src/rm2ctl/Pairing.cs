@@ -19,7 +19,7 @@ public static class Pairing
     /// <summary>Names a server may publish the open window under.</summary>
     public static readonly string[] OfferFileNames = { "pairing.json", "pair.offer", "pairing.offer.json" };
 
-    public sealed record Offer(string Code, string CodeDisplay, string? Payload, string? Fingerprint, string? ExpiresAt);
+    public sealed record Offer(string Code, string CodeDisplay, string? Payload, string? Fingerprint, string? ExpiresAt, string? Host, int? Port);
 
     /// <summary>Where the server keeps its certificate, device store and pairing offer.</summary>
     public static string DefaultDataDirectory()
@@ -44,6 +44,12 @@ public static class Pairing
     /// </summary>
     public static async Task<Offer?> ReadOfferAsync(string dataDirectory, TimeSpan timeout, bool request, Journal journal)
     {
+        // The offer file already holds the PREVIOUS window. Asking for a new one and then reading
+        // the file immediately hands back the old code, which the server has just retired - it comes
+        // straight back as invalid_pairing_code. So remember what was there before asking, and wait
+        // for the server to publish something different.
+        var stale = request ? CurrentOffer(dataDirectory) : null;
+
         if (request)
         {
             try
@@ -61,16 +67,38 @@ public static class Pairing
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            foreach (var name in OfferFileNames)
+            var offer = CurrentOffer(dataDirectory);
+            if (offer is not null && (stale is null || offer.Code != stale.Code || offer.ExpiresAt != stale.ExpiresAt))
             {
-                var offer = TryRead(Path.Combine(dataDirectory, name));
-                if (offer is not null) return offer;
+                if (stale is not null)
+                    journal.Note("the server published a fresh pairing window");
+                return offer;
             }
 
             await Task.Delay(200);
         }
 
+        // Nothing new arrived. An unchanged offer that has not expired is still worth returning:
+        // the server may simply have had a window open already.
+        return stale;
+    }
+
+    private static Offer? CurrentOffer(string dataDirectory)
+    {
+        foreach (var name in OfferFileNames)
+        {
+            var offer = TryRead(Path.Combine(dataDirectory, name));
+            if (offer is not null) return offer;
+        }
+
         return null;
+    }
+
+    private static string? FromPayload(string? payload, string key)
+    {
+        if (payload is null) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(payload, $"[?&]{key}=([^&]+)");
+        return match.Success ? Uri.UnescapeDataString(match.Groups[1].Value) : null;
     }
 
     private static Offer? TryRead(string path)
@@ -89,12 +117,19 @@ public static class Pairing
             code ??= CodeFromPayload(payload);
             if (code is null) return null;
 
+            var host = Read(root, "host") ?? FromPayload(payload, "host");
+            var port = root.TryGetProperty("port", out var p) && p.TryGetInt32(out var n)
+                ? n
+                : int.TryParse(FromPayload(payload, "port"), out var fromPayload) ? fromPayload : (int?)null;
+
             return new Offer(
                 code,
                 Read(root, "codeDisplay") ?? Display(code),
                 payload,
                 Read(root, "certificateFingerprint"),
-                Read(root, "expiresAt"));
+                Read(root, "expiresAt"),
+                host,
+                port);
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {

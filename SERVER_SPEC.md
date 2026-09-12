@@ -74,6 +74,23 @@ native (`SERVER_PLAN.md` § 7).
 
 ---
 
+### 2.4 The server data directory
+
+Everything the server owns lives here, and **nothing the server owns is ever written into the user's
+media folder** — the one exception is `rankmaster_db.json` itself, which is the user's data, and the
+lock file beside it.
+
+| Platform | Path |
+|---|---|
+| Windows | `%LOCALAPPDATA%\RankMaster2\Server` |
+| Other | `$XDG_DATA_HOME/RankMaster2/Server`, else `~/.local/share/RankMaster2/Server` |
+
+Overridable by configuration. It holds the TLS certificate, the device token store, the pairing
+sentinel and offer, and the rendered-still cache. Created on first run with owner-only permissions,
+because the token store and the certificate's private key live in it.
+
+---
+
 ## 3. Authentication
 
 | Endpoint | Auth |
@@ -590,8 +607,15 @@ control of the owner's OS account, and there are two ways in:
 2. **A sentinel file** in the server's data directory, polled by the server. Creating it requires
    write access to that directory, which is the OS-account check.
 
-The resulting offer — code, expiry, host, port, certificate fingerprint — is written to the data
-directory with owner-only permissions, for `rm2ctl` to render as text and as a QR code.
+Both files are **named normatively**, because three separate clients guessed differently at them:
+
+| Path | Role |
+|---|---|
+| `<data>/pair.request` | Sentinel. Create it to ask for a window; the server deletes it on pickup |
+| `<data>/pairing.json` | The published offer: `code`, `expiresAt`, `host`, `port`, `fingerprint`. Owner-only (`0600`) |
+
+`<data>` is the server data directory (§ 2.4). The offer is what `rm2ctl` renders as text and as a
+QR code.
 
 The client MUST pin the fingerprint **before** sending the code. The code is a bearer secret: handing
 it to an unverified TLS peer hands it to whoever answered.
