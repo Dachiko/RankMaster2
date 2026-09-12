@@ -48,7 +48,13 @@ public sealed class JsonCatalog : ICatalog
 
     public void Save(string folder, IReadOnlyList<MediaRecord> records)
     {
-        Directory.CreateDirectory(folder);
+        // Never create the folder here. If it has gone - USB pulled, share dropped, renamed in
+        // Explorer while the app is open - recreating it makes the write succeed against an empty
+        // directory, and the merge below then installs an empty database over real ratings. It has
+        // to throw: that is what lets RankingSession roll the choice back instead of losing it.
+        if (!Directory.Exists(folder))
+            throw new DirectoryNotFoundException("Ranking folder is gone; refusing to save: " + folder);
+
         var path = Path.Combine(folder, FileName);
         var onDisk = ListTopLevelMedia(folder);
         var existing = File.Exists(path) ? LoadRequired(path) : new RankingDatabaseDto();
@@ -72,6 +78,14 @@ public sealed class JsonCatalog : ICatalog
             images[id.Filename] = ToDto(new MediaRecord(
                 id, kind, RankingConstants.DefaultRating, 0, 0, 0));
         }
+
+        // The session is holding records but the folder lists no media at all. That is not
+        // "everything was discarded" - discarded files leave the record list too. It means the
+        // library became unreadable between the scan and now. Never trade real ratings for {}.
+        if (images.Count == 0 && records.Count > 0)
+            throw new IOException(
+                $"Folder lists no media but the session holds {records.Count} record(s); " +
+                $"refusing to overwrite {FileName} in {folder}.");
 
         var dto = new RankingDatabaseDto
         {

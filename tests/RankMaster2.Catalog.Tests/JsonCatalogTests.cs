@@ -168,6 +168,53 @@ public class JsonCatalogTests
     }
 
     [Fact]
+    public void Save_FolderVanished_RefusesAndKeepsRatings()
+    {
+        var root = CreateTempFolder();
+        var dir = Path.Combine(root, "photos");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "a.jpg"), [0]);
+        File.WriteAllBytes(Path.Combine(dir, "b.jpg"), [0]);
+
+        var catalog = new JsonCatalog();
+        var records = catalog.Scan(dir)
+            .Select(r => r with { Rating = new Rating(41.7, 2.1), Matches = 312 })
+            .ToList();
+        catalog.Save(dir, records);
+        var before = File.ReadAllText(Path.Combine(dir, "rankmaster_db.json"));
+
+        // USB pulled, share dropped, or renamed in Explorer mid-session.
+        Directory.Move(dir, Path.Combine(root, "moved"));
+
+        Assert.Throws<DirectoryNotFoundException>(() => catalog.Save(dir, records));
+        Assert.False(Directory.Exists(dir));
+        Assert.Equal(before, File.ReadAllText(Path.Combine(root, "moved", "rankmaster_db.json")));
+    }
+
+    [Fact]
+    public void Save_FolderListsNoMedia_RefusesRatherThanWritingEmpty()
+    {
+        var dir = CreateTempFolder();
+        File.WriteAllBytes(Path.Combine(dir, "a.jpg"), [0]);
+        File.WriteAllBytes(Path.Combine(dir, "b.jpg"), [0]);
+
+        var catalog = new JsonCatalog();
+        var records = catalog.Scan(dir)
+            .Select(r => r with { Rating = new Rating(38.0, 3.0), Matches = 120 })
+            .ToList();
+        catalog.Save(dir, records);
+        var path = Path.Combine(dir, "rankmaster_db.json");
+        var before = File.ReadAllText(path);
+
+        // The folder is still there but the media is not readable through it any more.
+        File.Delete(Path.Combine(dir, "a.jpg"));
+        File.Delete(Path.Combine(dir, "b.jpg"));
+
+        Assert.Throws<IOException>(() => catalog.Save(dir, records));
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    [Fact]
     public void RemapIds_RewritesFilenameIdentity()
     {
         var catalog = new JsonCatalog();

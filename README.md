@@ -4,7 +4,7 @@ Windows app for ranking a folder of photos **or** videos by pairwise comparison.
 
 This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
 
-**Current version: 1.1.3.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
+**Current version: 1.1.4.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
 
 | Bump | When |
 |---|---|
@@ -17,6 +17,10 @@ This tree is `project\` (including `.git`). The runnable app is the single file 
 ## What is in 1.1.0
 
 Fullscreen two-pane compare, LibVLC video (including AV1), prefetch of 2 pairs, v1-compatible JSON, discard / `special 1` / rename-by-`μ − 3σ`, F1/`?` help, last-10 confirmation (emerald) / upset (amber) strip.
+
+**What is in 1.1.4**
+
+Saving can no longer destroy a library. If the folder disappears mid-session — USB pulled, network share dropped, renamed in Explorer while the app is open — `Save` used to recreate the empty folder, find no media in it, and atomically install an empty database over every rating. No exception, no warning. It now refuses to write and reports the error, which lets the vote roll back the way it always should have.
 
 **What is in 1.1.3**
 

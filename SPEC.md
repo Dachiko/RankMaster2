@@ -7,7 +7,7 @@ This file is the source of truth. If code and this document disagree, the docume
 A Windows 11 desktop app that ranks the photos **or** videos in one folder by pairwise comparison. You see two items, pick the better one (or skip). Ratings live in `rankmaster_db.json` in that folder so the library is portable.
 
 Working title / assembly name: **RankMaster2**  
-App version: `Directory.Build.props` (now **1.1.3**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
+App version: `Directory.Build.props` (now **1.1.4**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
 Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-2\RankMaster2.exe` with `libvlc\` next to it (not in git).
 
 ## Stack
@@ -125,6 +125,7 @@ File: `<folder>/rankmaster_db.json`
 - If `rankmaster_db.json` exists and does not parse, **refuse to start** and never overwrite it.
 - Atomic save: write tmp, `Flush(true)`, `File.Replace` (or `Move` if the file is new). If save throws, roll back the in-memory vote.
 - **Save on every choice** (vote or skip), atomically, before the next pair is requested. Not batched every N pairs. `Ctrl+S` is a manual extra save. `Esc` does not write (nothing new to write). Save also before rename.
+- **Never write an empty database.** If the folder is missing, or lists no media while the session still holds records, `Save` throws instead of writing. Saving must not create the folder: recreating a vanished one turns a recoverable error into silent, total rating loss.
 - `μ − 3σ` is computed, never stored.
 - Keep writing `impressions` and `lastPlayed` for compatibility. **Do not use `impressions` to pick pairs.**
 
