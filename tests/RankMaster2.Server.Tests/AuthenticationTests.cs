@@ -95,6 +95,51 @@ public class AuthenticationTests(Rm2Server server) : SessionTestBase(server)
         }
     }
 
+    /// <summary>
+    /// SERVER_SPEC.md § 10.12 and § 3: revoking a device makes its next call `401 token_revoked` —
+    /// a different code from `invalid_token`, so a client can tell "you were thrown out" from "that
+    /// token means nothing here" and stop retrying.
+    ///
+    /// The device revoked here is a spare, paired at startup for exactly this: revoking the suite's
+    /// own token would end the run.
+    /// </summary>
+    [Fact]
+    public async Task A_revoked_device_is_told_it_was_revoked()
+    {
+        var spare = Server.SpareDevice;
+        if (spare is null)
+            throw new Xunit.Sdk.XunitException(
+                "This test needs a second paired device and the harness could not pair one. See " +
+                $"{nameof(TestAuth)}.{nameof(TestAuth.PairSpareDeviceAsync)}.");
+
+        var spareClient = Anonymous.WithToken(spare.Token);
+
+        // It works before the revocation, or the test proves nothing afterwards.
+        var before = await spareClient.PingAsync();
+        before.ShouldHaveStatus(200, "the spare device's token works before it is revoked");
+        Assert.True(before.JsonBody.GetProperty("authenticated").GetBoolean(),
+            "SERVER_SPEC.md § 14: a valid token makes the ping authenticated.");
+
+        var client = await ClientAsync();
+        var revoked = await client.RevokeAsync(spare.DeviceId);
+        revoked.ShouldHaveStatus(204, "SERVER_SPEC.md § 10.12: DELETE /pair/{deviceId} answers 204");
+
+        var after = await spareClient.GetSessionAsync();
+        after.ShouldBeError("token_revoked",
+            "SERVER_SPEC.md § 3 and § 10.12: the revoked device's next call gets 401 token_revoked. It is a " +
+            "distinct code from invalid_token so the client knows it was thrown out rather than mis-configured.");
+
+        // § 3: an invalid token on /ping is a 401, not a quiet downgrade to the public subset.
+        var ping = await spareClient.PingAsync();
+        ping.ShouldHaveStatus(401,
+            "SERVER_SPEC.md § 3: GET /ping with a revoked token is 401, not the public subset — a client with " +
+            "a bad token must learn that it is bad");
+
+        // And the suite's own token is untouched.
+        var ours = await client.PingAsync();
+        ours.ShouldHaveStatus(200, "revoking one device does not affect another");
+    }
+
     [Fact]
     public async Task Revoking_a_device_does_not_close_the_session()
     {
@@ -116,6 +161,53 @@ public class AuthenticationTests(Rm2Server server) : SessionTestBase(server)
             "SERVER_SPEC.md § 10.12: revocation does not close a session — only DELETE /session does");
 
         Assert.Equal(opened.SessionId, snapshot.SessionId);
+    }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 4: `error.session` MUST be omitted on 401 and 403, and that rule outranks
+    /// the "present iff a session is open" one.
+    ///
+    /// This is the sharpest clause in the document. The snapshot carries the open folder's absolute
+    /// path and the filename of everything in it, so attaching it to an authentication failure would
+    /// hand a caller who just failed to present a token exactly what the token exists to protect.
+    /// A session is deliberately open while this runs, so the test would pass vacuously otherwise.
+    /// </summary>
+    [Fact]
+    public async Task An_authentication_failure_never_leaks_the_open_session()
+    {
+        using var folder = Fixtures.LibraryFolder.SixStills();
+        await OpenAsync(folder);
+
+        var probes = new (string Method, string Path, object? Body, string Description)[]
+        {
+            ("GET", "/session", null, "no credential"),
+            ("POST", "/session/vote", new { pairToken = "x", winner = "left" }, "no credential on an action"),
+            ("GET", "/session/pair", null, "no credential on the hot path"),
+        };
+
+        foreach (var (method, path, body, description) in probes)
+        {
+            var response = await Anonymous.SendAsync(new HttpMethod(method), path, body, authenticate: false);
+            response.ShouldHaveStatus(401, $"{method} {path} with {description}");
+
+            var error = response.JsonBody.GetProperty("error");
+            var leaked = error.TryGetProperty("session", out var session) &&
+                         session.ValueKind != System.Text.Json.JsonValueKind.Null;
+
+            Assert.False(leaked,
+                $"SERVER_SPEC.md § 4: error.session MUST be omitted on 401. {method} {path} returned a " +
+                "snapshot to an unauthenticated caller, which hands out the open folder's absolute path and " +
+                "its entire contents — precisely what the bearer token exists to protect.\n" + response.Describe());
+        }
+
+        // And the same for a token that is well-formed but not ours.
+        var badToken = await Anonymous.WithToken("rm2_not_a_real_token").GetSessionAsync();
+        badToken.ShouldHaveStatus(401, "GET /session with an unknown token");
+
+        var bad = badToken.JsonBody.GetProperty("error");
+        Assert.False(bad.TryGetProperty("session", out var badSession) &&
+                     badSession.ValueKind != System.Text.Json.JsonValueKind.Null,
+            "SERVER_SPEC.md § 4: a 401 from a bad token must not carry error.session either.");
     }
 
     [Fact]

@@ -177,6 +177,69 @@ public class PairTokenTests(Rm2Server server) : SessionTestBase(server)
         Assert.Equal("undo", undone.RequireLastAction("after undo").Type);
     }
 
+    /// <summary>
+    /// A move recorded in one folder, then a session opened on another. SERVER_SPEC.md gives two
+    /// different answers for this, and they cannot both be right:
+    ///
+    /// § 10.10 — "The recorded move belongs to another folder → the server clears it and returns
+    /// `409 undo_folder_changed`."
+    /// § 9.1 — `undoAvailable` is "LastMove is non-null **and** its folder matches the open session.
+    /// A `POST /session/undo` while this is `false` returns `409 nothing_to_undo`."
+    ///
+    /// After a folder change `undoAvailable` is false by § 9.1's own definition, so § 9.1 says
+    /// `nothing_to_undo` and § 10.10 says `undo_folder_changed` about the identical state. Either
+    /// is defensible; the test accepts both and asserts what actually matters, which is that no file
+    /// is moved and the wrong folder's record is not disturbed.
+    /// </summary>
+    [Fact]
+    public async Task Undoing_a_move_that_belongs_to_another_folder_is_refused()
+    {
+        using var first = LibraryFolder.SixStills();
+        using var second = LibraryFolder.SixStills();
+        var client = await ClientAsync();
+
+        var opened = (await client.OpenSessionAsync(first.Path)).ShouldBeSnapshot(201, "open the first folder");
+        var discardedId = opened.Left.Id;
+
+        (await client.DiscardAsync(opened.RequireToken("open"), "left", "cross-folder-setup"))
+            .ShouldBeSnapshot(200, "discard in the first folder, recording the move");
+
+        (await client.CloseSessionAsync()).ShouldHaveStatus(204, "close the first session");
+
+        var elsewhere = (await client.OpenSessionAsync(second.Path))
+            .ShouldBeSnapshot(201, "open a session on a different folder");
+
+        Assert.False(elsewhere.UndoAvailable,
+            "SERVER_SPEC.md § 9.1: undoAvailable requires the recorded move's folder to match the open " +
+            "session, and it does not.");
+
+        // Both fixture folders use the same filenames, so "did the file appear here" has to be a
+        // count rather than a name — the name is in both folders to begin with.
+        var secondBefore = Directory.GetFiles(second.Path).Length;
+
+        var response = await client.UndoAsync("cross-folder-undo");
+        var failure = response.ShouldBeErrorOneOf(
+            "SERVER_SPEC.md § 10.10 says undo_folder_changed and § 9.1 says nothing_to_undo about this same " +
+            "state; either is a legal reading of the contract as written",
+            "undo_folder_changed", "nothing_to_undo");
+
+        if (failure.Code == "undo_folder_changed")
+            Assert.NotNull(failure.Detail("moveFolder", "undo_folder_changed details").GetString());
+
+        // Whichever code comes back, nothing may have moved.
+        Assert.True(File.Exists(Path.Combine(first.Path, "discarded", discardedId)),
+            $"SERVER_SPEC.md § 10.10: a refused undo moves nothing, so '{discardedId}' must still be in the " +
+            "first folder's discarded/.");
+
+        Assert.True(Directory.GetFiles(second.Path).Length == secondBefore,
+            $"SERVER_SPEC.md § 10.10: a refused undo must not move anything into the folder the session is " +
+            $"actually open on. It went from {secondBefore} files to {Directory.GetFiles(second.Path).Length}.");
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "the second session after the refusal");
+        Assert.Equal(elsewhere.Total, after.Total);
+        Assert.Equal(elsewhere.PairSeq, after.PairSeq);
+    }
+
     [Fact]
     public async Task The_validation_order_puts_the_body_check_before_the_token_check()
     {

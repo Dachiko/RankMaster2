@@ -17,17 +17,18 @@ public enum AuthMode
 public sealed record TestCredentials(AuthMode Mode, string? Token, string Diagnostic);
 
 /// <summary>
-/// Getting a bearer token for the tests, and the one place where the contract leaves a real hole.
+/// Getting a bearer token for the tests.
 ///
-/// SERVER_SPEC.md § 10.11 says the pairing window "is opened out of band" and never says by what.
-/// There is no endpoint for it and no named channel, so a test cannot pair by following the
-/// contract alone — which is a gap in the contract, not in any implementation.
+/// SERVER_SPEC.md § 10.1.1 settles how a pairing window opens, and it is deliberately not an HTTP
+/// operation: an HTTP route would let anyone who can reach the port open a window and then spend the
+/// day guessing at six digits. Opening one requires control of the owner's OS account — either the
+/// server opens one itself at startup when no device is enrolled, or a sentinel file appears in its
+/// data directory. The resulting offer, with the code, is written back to that directory.
 ///
-/// The out-of-band channel this server actually uses is a file in its data directory: it publishes
-/// the open window's code there, and watches for a request file that asks it to open one. That is a
-/// sound choice — an HTTP route for opening a window would let anyone on the LAN start one — but it
-/// is a wiring detail, so it lives here rather than in an assertion, and it is tried alongside the
-/// plainer seams. If none of them yields a token, the failure says exactly what was tried.
+/// So this points the server at a data directory of the suite's own, which starts with no device
+/// enrolled, and reads the offer from it. The exact filenames are a wiring detail rather than
+/// contract, so several are tried; if none of them yields a token, the failure says what was tried
+/// rather than leaving a puzzling 401 behind.
 /// </summary>
 public static class TestAuth
 {
@@ -128,11 +129,83 @@ public static class TestAuth
         return new TestCredentials(AuthMode.Unavailable, null,
             "No bearer token could be obtained, and the server does enforce authentication.\n" +
             Indent(attempts) +
-            "\n  SERVER_SPEC.md § 10.11 says the pairing window is 'opened out of band' but never says how, " +
-            "so there is nothing in the contract a test can call to open one.\n" +
+            "\n  SERVER_SPEC.md § 10.1.1: opening a pairing window is deliberately not an HTTP operation, so " +
+            "the harness has to reach the offer the server publishes in its data directory.\n" +
             $"  To run these tests: set {TokenEnvironmentVariable} to a device token, set " +
             $"{CodeEnvironmentVariable} to a live pairing code, or point the harness at the server's data " +
             $"directory so it can read the published offer file ({string.Join(", ", OfferFileNames)}).");
+    }
+
+    /// <summary>A device paired purely so a test can revoke it.</summary>
+    public sealed record SpareDevice(string DeviceId, string Token);
+
+    /// <summary>
+    /// Pair a second device, for the revocation tests.
+    ///
+    /// Done up front alongside the primary token rather than inside the test that needs it: POST
+    /// /pair is rate limited to five attempts a minute (§ 15) and the pairing tests deliberately
+    /// spend that budget, so a test that paired lazily would succeed or fail by running order.
+    /// Returns null when no second window could be had — the caller reports that itself.
+    /// </summary>
+    public static async Task<SpareDevice?> PairSpareDeviceAsync(Rm2Client anonymous, string dataDirectory)
+    {
+        var code = await RequestFreshWindowAsync(dataDirectory, TimeSpan.FromSeconds(15));
+        if (code is null) return null;
+
+        var response = await anonymous.PairAsync(code, "rm2 test harness (to be revoked)");
+        if (response.StatusCode != 201 || response.Json is not { } body) return null;
+
+        var deviceId = body.TryGetProperty("deviceId", out var id) ? id.GetString() : null;
+        var token = body.TryGetProperty("token", out var value) ? value.GetString() : null;
+
+        return deviceId is { Length: > 0 } && token is { Length: > 0 }
+            ? new SpareDevice(deviceId, token)
+            : null;
+    }
+
+    /// <summary>
+    /// Ask for a brand-new pairing window and wait until the server publishes one whose code
+    /// differs from the one already on offer.
+    ///
+    /// A test that wants to watch the per-window attempt budget fall (SERVER_SPEC.md § 10.11) needs
+    /// a window with its budget intact, and the window is shared by the whole suite — so without
+    /// this, whether the test could see anything would depend on which pairing test ran first.
+    /// Returns null if no fresh window appears.
+    /// </summary>
+    public static async Task<string?> RequestFreshWindowAsync(string dataDirectory, TimeSpan timeout)
+    {
+        var previous = CurrentCode(dataDirectory);
+
+        try
+        {
+            Directory.CreateDirectory(dataDirectory);
+            await File.WriteAllTextAsync(Path.Combine(dataDirectory, PairRequestFileName), "");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var code = CurrentCode(dataDirectory);
+            if (code is not null && code != previous) return code;
+            await Task.Delay(150);
+        }
+
+        return null;
+    }
+
+    private static string? CurrentCode(string dataDirectory)
+    {
+        foreach (var name in OfferFileNames)
+        {
+            var code = TryReadCode(Path.Combine(dataDirectory, name));
+            if (code is not null) return code;
+        }
+
+        return null;
     }
 
     /// <summary>

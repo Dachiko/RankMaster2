@@ -214,6 +214,67 @@ public class SessionLifecycleTests(Rm2Server server) : SessionTestBase(server)
         Assert.NotNull(failure.Detail("folder", "folder_not_a_directory details").GetString());
     }
 
+    /// <summary>
+    /// SERVER_SPEC.md § 10.1 step 4 and § 5.3.1. Holding the folder's lock file from outside is what
+    /// a second Rank Master process would do, and the server must refuse the folder rather than
+    /// writing into it alongside.
+    ///
+    /// `details.holder` is null by construction, and the spec spends a section explaining why: the
+    /// lock is opened <c>FileShare.None</c>, which is exactly what stops a second writer — and that
+    /// same exclusivity stops anyone opening the file to read who holds it.
+    /// </summary>
+    [Fact]
+    public async Task A_folder_whose_lock_is_held_elsewhere_is_refused()
+    {
+        using var folder = LibraryFolder.SixStills();
+        var client = await ClientAsync();
+
+        FileStream held;
+        try
+        {
+            held = new FileStream(folder.File(".rankmaster.lock"), FileMode.OpenOrCreate,
+                                  FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException)
+        {
+            throw new Xunit.Sdk.XunitException(
+                "Could not take the folder lock from the test process, so this test cannot set up.");
+        }
+
+        try
+        {
+            var response = await client.OpenSessionAsync(folder.Path);
+
+            // A platform whose file locks are advisory cannot produce this, and saying so is more
+            // useful than a failure that looks like a server bug.
+            if (response.StatusCode is 200 or 201)
+            {
+                await client.CloseSessionAsync();
+                throw new Xunit.Sdk.XunitException(
+                    "SERVER_SPEC.md § 10.1 step 4: opening a folder whose .rankmaster.lock is held elsewhere " +
+                    "must be 423 folder_locked, and this opened it instead.\n" +
+                    "  If this platform's file locking is advisory rather than mandatory, the server cannot " +
+                    "detect the conflict — which is worth knowing, because SERVER_SPEC.md § 16.6 already warns " +
+                    "the lock only binds this server.\n" + response.Describe());
+            }
+
+            var failure = response.ShouldBeError("folder_locked",
+                "SERVER_SPEC.md § 10.1 step 4: a folder whose lock is held elsewhere is 423 folder_locked");
+
+            var holder = failure.Detail("holder", "folder_locked details");
+            Assert.True(holder.ValueKind == System.Text.Json.JsonValueKind.Null,
+                "SERVER_SPEC.md § 5.3.1: details.holder is null, always. The lock is FileShare.None, so no " +
+                "other process can open it to read the holder record — a best-effort read cannot succeed and " +
+                $"would only produce a misleading error path. Got {holder}.");
+
+            Assert.NotNull(response.HeaderOrNull("X-Request-Id"));
+        }
+        finally
+        {
+            held.Dispose();
+        }
+    }
+
     [Fact]
     public async Task Get_session_and_get_pair_return_the_same_object()
     {

@@ -47,6 +47,16 @@ public sealed class Rm2Response
         }
     }
 
+    /// <summary>
+    /// The `error.code` of the envelope, or null when this is not one. For the handful of places a
+    /// test has to branch on the answer rather than assert it.
+    /// </summary>
+    public string? ErrorCode =>
+        Json is { } json && json.TryGetProperty("error", out var error) &&
+        error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var code)
+            ? code.GetString()
+            : null;
+
     /// <summary>The JSON body, or a failure that shows what came back instead.</summary>
     public JsonElement JsonBody =>
         Json ?? throw Failure("Expected a JSON body and did not get one.");

@@ -32,7 +32,26 @@ public sealed class Rm2Server : IAsyncLifetime
 
     public TestCredentials Credentials { get; private set; } = null!;
 
-    public Task InitializeAsync()
+    /// <summary>
+    /// A second paired device, kept so a test can revoke it and watch the revocation take effect
+    /// without costing the suite its own token. Null when a second window could not be had.
+    /// </summary>
+    public TestAuth.SpareDevice? SpareDevice { get; private set; }
+
+    public async Task InitializeAsync()
+    {
+        Build();
+
+        // Pair here rather than on first use. POST /pair is rate limited to five attempts a minute
+        // (§ 15), and PairingTests deliberately spends that budget proving the limit exists — so if
+        // the suite paired lazily, whether it got a token would depend on test order.
+        var credentials = await AuthenticateAsync();
+
+        if (credentials.Mode == AuthMode.Bearer)
+            SpareDevice = await TestAuth.PairSpareDeviceAsync(Anonymous, DataDirectory);
+    }
+
+    private void Build()
     {
         Directory.CreateDirectory(DataDirectory);
 
@@ -59,12 +78,11 @@ public sealed class Rm2Server : IAsyncLifetime
 
         Anonymous = new Rm2Client(_http);
         Client = Anonymous;
-        return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Acquired lazily and once: pairing codes are single-use (§ 10.11), so this must not run per
-    /// test class.
+    /// Acquired once for the whole suite: a pairing code is single-use (§ 10.11), so this must not
+    /// run per test class.
     /// </summary>
     public async Task<TestCredentials> AuthenticateAsync()
     {

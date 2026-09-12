@@ -129,6 +129,29 @@ public sealed class Rm2Api : IDisposable
         _http = new HttpClient(handler) { Timeout = timeout };
     }
 
+    /// <summary>
+    /// Turn a path into a URL. The <c>links</c> in a snapshot are already rooted at the API base
+    /// ("/api/v1/media/…", § 9.3), while the paths in this class are relative to it — so a link is
+    /// resolved against the origin and everything else against the base, and using a link verbatim
+    /// does not end up asking for /api/v1/api/v1/…
+    /// </summary>
+    private string Resolve(string path)
+    {
+        if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return path;
+
+        if (!path.StartsWith('/')) path = "/" + path;
+
+        if (path.StartsWith("/api/", StringComparison.Ordinal))
+        {
+            var origin = new Uri(BaseUrl).GetLeftPart(UriPartial.Authority);
+            return origin + path;
+        }
+
+        return BaseUrl + path;
+    }
+
     private static string Normalise(string fingerprint)
     {
         var value = fingerprint.Trim().ToLowerInvariant().Replace(":", "", StringComparison.Ordinal);
@@ -143,7 +166,7 @@ public sealed class Rm2Api : IDisposable
                                        Action<HttpRequestMessage>? customise = null,
                                        bool quiet = false)
     {
-        var url = BaseUrl + (path.StartsWith('/') ? path : "/" + path);
+        var url = Resolve(path);
         using var request = new HttpRequestMessage(method, url);
 
         string? serialised = null;

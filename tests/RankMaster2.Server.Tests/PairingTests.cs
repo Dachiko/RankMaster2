@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RankMaster2.Server.Tests.Harness;
 using Xunit;
 
@@ -70,6 +71,76 @@ public class PairingTests(Rm2Server server)
         response.ShouldBeErrorOneOf(
             "SERVER_SPEC.md § 2: a request body that is not application/json is 415",
             "unsupported_content_type", "too_many_requests");
+    }
+
+    /// <summary>
+    /// § 10.11: each pairing window carries a budget of five attempts in total, counted across all
+    /// source addresses; on reaching zero the window is destroyed.
+    ///
+    /// The per-address rate limit alone is walked straight through by an attacker holding several
+    /// LAN addresses, which is why the spec makes the per-window budget normative and separate. The
+    /// suite has already paired by the time this runs (see <see cref="Harness.Rm2Server"/>), so
+    /// spending the window here costs nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_window_has_a_total_attempt_budget_not_just_a_rate_limit()
+    {
+        // A window with its budget intact, so this does not depend on which pairing test ran first.
+        var fresh = await TestAuth.RequestFreshWindowAsync(server.DataDirectory, TimeSpan.FromSeconds(15));
+        if (fresh is null)
+        {
+            throw new Xunit.Sdk.XunitException(
+                "Could not get a fresh pairing window through the channel SERVER_SPEC.md § 10.1.1 describes " +
+                $"(a sentinel file in '{server.DataDirectory}'), so the per-window budget cannot be observed.");
+        }
+
+        var budgets = new List<int>();
+
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            // Wrong by construction: a code that is not the one just issued.
+            var wrong = fresh == "111111" ? "222222" : "111111";
+            var response = await server.Anonymous.PairAsync(wrong, "budget probe");
+
+            if (response.ErrorCode == "invalid_pairing_code" &&
+                response.Json?.GetProperty("error").TryGetProperty("details", out var details) == true &&
+                details.ValueKind == JsonValueKind.Object &&
+                details.TryGetProperty("attemptsRemaining", out var remaining))
+            {
+                budgets.Add(remaining.GetInt32());
+                continue;
+            }
+
+            // The window died, or the per-address rate limit tripped first. Both are defences, and
+            // neither is a reason to keep guessing.
+            if (response.ErrorCode is "pairing_not_open" or "too_many_requests") break;
+        }
+
+        Assert.True(budgets.Count > 0,
+            "SERVER_SPEC.md § 10.11: a wrong code against an open window is 401 invalid_pairing_code with " +
+            "details.attemptsRemaining. Not one attempt reported a budget.");
+
+        Assert.True(budgets[0] <= 5,
+            "SERVER_SPEC.md § 10.11: a window's total budget is five attempts, counted across all source " +
+            $"addresses. The first wrong guess against a fresh window reported {budgets[0]} remaining.");
+
+        Assert.True(budgets.Zip(budgets.Skip(1)).All(pair => pair.Second <= pair.First),
+            "SERVER_SPEC.md § 10.11: the per-window budget never rises. It went " +
+            $"[{string.Join(", ", budgets)}].");
+
+        Assert.True(budgets.Count < 2 || budgets[^1] < budgets[0],
+            "SERVER_SPEC.md § 10.11: each wrong guess costs the window an attempt — a per-address rate limit " +
+            "alone is walked straight through by an attacker holding several LAN addresses. The budget did " +
+            $"not move: [{string.Join(", ", budgets)}].");
+
+        // Once the budget is gone the window is destroyed, and the correct code is refused thereafter.
+        if (budgets[^1] == 0)
+        {
+            var spent = await server.Anonymous.PairAsync(fresh, "the correct code, after the budget is gone");
+            Assert.True(spent.StatusCode != 201,
+                "SERVER_SPEC.md § 10.11: on reaching zero the window is destroyed and the correct code is " +
+                "refused thereafter. It was accepted.\n" + spent.Describe());
+        }
     }
 
     /// <summary>

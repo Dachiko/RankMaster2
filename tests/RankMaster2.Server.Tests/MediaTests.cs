@@ -515,12 +515,19 @@ public class MediaTests(Rm2Server server, ITestOutputHelper output) : SessionTes
 
         Assert.Equal(MediaFixtures.SecondJpeg, failure.Detail("id", "media_file_missing details").GetString());
 
+        var before = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "after a failed media read");
+
         // § 11.3: "The server MUST NOT mutate session state from a GET. A failed media read never
-        // drops a record on its own."
-        var snapshot = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "after a failed media read");
-        var meta = await client.MetaAsync(MediaFixtures.SecondJpeg);
-        Assert.True(meta.StatusCode != 404 || meta.JsonBody.GetProperty("error").GetProperty("code").GetString() == "media_file_missing",
-            "SERVER_SPEC.md § 11.3: a failed media read must not drop the record — only POST /session/discard does.");
+        // drops a record on its own" — the client decides, because a lost image request is far more
+        // likely to be a flaky Wi-Fi link than a bad file. So the id must still be a record, which
+        // is exactly the difference between media_file_missing and unknown_media_id.
+        (await client.MetaAsync(MediaFixtures.SecondJpeg)).ShouldBeError("media_file_missing",
+            "SERVER_SPEC.md § 11.3: the record survives a failed read, so meta is still media_file_missing " +
+            "rather than unknown_media_id. Only POST /session/discard drops a record.");
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "the session after two failed reads");
+        Assert.Equal(before.Total, after.Total);
+        Assert.Equal(before.PairSeq, after.PairSeq);
     }
 
     // ---- id syntax ---------------------------------------------------------------------------
@@ -713,7 +720,6 @@ public class MediaTests(Rm2Server server, ITestOutputHelper output) : SessionTes
     [Theory]
     [InlineData(MediaFixtures.Corrupt, "a JPEG header followed by noise")]
     [InlineData(MediaFixtures.ZeroByte, "a zero-byte file")]
-    [InlineData(MediaFixtures.Truncated, "a JPEG cut off mid-scan")]
     public async Task A_file_that_will_not_decode_is_unprocessable_rather_than_a_crash(string id, string what)
     {
         var (folder, client) = await OpenMenagerieAsync();
@@ -729,6 +735,41 @@ public class MediaTests(Rm2Server server, ITestOutputHelper output) : SessionTes
         // The session has to survive it: the point of 422 rather than 500.
         var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200,
             $"the session survives a request for {what}");
+        Assert.Equal("ranking", after.State);
+    }
+
+    /// <summary>
+    /// A truncated JPEG is the case the contract does not decide. § 5.5 gives 422 for a file that
+    /// "is not a decodable image", but a JPEG cut off mid-scan has intact headers and a partial
+    /// scan: most decoders return the rows they got. Serving those rows and refusing outright are
+    /// both defensible, and SPEC.md § Media policy only insists the session survives — so that is
+    /// what this asserts, plus the rule that whichever answer comes back is a legal one.
+    /// </summary>
+    [Fact]
+    public async Task A_truncated_file_is_either_decoded_or_refused_but_never_crashes_the_session()
+    {
+        var (folder, client) = await OpenMenagerieAsync();
+        using var _ = folder;
+
+        var response = await client.StillAsync(MediaFixtures.Truncated, 720);
+
+        if (response.StatusCode == 200)
+        {
+            Assert.True(response.Body.Length > 0,
+                "A 200 must carry the bytes it decoded; an empty body is neither an image nor an error.");
+            Assert.True(response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true,
+                $"A decoded still is an image. Got '{response.ContentType}'.");
+            output.WriteLine($"{MediaFixtures.Truncated}: decoded the partial scan, {response.Body.Length} bytes");
+        }
+        else
+        {
+            response.ShouldBeError("media_decode_failed",
+                "SERVER_SPEC.md § 5.5: a file that cannot be decoded is 422 media_decode_failed — never a 500");
+            output.WriteLine($"{MediaFixtures.Truncated}: refused as undecodable");
+        }
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200,
+            "SPEC.md § Media policy: an unreadable file is skipped for that pair and the session does not crash");
         Assert.Equal("ranking", after.State);
     }
 
