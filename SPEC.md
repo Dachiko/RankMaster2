@@ -7,7 +7,7 @@ This file is the source of truth. If code and this document disagree, the docume
 A Windows 11 desktop app that ranks the photos **or** videos in one folder by pairwise comparison. You see two items, pick the better one (or skip). Ratings live in `rankmaster_db.json` in that folder so the library is portable.
 
 Working title / assembly name: **RankMaster2**  
-App version: `Directory.Build.props` (now **1.1.2**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
+App version: `Directory.Build.props` (now **1.1.3**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
 Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-2\RankMaster2.exe` with `libvlc\` next to it (not in git).
 
 ## Stack
@@ -263,7 +263,7 @@ That is **pairs ahead of the current pair**. Current + 2 warm pairs = up to 6 it
 
 Most files are a few MB; some are 100–200 MB on USB 2 (~30–40 MB/s). Depth is for the small ones. Large files still queue in single file.
 
-**Stills:** decode from a disposed `FileStream` (no `Uri` cache). Honor color profile. Fit to **panel physical pixels**, never upscale in the decoder, long edge capped at **4096**. Optional 720px first paint for files > 4 MB, then replace with the full-size frame. Evict previous bitmaps on swap.
+**Stills:** decode from a disposed `FileStream` (no `Uri` cache). Honor color profile. Fit to **panel physical pixels**, never upscale in the decoder, long edge capped at **4096**. Optional 720px first paint for files > 4 MB, then replace with the full-size frame. Both passes decode at the target size (`DecodePixelWidth`), never at full resolution. Evict previous bitmaps on swap.
 
 **Video:** at most **two live decoders** (the visible pair). Warm video pairs may hold a path or a first-frame still, not four running players. Playback is **LibVLC** (software, including AV1 in `.mp4`). Frames are painted onto the same WPF `Image` as stills so overlays stay clickable. Do **not** use WPF `MediaElement` / Media Foundation — it cannot play AV1 and was dropping those files as if they were corrupt. On `Release`, stop the player and do not return until the file can be moved.
 

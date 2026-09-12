@@ -4,7 +4,7 @@ Windows app for ranking a folder of photos **or** videos by pairwise comparison.
 
 This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
 
-**Current version: 1.1.2.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
+**Current version: 1.1.3.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
 
 | Bump | When |
 |---|---|
@@ -17,6 +17,10 @@ This tree is `project\` (including `.git`). The runnable app is the single file 
 ## What is in 1.1.0
 
 Fullscreen two-pane compare, LibVLC video (including AV1), prefetch of 2 pairs, v1-compatible JSON, discard / `special 1` / rename-by-`μ − 3σ`, F1/`?` help, last-10 confirmation (emerald) / upset (amber) strip.
+
+**What is in 1.1.3**
+
+Stills now decode straight to the size the pane draws, instead of decoding at full resolution and scaling afterwards. A 48 MP photo costs its display size rather than ~192 MB of pixels, so large libraries open faster and the 720px first paint is finally cheap. Embedded colour profiles are honoured again (Adobe RGB / Display P3 photos were rendering with the wrong saturation).
 
 **What is in 1.1.2**
 
