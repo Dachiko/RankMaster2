@@ -1,13 +1,16 @@
-// Phase 0 skeleton. The real surface is defined in SERVER_SPEC.md and built in Phase 2.
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-app.MapGet("/api/v1/ping", () => Results.Ok(new
-{
-    product = "Rank Master 2 server",
-    version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
-    ready = false
-}));
+// TLS, pairing, tokens, the fail-closed auth gate, /ping and /libraries/*.
+// Must come first: the middleware it installs guards every route mapped below.
+// Routes and everything behind them live in Security/.
+RankMaster2.Server.Security.SecurityEndpoints.UseRankMaster2Security(app);
+
+// The /session* group (SERVER_SPEC.md § 10). Routes live in Sessions/SessionEndpoints.cs.
+RankMaster2.Server.Sessions.SessionEndpoints.MapSessionEndpoints(app);
+
+// The /media/* group (SERVER_SPEC.md § 12). Routes and everything behind them live in Media/.
+RankMaster2.Server.Media.MediaEndpoints.MapMediaEndpoints(app);
 
 app.Run();
 

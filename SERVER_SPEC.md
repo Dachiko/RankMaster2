@@ -118,7 +118,7 @@ anywhere in the API, including for auth failures, routing 404s and unhandled exc
 | `error.message` | string | yes | Human English. Unstable. Never parsed. |
 | `error.requestId` | string | yes | Equal to the `X-Request-Id` header. |
 | `error.details` | object | no | Code-specific. Each code's `details` shape is fixed in § 5; a code with no row has no `details`. |
-| `error.session` | SessionSnapshot | no | Present **iff** a session is open at the moment the error is produced. MUST be present for every 409 on a `/session/*` endpoint. |
+| `error.session` | SessionSnapshot | no | Present **iff** a session is open at the moment the error is produced **and the caller is authenticated**. MUST be present for every 409 on a `/session/*` endpoint. MUST be omitted on `401`, `403` and `503` — see below. |
 
 Rules:
 
@@ -128,6 +128,12 @@ Rules:
   detail goes to the server log keyed by `requestId`.
 - The envelope is never used for 2xx. A successful action returns a `SessionSnapshot`, a media body,
   or `204 No Content`.
+- **`error.session` MUST be omitted on `401` and `403`.** The snapshot carries the open folder's
+  absolute path and its contents. Attaching it to an authentication failure would hand exactly what
+  the token exists to protect to a caller who has just failed to present one. The "iff a session is
+  open" rule is conditioned on the caller being authenticated, and this outranks it.
+- **`error.session` MUST be omitted on `503 session_busy`.** Materialising a snapshot requires the
+  session lock, and not holding it *is* the failure being reported.
 
 ---
 
@@ -172,9 +178,20 @@ Stable. New codes MAY be added; existing codes MUST NOT change meaning or status
 | `folder_access_denied` | 403 | the OS refused to enumerate it | `{ "folder": string }` |
 | `folder_not_rankable` | 409 | `RankingSession.Start()` returned `false` — fewer than 2 eligible files (`SPEC.md` § Folder) | `{ "stills": int, "videos": int, "rankable": int }` |
 | `library_json_unreadable` | 409 | `rankmaster_db.json` exists and does not parse. The file MUST NOT be overwritten (`SPEC.md` § Persistence) | `{ "file": string }` |
-| `folder_locked` | 423 | `<folder>/.rankmaster.lock` is held elsewhere | `{ "holder": { "pid": int?, "host": string?, "startedAt": string?, "process": string? } }` |
+| `folder_locked` | 423 | `<folder>/.rankmaster.lock` is held elsewhere | `{ "holder": null }` — see § 5.3.1 |
 | `session_busy` | 503 | the session semaphore was not acquired within 5 s | `{ "retryAfterSeconds": int }` |
 | `server_shutting_down` | 503 | shutdown in progress | `{ "retryAfterSeconds": int }` |
+
+#### 5.3.1 Why `holder` is always null
+
+The lock is opened `FileShare.None`, which is the point: it is what stops a second writer. That same
+exclusivity means **no other process can open the file to read who holds it**, so the holder record
+the lock file contains is unreadable by definition. Confirmed against all three share modes.
+
+`details.holder` is therefore `null`, always. It is kept in the shape so a future design can fill it
+— which would mean either giving up exclusivity, or moving the holder record to a second, readable
+file beside the lock. Do not implement a best-effort read here; it cannot succeed and would only
+produce a misleading error path.
 
 ### 5.4 Pair and actions
 
@@ -563,6 +580,22 @@ Order of operations:
 `Start()` does **not** save. A freshly opened session has `lastSavedAt: null` even though
 `rankmaster_db.json` may be older — that field describes this session's writes, not the file's age.
 
+### 10.1.1 Opening a pairing window
+
+**Opening a window is deliberately not an HTTP operation.** If it were, anyone who can reach the port
+could open one and then spend the rest of the day guessing at it. Opening a window MUST require
+control of the owner's OS account, and there are two ways in:
+
+1. **Automatic at startup** when no device is yet enrolled, so a fresh install is reachable.
+2. **A sentinel file** in the server's data directory, polled by the server. Creating it requires
+   write access to that directory, which is the OS-account check.
+
+The resulting offer — code, expiry, host, port, certificate fingerprint — is written to the data
+directory with owner-only permissions, for `rm2ctl` to render as text and as a QR code.
+
+The client MUST pin the fingerprint **before** sending the code. The code is a bearer secret: handing
+it to an unverified TLS peer hands it to whoever answered.
+
 ### 10.2 `GET /session`
 
 The snapshot. Pure read. `404 no_session` when closed — a client that wants to know whether a
@@ -719,7 +752,11 @@ numeric code) for a long-lived device token.
 
 - The pairing window is opened out of band, is **single-use**, and expires after **5 minutes**.
 - No window open → `403 pairing_not_open`. Wrong/used/expired code → `401 invalid_pairing_code`
-  with `details.attemptsRemaining`. More than **5 attempts per minute per source address** →
+  with `details.attemptsRemaining`. Each pairing window carries a budget of **5 attempts in total**,
+  counted across all source addresses; on reaching zero the window is destroyed and the correct code
+  is refused thereafter. This per-window budget is normative and is what makes a six-digit code safe:
+  a per-address limit alone is walked straight through by an attacker holding several LAN addresses.
+  More than **5 attempts per minute per source address** →
   `429 too_many_requests` with `Retry-After`.
 - Success → `201` with `{ deviceId, deviceName, token, issuedAt, expiresAt }`. `expiresAt` is `null`
   for a non-expiring token. The token is returned **once** and is never readable again.

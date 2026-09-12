@@ -59,9 +59,11 @@ public sealed class LibraryActions : ILibraryActions
             ? move.Record
             : move.Record with { Id = new MediaId(backName) };
 
+        // Same reason, mirrored: the file is back, so this move is spent. Clearing afterwards left
+        // a failed save holding an undo that could only ever throw on its second attempt.
+        LastMove = null;
         _session()?.Restore(record);
         _session()?.Save();
-        LastMove = null;
         return true;
     }
 
@@ -116,8 +118,11 @@ public sealed class LibraryActions : ILibraryActions
         _pipeline().CancelWarmContaining(id);
 
         var destName = FileOps.MoveToSubfolder(session.Folder, id.Filename, subfolder);
+        // Arm undo the moment the file physically moves, before anything that can throw. The save
+        // below is not transactional: if it fails, the file is already in the subfolder and undo is
+        // the only way back. Recording the move last left exactly that case unundoable.
+        LastMove = new MovedFile(session.Folder, subfolder, id.Filename, destName, record);
         session.Drop(id);
         session.Save();
-        LastMove = new MovedFile(session.Folder, subfolder, id.Filename, destName, record);
     }
 }
