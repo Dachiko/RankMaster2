@@ -1,0 +1,2073 @@
+openapi: 3.1.0
+
+info:
+  title: Rank Master 2 — headless server API
+  version: "1.0.0"
+  summary: Pairwise ranking of one folder of photos or videos, driven from a phone on the LAN.
+  description: |
+    Machine-readable form of `SERVER_SPEC.md`. That document is normative; where this file is
+    less precise, `SERVER_SPEC.md` wins. `SPEC.md` remains the source of truth for ranking
+    behaviour and is never re-specified here.
+
+    Three things decide almost every integration question:
+
+    1. **Every 2xx JSON response from `/session*` is the same `SessionSnapshot`.** There is no
+       partial update and no narrower variant. A `409` on those endpoints embeds the identical
+       object in `error.session`, so a stale client resynchronises in one round trip and never
+       polls (`SERVER_SPEC.md` § 8.5).
+    2. **Every error is one envelope** with a stable `error.code` (`SERVER_SPEC.md` § 4, § 5).
+       Clients branch on `code`, never on `message` or on the status alone.
+    3. **A 2xx means the JSON file is already on disk** — saved and fsynced before the response was
+       sent (`SERVER_SPEC.md` § 13). No response means the outcome is unknown; resolve it by
+       replaying the *same* `pairToken`, never by voting again with a fresh one.
+
+    Deliberately absent: **rename by rank**. No endpoint, no flag, no debug route
+    (`SERVER_PLAN.md` § 4). Also absent: transcoding, poster frames and video probing — the server
+    never decodes a video frame (`SERVER_PLAN.md` § 7).
+  license:
+    name: Proprietary — personal project
+  contact:
+    name: Rank Master 2
+
+servers:
+  - url: https://{host}:{port}/api/v1
+    description: The PC on the LAN. TLS with a self-signed certificate pinned by SHA-256 fingerprint.
+    variables:
+      host:
+        default: rankmaster.local
+        description: Explicit LAN address or the mDNS name advertised as _rankmaster._tcp.
+      port:
+        default: "8611"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: pairing
+    description: Out-of-band device pairing and token revocation.
+  - name: system
+    description: Liveness, version, capabilities, certificate fingerprint.
+  - name: libraries
+    description: Filesystem browsing. Unrestricted by decision; serves no file bytes.
+  - name: session
+    description: The one server-wide ranking session.
+  - name: actions
+    description: Pair-scoped mutations. Each consumes a pairToken exactly once.
+  - name: media
+    description: Bytes. Restricted to media extensions inside the open session folder.
+
+paths:
+
+  /ping:
+    get:
+      tags: [system]
+      operationId: ping
+      summary: Liveness, version, capabilities and the certificate fingerprint.
+      description: |
+        Works with or without a bearer token. Without one, the public subset is returned
+        (`session` is null) so a client that has not paired yet can still read
+        `certificateFingerprint` and pin it. With an *invalid* token this returns 401, not the
+        public subset.
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Server is reachable.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ping' }
+              examples:
+                public:
+                  summary: Unauthenticated — the subset a pairing client sees
+                  value:
+                    product: Rank Master 2 server
+                    apiVersion: v1
+                    version: "1.1.3"
+                    ready: true
+                    authenticated: false
+                    certificateFingerprint: "sha256:3b1f9a0c5d2e47b8106f33a9c7e5d1204b8e6f7a9c0d1e2f3a4b5c6d7e8f9012"
+                    serverTime: "2026-09-12T18:04:11.412Z"
+                    features:
+                      rename: false
+                      videoTranscoding: false
+                      posterFrames: false
+                      videoProbe: false
+                      browse: full-filesystem
+                      maxConcurrentSessions: 1
+                    limits:
+                      stillWidths: [360, 540, 720, 1080, 1440, 2160]
+                      thumbWidth: 320
+                      maxJsonBodyBytes: 65536
+                      sessionLockTimeoutSeconds: 5
+                    session: null
+                authenticated:
+                  summary: Authenticated — adds the session summary
+                  value:
+                    product: Rank Master 2 server
+                    apiVersion: v1
+                    version: "1.1.3"
+                    ready: true
+                    authenticated: true
+                    certificateFingerprint: "sha256:3b1f9a0c5d2e47b8106f33a9c7e5d1204b8e6f7a9c0d1e2f3a4b5c6d7e8f9012"
+                    serverTime: "2026-09-12T18:04:11.412Z"
+                    features:
+                      rename: false
+                      videoTranscoding: false
+                      posterFrames: false
+                      videoProbe: false
+                      browse: full-filesystem
+                      maxConcurrentSessions: 1
+                    limits:
+                      stillWidths: [360, 540, 720, 1080, 1440, 2160]
+                      thumbWidth: 320
+                      maxJsonBodyBytes: 65536
+                      sessionLockTimeoutSeconds: 5
+                    session:
+                      open: true
+                      sessionId: "Qv8kZ2r5tN0pXbA1cD3eFg"
+                      folder: "D:\\photos\\trip"
+                      state: ranking
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "503": { $ref: '#/components/responses/ShuttingDown' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /pair:
+    post:
+      tags: [pairing]
+      operationId: pairDevice
+      summary: Exchange a one-time pairing code for a device token.
+      description: |
+        Unauthenticated. The code is shown out of band by `rm2ctl pair` as a QR payload and a short
+        numeric code; it is single-use, expires after 5 minutes, and is rate limited to 5 attempts
+        per minute per source address. The token is returned once and never again.
+
+        **Never retry this blindly.** A retry of a call that already succeeded gets
+        `401 invalid_pairing_code` and the issued token is lost — restart pairing instead
+        (`SERVER_SPEC.md` § 13.3).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PairRequest' }
+            example:
+              code: "418 250"
+              deviceName: Pixel 8
+      responses:
+        "201":
+          description: Paired. The token is in the body and is not retrievable later.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PairResponse' }
+              example:
+                deviceId: dev_7h2k9qp4
+                deviceName: Pixel 8
+                token: "rm2_9Qk3…redacted…"
+                issuedAt: "2026-09-12T18:04:11.412Z"
+                expiresAt: null
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401":
+          description: Wrong, used or expired pairing code (`invalid_pairing_code`).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: invalid_pairing_code
+                  message: That pairing code is not valid.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details: { attemptsRemaining: 3 }
+        "403":
+          description: No pairing window is open (`pairing_not_open`).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "429": { $ref: '#/components/responses/TooManyRequests' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /pair/{deviceId}:
+    delete:
+      tags: [pairing]
+      operationId: revokeDevice
+      summary: Revoke a device token.
+      description: |
+        The revoked device's next call gets `401 token_revoked`. A device may revoke itself.
+        Revocation does not close an open session — only `DELETE /session` does.
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 64 }
+      responses:
+        "204":
+          description: Revoked.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /libraries/roots:
+    get:
+      tags: [libraries]
+      operationId: listRoots
+      summary: Drive roots or mount points.
+      description: |
+        A root that exists but is not ready (an empty optical drive, a disconnected share) is
+        still listed, with `available: false`. Byte counts may be null for a device that will not
+        report them.
+      responses:
+        "200":
+          description: The roots visible to the server process.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RootsResponse' }
+              example:
+                roots:
+                  - path: "C:\\"
+                    label: System
+                    kind: fixed
+                    available: true
+                    totalBytes: 1000204886016
+                    freeBytes: 271234400256
+                  - path: "Z:\\"
+                    label: nas-photos
+                    kind: network
+                    available: false
+                    totalBytes: null
+                    freeBytes: null
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /libraries/browse:
+    get:
+      tags: [libraries]
+      operationId: browseFolders
+      summary: Direct child folders of a path, with media counts.
+      description: |
+        Never recursive; never lists files; never returns file bytes. Browsing is unrestricted by
+        decision (`SERVER_PLAN.md` § 7) — the restriction lives on `/media/*` instead.
+
+        `rankable` applies exactly the predicate `POST /session` applies, so a client can grey out
+        folders that would answer `409 folder_not_rankable`. A child that cannot be enumerated is
+        returned with `accessible: false` and **null** counts — null means unknown, `0` means
+        counted and empty — and never fails the whole listing.
+
+        Counting costs one directory enumeration per child. On a drive root or a slow share, pass
+        `counts=false`.
+      parameters:
+        - $ref: '#/components/parameters/BrowsePath'
+        - $ref: '#/components/parameters/BrowseCounts'
+      responses:
+        "200":
+          description: The listing.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BrowseResponse' }
+              example:
+                path: "D:\\photos"
+                parent: "D:\\"
+                entries:
+                  - name: trip
+                    path: "D:\\photos\\trip"
+                    stillCount: 412
+                    videoCount: 3
+                    rankable: true
+                    hasDatabase: true
+                    accessible: true
+                  - name: "one photo"
+                    path: "D:\\photos\\one photo"
+                    stillCount: 1
+                    videoCount: 0
+                    rankable: false
+                    hasDatabase: false
+                    accessible: true
+                  - name: "System Volume Information"
+                    path: "D:\\photos\\System Volume Information"
+                    stillCount: null
+                    videoCount: null
+                    rankable: null
+                    hasDatabase: false
+                    accessible: false
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session:
+    post:
+      tags: [session]
+      operationId: openSession
+      summary: Open the session on a folder, or resume the one already open on it.
+      description: |
+        `201` when a session was opened, `200` when the folder named is the one already open — that
+        case is a **pure read**: `RankingSession.Start()` must not run again, because it would clear
+        the cues, the session vote count and the recent-shown set of a phone that was merely
+        resuming (`SERVER_SPEC.md` § 10.1).
+
+        A different folder while one is open is `409 session_already_open`; the client must
+        `DELETE /session` first. Nothing is closed implicitly.
+
+        The folder is locked with `<folder>/.rankmaster.lock` for the life of the session. The lock
+        file has no media extension, so `JsonCatalog` never scans it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenSessionRequest' }
+            example:
+              folder: "D:\\photos\\trip"
+      responses:
+        "200":
+          description: The same folder was already open. The live snapshot, unchanged.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionSnapshot' }
+        "201":
+          description: A new session was opened and the first pair picked.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Location:
+              description: Always `/api/v1/session`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionSnapshot' }
+              examples:
+                opened:
+                  $ref: '#/components/examples/SnapshotRanking'
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404":
+          description: The folder does not exist (`folder_not_found`).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "409":
+          description: |
+            `session_already_open`, `folder_not_rankable` (fewer than 2 eligible files), or
+            `library_json_unreadable` (the JSON exists and does not parse — it is never
+            overwritten). The lock is released before any of these is returned.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                notRankable:
+                  summary: Folder has fewer than two eligible files
+                  value:
+                    error:
+                      code: folder_not_rankable
+                      message: This folder needs at least two supported media files.
+                      requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                      details: { stills: 1, videos: 0, rankable: 1 }
+                unreadableJson:
+                  summary: rankmaster_db.json will not parse and was not touched
+                  value:
+                    error:
+                      code: library_json_unreadable
+                      message: The ranking file is unreadable and was not overwritten.
+                      requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                      details: { file: "D:\\photos\\trip\\rankmaster_db.json" }
+                alreadyOpen:
+                  summary: Another folder is open
+                  value:
+                    error:
+                      code: session_already_open
+                      message: A session is already open on another folder.
+                      requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                      details: { openFolder: "D:\\photos\\other" }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "423": { $ref: '#/components/responses/FolderLocked' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: The complete session snapshot.
+      description: |
+        Pure read. A phone that has been asleep resynchronises with this one call. Reading the
+        session is not an impression and never advances the pair.
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+    delete:
+      tags: [session]
+      operationId: closeSession
+      summary: Close the session and release the folder lock.
+      description: |
+        Writes nothing. Every mutation already saved before its own response, so there is never
+        unsaved state — this mirrors `Esc` in `SPEC.md`. The pair on screen at this moment is
+        **unseen**: no impression is counted for it. A second `DELETE` answers `404 no_session`,
+        which the client must not treat as a failure.
+      responses:
+        "204":
+          description: Closed; lock released and the lock file removed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/pair:
+    get:
+      tags: [session]
+      operationId: getPair
+      summary: The current pair and the warm pairs (convenience alias for GET /session).
+      description: |
+        Returns the identical `SessionSnapshot`. It exists because it is the client's hot path, not
+        because it is a narrower resource.
+
+        `warmPairs` are **prefetch hints only**: they carry no token, may be one vote stale, may be
+        evicted by a discard, are always re-picked by an undo, and on a two-file library are
+        permanently empty. A client must render from `pair` alone and must never act on a warm pair
+        (`SERVER_SPEC.md` § 9.5).
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/save:
+    post:
+      tags: [session]
+      operationId: saveSession
+      summary: Write rankmaster_db.json now (the Ctrl+S equivalent).
+      description: |
+        Redundant if the last action already saved — every vote, skip, discard and undo saves before
+        responding. Idempotent, always safe to retry, never changes the pair, the token or
+        `pairSeq`. Allowed while `exhausted`.
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "500": { $ref: '#/components/responses/SaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/vote:
+    post:
+      tags: [actions]
+      operationId: vote
+      summary: Vote for one side of the current pair.
+      description: |
+        Inside one library call, in this order: the cue is appended (Confirmation if the winner's μ
+        was ≥ the loser's **before** the update, else Upset), TrueSkill is applied, both records get
+        `matches + 1`, `impressions + 1` and `lastPlayed = now`, the session vote count rises, the
+        JSON is **saved and fsynced**, and only then does the pair advance (`SPEC.md` § Persistence).
+
+        If the save throws, the library rolls back *everything* — records, current pair, vote count,
+        warm queue, recent set and the cue. The response is `500 save_failed`, `pairSeq` is
+        unchanged and **the client's `pairToken` is still current**, so the identical request may be
+        retried.
+
+        The pair is not guaranteed to change: on a two-file library the next pair is the same two
+        ids, which is why `pairToken` is keyed by `pairSeq` and not by the ids
+        (`SERVER_SPEC.md` § 7.4.1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoteRequest' }
+            example:
+              pairToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+              winner: left
+              clientRequestId: "1f0c2a7e-6b41-4f0a-9f6a-2b3c4d5e6f70"
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "409": { $ref: '#/components/responses/PairConflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/SaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/skip:
+    post:
+      tags: [actions]
+      operationId: skip
+      summary: Skip the current pair — no rating change.
+      description: |
+        `impressions + 1` on both ids; no rating change, no `matches`, no `lastPlayed`, no cue, no
+        change to `sessionVotes` (`SPEC.md` § Ranking). Saves, then advances. Failure semantics are
+        identical to `vote`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SkipRequest' }
+            example:
+              pairToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+              clientRequestId: "6b41-…"
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "409": { $ref: '#/components/responses/PairConflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/SaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/discard:
+    post:
+      tags: [actions]
+      operationId: discard
+      summary: Move one side of the current pair to discarded/.
+      description: |
+        The id comes from the pair the token names; the client sends a side, never an id, so it
+        cannot act on something that is not on screen.
+
+        Order: release any server-side decode → move the file into `<folder>/discarded/`, creating
+        it on demand and uniquifying a collision as `name (2).ext` → `RankingSession.Drop` → save.
+        Neither item gains an impression, and the surviving item is **not** marked recently shown,
+        so it may appear again in the very next pair.
+
+        **Missing-file case.** If the source file is already gone from disk, the server does not
+        attempt the move; it drops the record and saves, and `lastAction.type` is `drop_missing`
+        with no undo entry recorded. Without this a file deleted under the session would wedge its
+        pair forever (`SERVER_SPEC.md` § 10.8).
+
+        **Partial failure.** If the move succeeds and the save then throws, the response is
+        `500 save_failed` with `details.fileMoved: true` — and `pairSeq` has already advanced, so
+        the client's token is stale. That is the opposite of the vote failure path; both are
+        normative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SideRequest' }
+            example:
+              pairToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+              side: right
+              clientRequestId: "6b41-…"
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "409": { $ref: '#/components/responses/PairConflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/MoveOrSaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/special:
+    post:
+      tags: [actions]
+      operationId: special
+      summary: Move one side of the current pair to "special 1/".
+      description: |
+        Identical to `discard` in every respect except the destination folder, `special 1`, and
+        `lastAction.type`. `special 2` is never created (`SPEC.md` § File actions).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SideRequest' }
+            example:
+              pairToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+              side: left
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "409": { $ref: '#/components/responses/PairConflict' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/MoveOrSaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/undo:
+    post:
+      tags: [actions]
+      operationId: undoLastMove
+      summary: Undo the last move (discard or special). One level, no stack.
+      description: |
+        **This is not vote undo.** Vote undo does not exist (`SPEC.md` § Non-goals) and this endpoint
+        must never be presented as undoing a vote.
+
+        **It takes no `pairToken`, deliberately.** The move being reversed belongs to an earlier pair
+        generation, so any token the client holds for it is already stale by construction; requiring
+        one would make undo permanently unusable. A `pairToken` in the body is ignored
+        (`SERVER_SPEC.md` § 10.10).
+
+        Two consequences the client must expect:
+
+        * **The current pair is replaced**, even though it was valid — `RankingSession.Restore`
+          clears `Current` and re-picks so the restored file can be paired immediately. `pairToken`
+          changes.
+        * **The restored id may differ from the discarded id.** If the original name was taken in
+          the meantime the file comes back as `name (2).ext` and the record's id changes with it.
+          `lastAction.id` is the old id, `lastAction.restoredId` the new one; any cached URL for the
+          old id is dead.
+
+        A repeated undo answers `409 nothing_to_undo` — it can never undo two moves, because only
+        one move is ever recorded.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UndoRequest' }
+            example:
+              clientRequestId: "6b41-…"
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "409":
+          description: |
+            `nothing_to_undo` — no move is recorded (or one was already undone); or
+            `undo_folder_changed` — the recorded move belongs to a different folder, in which case
+            the server clears it. Both carry the full snapshot in `error.session`.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: nothing_to_undo
+                  message: There is no move to undo.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+        "500": { $ref: '#/components/responses/MoveOrSaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /media/{id}/meta:
+    get:
+      tags: [media]
+      operationId: getMediaMeta
+      summary: Kind, size, still dimensions and the record's rating.
+      description: |
+        `width`/`height` are present for stills only, after EXIF orientation, and come from a header
+        read rather than a full decode. They are **always null for a video**, and there is no
+        `durationMs`, `codec`, `frameRate` or `bitrate` field: the server never decodes a video
+        frame (`SERVER_PLAN.md` § 7). `HEAD` is supported.
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+      responses:
+        "200":
+          description: Metadata for one record.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaMeta' }
+              example:
+                id: "DSC_0123.jpg"
+                kind: still
+                sizeBytes: 4210332
+                modifiedAt: "2026-08-30T09:12:44.000Z"
+                mediaVersion: "9f2a1c77b0e4d310"
+                width: 6000
+                height: 4000
+                rating: { mu: 27.412, sigma: 5.884, conservative: 9.76 }
+                matches: 7
+                impressions: 9
+                lastPlayed: 1789012345678
+                rankable: true
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/MediaForbidden' }
+        "404": { $ref: '#/components/responses/MediaNotFound' }
+        "422": { $ref: '#/components/responses/MediaDecodeFailed' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /media/{id}/still:
+    get:
+      tags: [media]
+      operationId: getStill
+      summary: The still, re-encoded to one of the allowed widths.
+      description: |
+        Stills only — `409 wrong_media_kind` for a video, because there are no poster frames.
+
+        `w` must be one of 360, 540, 720, 1080, 1440, 2160; anything else is
+        `400 unsupported_width`. Omitted means 1080. The server **never upscales**: a source
+        narrower than `w` is served at source size while still being keyed by the requested `w`, so
+        a client must not lay out from `w` alone. EXIF orientation and the ICC profile are applied
+        and the output is sRGB (`SPEC.md` § Pipeline).
+
+        Format precedence: `format=` wins; else `image/webp` in `Accept` selects WebP; else JPEG. A
+        response whose format came from `Accept` carries `Vary: Accept`.
+
+        Caching: strong `ETag` over `(id, size, mtime, variant)`, `Cache-Control: private,
+        max-age=31536000, immutable`. The *bytes* are immutable per ETag forever; the *URL* is
+        immutable only when it carries the `v=<mediaVersion>` the snapshot's `links` already
+        include. `v` is never validated. `If-None-Match` returns 304. `HEAD` is supported.
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+        - $ref: '#/components/parameters/Width'
+        - $ref: '#/components/parameters/Format'
+        - $ref: '#/components/parameters/MediaVersionQuery'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        "200":
+          description: The re-encoded still.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/ImmutablePrivate' }
+            Vary: { $ref: '#/components/headers/VaryAccept' }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "304": { $ref: '#/components/responses/NotModified' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/MediaForbidden' }
+        "404": { $ref: '#/components/responses/MediaNotFound' }
+        "409": { $ref: '#/components/responses/WrongMediaKind' }
+        "422": { $ref: '#/components/responses/MediaDecodeFailed' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /media/{id}/thumb:
+    get:
+      tags: [media]
+      operationId: getThumb
+      summary: A 320 px thumbnail of a still.
+      description: |
+        Identical to `still` except the width is fixed at 320 and a `w` parameter is **ignored, not
+        rejected**. Stills only — `409 wrong_media_kind` for a video; there are no poster frames
+        (`SERVER_PLAN.md` § 7). `HEAD` is supported.
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+        - $ref: '#/components/parameters/Format'
+        - $ref: '#/components/parameters/MediaVersionQuery'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        "200":
+          description: The thumbnail.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/ImmutablePrivate' }
+            Vary: { $ref: '#/components/headers/VaryAccept' }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "304": { $ref: '#/components/responses/NotModified' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/MediaForbidden' }
+        "404": { $ref: '#/components/responses/MediaNotFound' }
+        "409": { $ref: '#/components/responses/WrongMediaKind' }
+        "422": { $ref: '#/components/responses/MediaDecodeFailed' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /media/{id}/video:
+    get:
+      tags: [media]
+      operationId: getVideo
+      summary: The original video bytes, with Range support.
+      description: |
+        Videos only — `409 wrong_media_kind` for a still. The bytes are the file, unmodified: no
+        transcoding, no segmenting, no probing (`SERVER_PLAN.md` § 3.4).
+
+        Range: open-ended (`bytes=500-`) and suffix (`bytes=-500`) forms are supported. A multi-range
+        request is served as a single `206` covering **only the first** range; multipart byte ranges
+        are never produced. An unsatisfiable range is `416` with `Content-Range: bytes */size`. A
+        syntactically invalid `Range` is ignored and the full body is served. `If-Range` that does
+        not match the ETag yields `200` with the full body. `HEAD` is supported and is how a player
+        should discover the length.
+      parameters:
+        - $ref: '#/components/parameters/MediaId'
+        - $ref: '#/components/parameters/MediaVersionQuery'
+        - $ref: '#/components/parameters/RangeHeader'
+        - $ref: '#/components/parameters/IfRange'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        "200":
+          description: The whole file.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/ImmutablePrivate' }
+            Accept-Ranges: { $ref: '#/components/headers/AcceptRanges' }
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+            video/x-matroska: { schema: { type: string, format: binary } }
+            video/x-msvideo: { schema: { type: string, format: binary } }
+            video/quicktime: { schema: { type: string, format: binary } }
+        "206":
+          description: One byte range.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/ImmutablePrivate' }
+            Accept-Ranges: { $ref: '#/components/headers/AcceptRanges' }
+            Content-Range: { $ref: '#/components/headers/ContentRange' }
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+            video/x-matroska: { schema: { type: string, format: binary } }
+            video/x-msvideo: { schema: { type: string, format: binary } }
+            video/quicktime: { schema: { type: string, format: binary } }
+        "304": { $ref: '#/components/responses/NotModified' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/MediaForbidden' }
+        "404": { $ref: '#/components/responses/MediaNotFound' }
+        "409": { $ref: '#/components/responses/WrongMediaKind' }
+        "416": { $ref: '#/components/responses/RangeNotSatisfiable' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        The per-device token issued by `POST /pair`. It MUST be sent only in the `Authorization`
+        header; a token in a query string is ignored and the request is treated as unauthenticated,
+        so tokens never land in logs or proxy history (`SERVER_PLAN.md` § 3.5).
+
+  headers:
+    XRequestId:
+      description: Opaque per-request id, echoed in `error.requestId`. Present on every response.
+      required: true
+      schema: { type: string }
+    NoStore:
+      description: Always `no-store` on JSON responses.
+      schema: { type: string, examples: ["no-store"] }
+    ETag:
+      description: |
+        Strong entity tag, `"<variant>-<32 hex>"`, derived from
+        `SHA-256(id || 0 || size || 0 || mtimeUtcTicks)` with the variant naming the exact
+        representation (`s1080j`, `t320w`, `orig`, …). Two responses with the same ETag are
+        byte-identical forever.
+      schema: { type: string, examples: ['"s1080j-9f2a1c77b0e4d3105ab8c1d2e3f40516"'] }
+    ImmutablePrivate:
+      description: Always `private, max-age=31536000, immutable` on media bytes.
+      schema: { type: string, examples: ["private, max-age=31536000, immutable"] }
+    VaryAccept:
+      description: Present only when the output format was chosen from the `Accept` header.
+      schema: { type: string, examples: ["Accept"] }
+    AcceptRanges:
+      description: Always `bytes` on the video endpoint.
+      schema: { type: string, examples: ["bytes"] }
+    ContentRange:
+      description: '`bytes a-b/size` on a 206; `bytes */size` on a 416.'
+      schema: { type: string, examples: ["bytes 0-1048575/73400320"] }
+    RetryAfter:
+      description: Delta-seconds. Required on every 429 and 503.
+      schema: { type: integer, minimum: 0 }
+
+  parameters:
+    MediaId:
+      name: id
+      in: path
+      required: true
+      description: |
+        The media id is the **filename** (`MediaId` in `RankMaster2.Core`) as one percent-encoded
+        path segment. Encode the UTF-8 bytes per RFC 3986; a space is `%20`, never `+`. `%2F` and
+        `%5C` decode to separators and are rejected with `400 invalid_media_id`. The server decodes
+        exactly once, applies **no** Unicode normalisation and **no** case folding, and compares
+        ordinally — case-insensitively on Windows, case-sensitively elsewhere. Clients should use
+        the pre-encoded URLs in a snapshot's `links` rather than building these themselves.
+      schema: { type: string, minLength: 1, maxLength: 255 }
+      examples:
+        simple: { value: "DSC_0123.jpg" }
+        encoded:
+          summary: "beach day #2.jpg"
+          value: "beach%20day%20%232.jpg"
+    Width:
+      name: w
+      in: query
+      required: false
+      description: |
+        Requested width. Capped to a fixed set so the on-disk cache cannot be blown up by arbitrary
+        values (`SERVER_PLAN.md` § 3.3). Omitted means 1080. The server never upscales, so the
+        delivered image may be narrower than this.
+      schema:
+        type: integer
+        enum: [360, 540, 720, 1080, 1440, 2160]
+        default: 1080
+    Format:
+      name: format
+      in: query
+      required: false
+      description: Overrides `Accept`. Absent, `image/webp` in `Accept` selects WebP, else JPEG.
+      schema: { type: string, enum: [jpeg, webp] }
+    MediaVersionQuery:
+      name: v
+      in: query
+      required: false
+      description: |
+        Cache buster. The server accepts any value, ignores it when selecting content, and never
+        fails on a mismatch. Its only job is to make the URLs in `links` change when the bytes do,
+        which is what makes `Cache-Control: immutable` honest.
+      schema: { type: string, maxLength: 64 }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: An exact ETag match returns `304` with no body. `*` matches any representation.
+      schema: { type: string }
+    RangeHeader:
+      name: Range
+      in: header
+      required: false
+      description: '`bytes=a-b`, `bytes=a-` or `bytes=-n`. A multi-range request is answered with the first range only.'
+      schema: { type: string }
+      example: "bytes=1048576-2097151"
+    IfRange:
+      name: If-Range
+      in: header
+      required: false
+      description: An ETag. If it does not match, the full body is returned with `200`.
+      schema: { type: string }
+    BrowsePath:
+      name: path
+      in: query
+      required: true
+      description: Absolute folder path to list. Relative paths are `400 invalid_path`.
+      schema: { type: string, minLength: 1, maxLength: 4096 }
+      example: "D:\\photos"
+    BrowseCounts:
+      name: counts
+      in: query
+      required: false
+      description: |
+        Count media in each child. Costs one directory enumeration per child; pass `false` on a
+        drive root or a network share. With `false`, every count and `rankable` is null.
+      schema: { type: boolean, default: true }
+
+  responses:
+
+    Snapshot:
+      description: |
+        The complete session snapshot. Identical in shape for every `/session*` success — there is no
+        partial variant.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SessionSnapshot' }
+          examples:
+            ranking: { $ref: '#/components/examples/SnapshotRanking' }
+            exhausted: { $ref: '#/components/examples/SnapshotExhausted' }
+
+    PairConflict:
+      description: |
+        `stale_pair_token` — the token is not the current one; or `no_current_pair` — the session is
+        `exhausted` and there is nothing to act on.
+
+        A stale token causes **no state change at all**: no save, no move, no impression, no advance.
+        The body carries the complete snapshot in `error.session`, so the client resynchronises in
+        this one response and must not poll. Whether the lost request landed is answered by
+        `session.lastAction`: a matching `clientRequestId` means it landed exactly once; a matching
+        `pairToken` with a different `clientRequestId` means an earlier request of the client's own
+        consumed it; neither matching means it never landed. In all three cases the client continues
+        from the snapshot and must never replay the old token against a new pair.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Cache-Control: { $ref: '#/components/headers/NoStore' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            staleToken:
+              summary: The vote already landed — lastAction proves it
+              value:
+                error:
+                  code: stale_pair_token
+                  message: The supplied pairToken is not the current pair.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details:
+                    suppliedToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+                    currentToken: "M0xQrT8vB3nJ7yE2sW9uHk"
+                  session:
+                    sessionId: "Qv8kZ2r5tN0pXbA1cD3eFg"
+                    state: ranking
+                    folder: "D:\\photos\\trip"
+                    folderName: trip
+                    policy: still
+                    openedAt: "2026-09-12T17:40:02.000Z"
+                    prefetchPairs: 2
+                    sessionVotes: 13
+                    counts: { total: 415, rankable: 412, unranked: 380, stills: 412, videos: 3 }
+                    progress: 0.114213
+                    progressPercent: 11
+                    cues: [confirmation, upset, confirmation]
+                    pair:
+                      left:
+                        id: "IMG_0042.jpg"
+                        kind: still
+                        sizeBytes: 3128844
+                        mediaVersion: "1a0b9c8d7e6f5041"
+                        links:
+                          meta: "/api/v1/media/IMG_0042.jpg/meta"
+                          still: "/api/v1/media/IMG_0042.jpg/still?v=1a0b9c8d7e6f5041"
+                          thumb: "/api/v1/media/IMG_0042.jpg/thumb?v=1a0b9c8d7e6f5041"
+                          video: null
+                      right:
+                        id: "beach day #2.jpg"
+                        kind: still
+                        sizeBytes: 5012993
+                        mediaVersion: "44cc21a0be7f1d93"
+                        links:
+                          meta: "/api/v1/media/beach%20day%20%232.jpg/meta"
+                          still: "/api/v1/media/beach%20day%20%232.jpg/still?v=44cc21a0be7f1d93"
+                          thumb: "/api/v1/media/beach%20day%20%232.jpg/thumb?v=44cc21a0be7f1d93"
+                          video: null
+                    pairToken: "M0xQrT8vB3nJ7yE2sW9uHk"
+                    pairSeq: 14
+                    warmPairs: []
+                    undoAvailable: false
+                    lastAction:
+                      seq: 14
+                      type: vote
+                      pairToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+                      clientRequestId: "1f0c2a7e-6b41-4f0a-9f6a-2b3c4d5e6f70"
+                      winner: left
+                      side: null
+                      id: null
+                      restoredId: null
+                      at: "2026-09-12T18:04:11.400Z"
+                    lastSavedAt: "2026-09-12T18:04:11.398Z"
+            noCurrentPair:
+              summary: Discards left fewer than two eligible files
+              value:
+                error:
+                  code: no_current_pair
+                  message: There is no current pair to act on.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+
+    NoSession:
+      description: No session is open (`no_session`). Every `/session*` and `/media/*` call answers this.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: no_session
+              message: No session is open.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+
+    Unauthorized:
+      description: '`unauthenticated`, `invalid_token` or `token_revoked`.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    Forbidden:
+      description: '`folder_access_denied` or `pairing_not_open` — the credential is fine, the operation is refused.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    NotFound:
+      description: '`not_found` — no such route or id.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    BadRequest:
+      description: |
+        `invalid_request`, `missing_field`, `invalid_side`, `invalid_media_id`, `unsupported_width`,
+        `unsupported_format` or `invalid_path`.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            badWidth:
+              value:
+                error:
+                  code: unsupported_width
+                  message: Width 900 is not offered.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details: { requested: 900, allowed: [360, 540, 720, 1080, 1440, 2160] }
+            badSide:
+              value:
+                error:
+                  code: invalid_side
+                  message: winner must be left or right.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details: { field: winner, value: up }
+
+    PayloadTooLarge:
+      description: '`payload_too_large` — the JSON body exceeded 65536 bytes.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    UnsupportedContentType:
+      description: '`unsupported_content_type` — the request was not `application/json`.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    TooManyRequests:
+      description: '`too_many_requests` — pairing rate limit.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    FolderLocked:
+      description: |
+        `folder_locked` — `<folder>/.rankmaster.lock` is held by another process. `details.holder` is
+        read from the lock file on a best-effort basis and any field in it may be null.
+
+        The desktop app does not yet respect this lock (`SERVER_PLAN.md` § 3.1): until it does, the
+        absence of a 423 does **not** prove nothing else is writing the folder.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: folder_locked
+              message: That folder is in use by another Rank Master process.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details:
+                holder: { pid: 8123, host: DESKTOP-7K2, process: RankMaster2.Server, startedAt: "2026-09-12T17:40:02.000Z" }
+
+    SessionBusy:
+      description: |
+        `session_busy` — the session semaphore was not acquired within 5 seconds, so another
+        mutation is still running. Nothing was changed; retry after `Retry-After`.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    ShuttingDown:
+      description: '`server_shutting_down` — the server is starting or stopping.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    SaveFailed:
+      description: |
+        `save_failed` — `JsonCatalog.Save` threw. For `vote` and `skip` the library rolled the whole
+        in-memory state back, so `details.recordsChanged` is `false`, `pairSeq` is unchanged and
+        **the same request may be retried with the same token**.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: save_failed
+              message: The ranking file could not be written; the vote was rolled back.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details: { recordsChanged: false, fileMoved: false }
+
+    MoveOrSaveFailed:
+      description: |
+        `move_failed` — the file move threw and nothing changed, so the token is still valid; or
+        `save_failed` after a move that already succeeded, in which case `details.fileMoved` is
+        `true`, the record is already gone from (or back in) memory, **`pairSeq` has advanced** and
+        the client's token is stale. `Drop` and `Restore` do not save and cannot roll back, which is
+        why this differs from the vote path.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            moveFailed:
+              value:
+                error:
+                  code: move_failed
+                  message: The file could not be moved.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details: { id: "IMG_0042.jpg", stage: move }
+            savedAfterMove:
+              value:
+                error:
+                  code: save_failed
+                  message: The file was moved but the ranking file could not be written.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details: { recordsChanged: true, fileMoved: true }
+
+    MediaForbidden:
+      description: |
+        `media_outside_session` — the decoded id would escape the session folder; or
+        `media_extension_not_allowed` — the extension is in neither list in `SPEC.md` § Media policy.
+        Browsing is unrestricted, byte-serving is not (`SERVER_PLAN.md` § 3.6).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    MediaNotFound:
+      description: |
+        `no_session`; `unknown_media_id` — the id is not a record in the open session (it was
+        discarded, or was added to the folder after the session opened, since the session never
+        rescans); or `media_file_missing` — the id is a record but the file has gone from disk. A
+        client must treat either as "this id is gone" and refresh from the snapshot rather than
+        retrying the URL. For `media_file_missing` on an id in the current pair, the recovery is
+        `POST /session/discard` on that side, which drops the record without attempting a move.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            missingFile:
+              value:
+                error:
+                  code: media_file_missing
+                  message: That file is no longer on disk.
+                  requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+                  details: { id: "IMG_0042.jpg" }
+
+    WrongMediaKind:
+      description: |
+        `wrong_media_kind` — `/still` or `/thumb` on a video, or `/video` on a still. There are no
+        poster frames and no video stills by decision (`SERVER_PLAN.md` § 7).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: wrong_media_kind
+              message: That id is a video; the server does not render poster frames.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details: { id: "clip_004.mp4", kind: video, endpoint: still }
+
+    MediaDecodeFailed:
+      description: |
+        `media_decode_failed` — the file is present but is not a decodable image. The session
+        survives this (`SPEC.md` § Media policy); the client's recovery is to discard that side,
+        which works normally because the file does exist.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    RangeNotSatisfiable:
+      description: '`range_not_satisfiable`. `Content-Range: bytes */size` is always present.'
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Content-Range: { $ref: '#/components/headers/ContentRange' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: range_not_satisfiable
+              message: The requested range is past the end of the file.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details: { sizeBytes: 73400320 }
+
+    NotModified:
+      description: The client's `If-None-Match` matched. No body.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        ETag: { $ref: '#/components/headers/ETag' }
+        Cache-Control: { $ref: '#/components/headers/ImmutablePrivate' }
+
+    InternalError:
+      description: |
+        `internal_error` — anything unhandled. The message is generic; the detail is in the server
+        log under `requestId`.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  examples:
+
+    SnapshotRanking:
+      summary: A session mid-cycle, one warm pair held, one discard undoable
+      value:
+        sessionId: "Qv8kZ2r5tN0pXbA1cD3eFg"
+        state: ranking
+        folder: "D:\\photos\\trip"
+        folderName: trip
+        policy: still
+        openedAt: "2026-09-12T17:40:02.000Z"
+        prefetchPairs: 2
+        sessionVotes: 13
+        counts: { total: 415, rankable: 412, unranked: 380, stills: 412, videos: 3 }
+        progress: 0.114213
+        progressPercent: 11
+        cues: [confirmation, upset, confirmation, confirmation]
+        pair:
+          left:
+            id: "IMG_0042.jpg"
+            kind: still
+            sizeBytes: 3128844
+            mediaVersion: "1a0b9c8d7e6f5041"
+            links:
+              meta: "/api/v1/media/IMG_0042.jpg/meta"
+              still: "/api/v1/media/IMG_0042.jpg/still?v=1a0b9c8d7e6f5041"
+              thumb: "/api/v1/media/IMG_0042.jpg/thumb?v=1a0b9c8d7e6f5041"
+              video: null
+          right:
+            id: "beach day #2.jpg"
+            kind: still
+            sizeBytes: 5012993
+            mediaVersion: "44cc21a0be7f1d93"
+            links:
+              meta: "/api/v1/media/beach%20day%20%232.jpg/meta"
+              still: "/api/v1/media/beach%20day%20%232.jpg/still?v=44cc21a0be7f1d93"
+              thumb: "/api/v1/media/beach%20day%20%232.jpg/thumb?v=44cc21a0be7f1d93"
+              video: null
+        pairToken: "M0xQrT8vB3nJ7yE2sW9uHk"
+        pairSeq: 14
+        warmPairs:
+          - left:
+              id: "IMG_0107.jpg"
+              kind: still
+              sizeBytes: 2884101
+              mediaVersion: "c3d4e5f607182930"
+              links:
+                meta: "/api/v1/media/IMG_0107.jpg/meta"
+                still: "/api/v1/media/IMG_0107.jpg/still?v=c3d4e5f607182930"
+                thumb: "/api/v1/media/IMG_0107.jpg/thumb?v=c3d4e5f607182930"
+                video: null
+            right:
+              id: "IMG_0311.jpg"
+              kind: still
+              sizeBytes: 4102338
+              mediaVersion: "7788aabbccddeeff"
+              links:
+                meta: "/api/v1/media/IMG_0311.jpg/meta"
+                still: "/api/v1/media/IMG_0311.jpg/still?v=7788aabbccddeeff"
+                thumb: "/api/v1/media/IMG_0311.jpg/thumb?v=7788aabbccddeeff"
+                video: null
+        undoAvailable: true
+        lastAction:
+          seq: 14
+          type: vote
+          pairToken: "7tRbQ0xW9mKa2ZpL4nVdCe"
+          clientRequestId: "1f0c2a7e-6b41-4f0a-9f6a-2b3c4d5e6f70"
+          winner: left
+          side: null
+          id: null
+          restoredId: null
+          at: "2026-09-12T18:04:11.400Z"
+        lastSavedAt: "2026-09-12T18:04:11.398Z"
+
+    SnapshotExhausted:
+      summary: Discards left fewer than two eligible files — pair and pairToken are null
+      value:
+        sessionId: "Qv8kZ2r5tN0pXbA1cD3eFg"
+        state: exhausted
+        folder: "D:\\photos\\tiny"
+        folderName: tiny
+        policy: still
+        openedAt: "2026-09-12T17:40:02.000Z"
+        prefetchPairs: 2
+        sessionVotes: 2
+        counts: { total: 1, rankable: 1, unranked: 0, stills: 1, videos: 0 }
+        progress: 0.061
+        progressPercent: 6
+        cues: [confirmation, upset]
+        pair: null
+        pairToken: null
+        pairSeq: 5
+        warmPairs: []
+        undoAvailable: true
+        lastAction:
+          seq: 5
+          type: discard
+          pairToken: "M0xQrT8vB3nJ7yE2sW9uHk"
+          clientRequestId: null
+          winner: null
+          side: right
+          id: "IMG_0311.jpg"
+          restoredId: null
+          at: "2026-09-12T18:09:50.120Z"
+        lastSavedAt: "2026-09-12T18:09:50.118Z"
+
+  schemas:
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: |
+        The one error shape for every non-2xx response in this API, including routing 404s, auth
+        failures and unhandled exceptions. Clients branch on `error.code` only.
+      properties:
+        error: { $ref: '#/components/schemas/ErrorBody' }
+
+    ErrorBody:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message:
+          type: string
+          description: Human English. Unstable, never parsed, never carries a stack trace or an internal path.
+        requestId:
+          type: string
+          description: Equal to the `X-Request-Id` header.
+        details:
+          type: [object, "null"]
+          description: |
+            Code-specific, with a fixed shape per code (`SERVER_SPEC.md` § 5). Absent for codes that
+            define none.
+          additionalProperties: true
+        session:
+          description: |
+            Present **iff** a session is open when the error is produced, and **required** for every
+            409 on a `/session*` endpoint. Identical to what `GET /session` would return at that
+            instant — this is what makes a stale token recoverable in one round trip.
+          oneOf:
+            - { $ref: '#/components/schemas/SessionSnapshot' }
+            - { type: "null" }
+
+    ErrorCode:
+      type: string
+      description: |
+        Stable machine-readable code. New codes may be added; existing ones never change meaning or
+        status.
+      enum:
+        - unauthenticated
+        - invalid_token
+        - token_revoked
+        - invalid_pairing_code
+        - pairing_not_open
+        - too_many_requests
+        - invalid_request
+        - missing_field
+        - invalid_side
+        - invalid_media_id
+        - unsupported_width
+        - unsupported_format
+        - invalid_path
+        - unsupported_content_type
+        - payload_too_large
+        - not_found
+        - no_session
+        - session_already_open
+        - folder_not_found
+        - folder_not_a_directory
+        - folder_access_denied
+        - folder_not_rankable
+        - library_json_unreadable
+        - folder_locked
+        - session_busy
+        - server_shutting_down
+        - stale_pair_token
+        - no_current_pair
+        - nothing_to_undo
+        - undo_folder_changed
+        - move_failed
+        - save_failed
+        - unknown_media_id
+        - media_file_missing
+        - media_outside_session
+        - media_extension_not_allowed
+        - wrong_media_kind
+        - media_decode_failed
+        - range_not_satisfiable
+        - internal_error
+
+    SessionState:
+      type: string
+      description: |
+        `ranking` — `RankingSession.Current` is non-null. `exhausted` — the session is open but
+        fewer than two eligible records remain, so there is no pair; escapable only by `undo` or by
+        closing and reopening. A folder that cannot produce a first pair never opens at all
+        (`409 folder_not_rankable`).
+      enum: [ranking, exhausted]
+
+    MediaKind:
+      type: string
+      enum: [still, video]
+
+    Side:
+      type: string
+      enum: [left, right]
+
+    Cue:
+      type: string
+      description: |
+        Session-only match strip (`SPEC.md` § Match strip). Appended on **vote** only, before the
+        TrueSkill update: `confirmation` when the winner's μ was ≥ the loser's, else `upset`. Skip,
+        discard, special and undo append nothing. Never written to `rankmaster_db.json`.
+      enum: [confirmation, upset]
+
+    ActionType:
+      type: string
+      description: |
+        `drop_missing` is a discard whose file was already gone from disk: the record is dropped and
+        saved, no file is moved, and no undo entry is recorded.
+      enum: [vote, skip, discard, special, undo, drop_missing]
+
+    SessionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        [sessionId, state, folder, folderName, policy, openedAt, prefetchPairs, sessionVotes,
+         counts, progress, progressPercent, cues, pair, pairToken, pairSeq, warmPairs,
+         undoAvailable, lastAction, lastSavedAt]
+      description: |
+        The complete state of the one session. Returned by every successful `/session*` call and
+        embedded in `error.session` on a conflict, so a client is never more than one response away
+        from being fully synchronised.
+      properties:
+        sessionId:
+          type: string
+          description: |
+            Opaque. New on every `POST /session` that opens a session, and therefore new after a
+            server restart. A change voids every cached `pairToken`, `lastAction` and link.
+          examples: ["Qv8kZ2r5tN0pXbA1cD3eFg"]
+        state: { $ref: '#/components/schemas/SessionState' }
+        folder:
+          type: string
+          description: The absolute, fully-resolved folder path.
+        folderName:
+          type: string
+          description: '`RankingSession.FolderName` — the last path segment. May be empty for a drive root.'
+        policy:
+          allOf: [{ $ref: '#/components/schemas/MediaKind' }]
+          description: |
+            Which kind is rankable in this folder. Only stills, or only videos, or — for a mixed
+            folder — **stills only** (`SPEC.md` § Media policy).
+        openedAt: { type: string, format: date-time }
+        prefetchPairs:
+          type: integer
+          minimum: 0
+          description: Warm depth; 2 by default (`SPEC.md` § Pipeline). `warmPairs` never exceeds it.
+        sessionVotes:
+          type: integer
+          minimum: 0
+          description: Votes only. Skip, discard, special and undo do not count. Not persisted; reset by a new session.
+        counts: { $ref: '#/components/schemas/Counts' }
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: |
+            `LibraryProgress.Of(Rankable)`, rounded to 6 decimals — the mean fraction of the path
+            from the initial σ to the target σ. Overlay maths only; not a picker input, and not a
+            measurement (a discard moves it for reasons unrelated to voting).
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: '`round(progress * 100)` — the number the desktop overlay shows.'
+        cues:
+          type: array
+          maxItems: 10
+          description: Oldest first. Empty until the first vote of the session.
+          items: { $ref: '#/components/schemas/Cue' }
+        pair:
+          description: The current pair, or null when `state` is `exhausted`.
+          oneOf:
+            - { $ref: '#/components/schemas/Pair' }
+            - { type: "null" }
+        pairToken:
+          type: [string, "null"]
+          description: |
+            Opaque per-pair token; null exactly when `pair` is null. Required by every pair action.
+            It is derived from `HMAC(sessionSecret, sessionId | pairSeq | left | right)`, so it
+            changes on **every** advance even when the pair's ids repeat — which they do on a
+            two-file library, where `Advance()` re-picks the same two files forever. Never parse it,
+            never reuse one across `sessionId` values.
+          examples: ["M0xQrT8vB3nJ7yE2sW9uHk"]
+        pairSeq:
+          type: integer
+          minimum: 0
+          description: |
+            Monotonic per session, starting at 0. Incremented iff the server entered `VoteLeft`,
+            `VoteRight`, `Skip`, `Drop` or `Restore` — and, for the three that save internally, only
+            when that call returned without throwing. Exposed for logging and ordering; it is not a
+            token and must never be sent in an action body.
+        warmPairs:
+          type: array
+          description: |
+            Prefetch hints, in dequeue order. They carry no token and must never be acted on. A warm
+            pair may be one vote stale, may be evicted by a discard, is always discarded by an undo,
+            and may never become current. On a two-file library this is permanently empty, because
+            both ids are reserved by the current pair — a client that waits for a warm pair before
+            rendering will hang.
+          items: { $ref: '#/components/schemas/Pair' }
+        undoAvailable:
+          type: boolean
+          description: |
+            A move is recorded and belongs to this folder. One level only — there is no undo stack,
+            and vote undo does not exist.
+        lastAction:
+          description: |
+            The most recent **successful** mutation. Null right after a session opens. In-memory
+            only: a server restart loses it, and with it the ability to tell whether an in-flight
+            action landed.
+          oneOf:
+            - { $ref: '#/components/schemas/LastAction' }
+            - { type: "null" }
+        lastSavedAt:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            When *this session* last wrote `rankmaster_db.json`. Null for a freshly opened session,
+            even though the file on disk may be much older — `Start()` reads and does not write.
+
+    Counts:
+      type: object
+      additionalProperties: false
+      required: [total, rankable, unranked, stills, videos]
+      description: '`stills + videos == total`; `rankable == stills` when `policy` is `still`, else `videos`.'
+      properties:
+        total: { type: integer, minimum: 0, description: 'Every media file found by the scan, both kinds.' }
+        rankable: { type: integer, minimum: 0, description: 'Records matching `policy`.' }
+        unranked:
+          type: integer
+          minimum: 0
+          description: 'Rankable records with `matches == 0` — the overlay''s "unranked" number.'
+        stills: { type: integer, minimum: 0 }
+        videos:
+          type: integer
+          minimum: 0
+          description: |
+            In a mixed folder these are visible and fetchable but can never appear in a pair. A
+            client must not imply they are rankable.
+
+    Pair:
+      type: object
+      additionalProperties: false
+      required: [left, right]
+      description: |
+        Two distinct records. `PairSelector` never returns the same id twice.
+
+        Ratings are deliberately **not** included: the desktop compare screen shows no μ, σ or score,
+        and a client that displayed them would bias the vote it is collecting. Use
+        `GET /media/{id}/meta` if tooling needs them.
+      properties:
+        left: { $ref: '#/components/schemas/MediaRef' }
+        right: { $ref: '#/components/schemas/MediaRef' }
+
+    MediaRef:
+      type: object
+      additionalProperties: false
+      required: [id, kind, sizeBytes, mediaVersion, links]
+      properties:
+        id:
+          type: string
+          description: |
+            The **decoded** filename exactly as on disk (`MediaId.Filename`) — not URL-encoded.
+            Filenames are the identity; there is no GUID. Echo this spelling; do not re-case it.
+        kind: { $ref: '#/components/schemas/MediaKind' }
+        sizeBytes:
+          type: [integer, "null"]
+          minimum: 0
+          description: Null when the file could not be stat'd — it has been moved or deleted under the session.
+        mediaVersion:
+          type: [string, "null"]
+          description: 16 lowercase hex characters over `(id, size, mtime)`. Null when `sizeBytes` is null.
+          examples: ["9f2a1c77b0e4d310"]
+        links: { $ref: '#/components/schemas/MediaLinks' }
+
+    MediaLinks:
+      type: object
+      additionalProperties: false
+      required: [meta, still, thumb, video]
+      description: |
+        Server-built, already percent-encoded, already carrying `v=<mediaVersion>`. Clients should
+        use these verbatim rather than building URLs — it removes every id-encoding bug from four
+        client implementations at once, and the `v` is what makes `immutable` honest.
+      properties:
+        meta: { type: string }
+        still:
+          type: [string, "null"]
+          description: Null for a video. There are no poster frames.
+        thumb:
+          type: [string, "null"]
+          description: Null for a video.
+        video:
+          type: [string, "null"]
+          description: Null for a still.
+
+    LastAction:
+      type: object
+      additionalProperties: false
+      required: [seq, type, pairToken, clientRequestId, winner, side, id, restoredId, at]
+      description: |
+        Retry disambiguation. After a `409 stale_pair_token`, a client compares its own
+        `clientRequestId` and `pairToken` against these fields to learn whether its lost request
+        landed — without polling and without risking a double vote.
+      properties:
+        seq: { type: integer, minimum: 0, description: 'The `pairSeq` this action produced.' }
+        type: { $ref: '#/components/schemas/ActionType' }
+        pairToken:
+          type: [string, "null"]
+          description: The token this action consumed. Null for `undo` and `drop_missing`, which take none.
+        clientRequestId:
+          type: [string, "null"]
+          description: Echoed verbatim from the request, or null if the client sent none.
+        winner:
+          description: '`vote` only.'
+          oneOf: [{ $ref: '#/components/schemas/Side' }, { type: "null" }]
+        side:
+          description: '`discard` and `special` only.'
+          oneOf: [{ $ref: '#/components/schemas/Side' }, { type: "null" }]
+        id:
+          type: [string, "null"]
+          description: The id moved or dropped — `discard`, `special`, `drop_missing`.
+        restoredId:
+          type: [string, "null"]
+          description: |
+            `undo` only. **Differs from `id`** when the original name had been taken and
+            `FileOps.UniqueFileName` brought the file back as `name (2).ext`. Any URL cached for the
+            old id is then dead.
+        at: { type: string, format: date-time }
+
+    OpenSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [folder]
+      properties:
+        folder:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute path. Relative paths, empty strings and NUL bytes are `400 invalid_path`.
+
+    VoteRequest:
+      type: object
+      additionalProperties: false
+      required: [pairToken, winner]
+      properties:
+        pairToken:
+          type: string
+          description: Must equal the current token, or the call is `409 stale_pair_token` with no state change.
+        winner: { $ref: '#/components/schemas/Side' }
+        clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
+
+    SkipRequest:
+      type: object
+      additionalProperties: false
+      required: [pairToken]
+      properties:
+        pairToken: { type: string }
+        clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
+
+    SideRequest:
+      type: object
+      additionalProperties: false
+      required: [pairToken, side]
+      description: |
+        The id is taken from the pair the token names — a client sends a side, never an id, so it
+        cannot act on an item that is not on screen.
+      properties:
+        pairToken: { type: string }
+        side: { $ref: '#/components/schemas/Side' }
+        clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
+
+    UndoRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        No `pairToken`: undo is not pair-scoped, and any token the client holds for the pair the
+        move happened in is stale by construction. A `pairToken` sent here is ignored.
+      properties:
+        clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
+
+    ClientRequestId:
+      type: [string, "null"]
+      maxLength: 64
+      description: |
+        Client-generated, unique per logical action and **kept identical across retries of that
+        action**. Strongly recommended: it is echoed in `lastAction.clientRequestId`, and it is the
+        only thing that lets a client prove a lost request landed rather than inferring it.
+      examples: ["1f0c2a7e-6b41-4f0a-9f6a-2b3c4d5e6f70"]
+
+    Rating:
+      type: object
+      additionalProperties: false
+      required: [mu, sigma, conservative]
+      properties:
+        mu: { type: number }
+        sigma: { type: number, minimum: 0 }
+        conservative:
+          type: number
+          description: '`μ − 3σ`. Computed on read, never stored (`SPEC.md` § Persistence).'
+
+    MediaMeta:
+      type: object
+      additionalProperties: false
+      required: [id, kind, sizeBytes, modifiedAt, mediaVersion, width, height, rating, matches, impressions, lastPlayed, rankable]
+      description: |
+        No `durationMs`, `codec`, `frameRate` or `bitrate`: producing any of them would mean decoding
+        a video, which this server never does (`SERVER_PLAN.md` § 7).
+      properties:
+        id: { type: string, description: The on-disk spelling. }
+        kind: { $ref: '#/components/schemas/MediaKind' }
+        sizeBytes: { type: integer, minimum: 0 }
+        modifiedAt: { type: string, format: date-time }
+        mediaVersion: { type: string }
+        width:
+          type: [integer, "null"]
+          description: Stills only, after EXIF orientation. Always null for a video.
+        height:
+          type: [integer, "null"]
+          description: Stills only, after EXIF orientation. Always null for a video.
+        rating: { $ref: '#/components/schemas/Rating' }
+        matches:
+          type: integer
+          minimum: 0
+          description: Incremented on vote only (`SPEC.md` § Ranking).
+        impressions:
+          type: integer
+          minimum: 0
+          description: |
+            Incremented on vote **and** skip, on both ids. Displaying a pair, prefetching it,
+            fetching its bytes or closing the session never increments it. Written for
+            compatibility; never used to pick pairs.
+        lastPlayed:
+          type: integer
+          description: Unix **milliseconds**, exactly as stored in `rankmaster_db.json`. 0 if never voted.
+        rankable: { type: boolean, description: Whether this record matches the session `policy`. }
+
+    PairRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          maxLength: 32
+          description: The one-time pairing code. Whitespace is ignored; the comparison is constant-time.
+        deviceName:
+          type: [string, "null"]
+          maxLength: 64
+          description: Shown in the device list so the user knows what to revoke.
+
+    PairResponse:
+      type: object
+      additionalProperties: false
+      required: [deviceId, deviceName, token, issuedAt, expiresAt]
+      properties:
+        deviceId:
+          type: string
+          description: 'Pass to `DELETE /pair/{deviceId}` to revoke.'
+        deviceName: { type: [string, "null"] }
+        token:
+          type: string
+          description: |
+            The bearer token. Returned **once** and never retrievable again. Send it only in the
+            `Authorization` header.
+        issuedAt: { type: string, format: date-time }
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: Null for a non-expiring token.
+
+    Ping:
+      type: object
+      additionalProperties: false
+      required: [product, apiVersion, version, ready, authenticated, certificateFingerprint, serverTime, features, limits, session]
+      properties:
+        product: { type: string }
+        apiVersion: { type: string, examples: ["v1"] }
+        version: { type: string, description: 'Assembly version from `Directory.Build.props`.' }
+        ready:
+          type: boolean
+          description: False while starting or shutting down; every other endpoint answers `503 server_shutting_down` then.
+        authenticated: { type: boolean }
+        certificateFingerprint:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: |
+            SHA-256 of the certificate's DER encoding. This is what the client pins — it is the whole
+            reason a self-signed certificate is secure here rather than theatre. In the public subset
+            because a client that cannot authenticate yet is exactly the one that needs it.
+        serverTime: { type: string, format: date-time }
+        features: { $ref: '#/components/schemas/PingFeatures' }
+        limits: { $ref: '#/components/schemas/PingLimits' }
+        session:
+          description: Null in the public subset. Authenticated, a cheap "is a session open" without a 404.
+          oneOf:
+            - { $ref: '#/components/schemas/PingSession' }
+            - { type: "null" }
+
+    PingFeatures:
+      type: object
+      additionalProperties: false
+      required: [rename, videoTranscoding, posterFrames, videoProbe, browse, maxConcurrentSessions]
+      description: Fixed by `SERVER_PLAN.md` § 7. Not configurable.
+      properties:
+        rename:
+          type: boolean
+          const: false
+          description: |
+            Always false. There is no rename-by-rank endpoint, no flag and no build in which one
+            exists; `LibraryActions.RenameByRank` is never called by the server.
+        videoTranscoding: { type: boolean, const: false }
+        posterFrames: { type: boolean, const: false }
+        videoProbe: { type: boolean, const: false, description: The server never decodes a video frame. }
+        browse: { type: string, const: full-filesystem }
+        maxConcurrentSessions: { type: integer, const: 1 }
+
+    PingLimits:
+      type: object
+      additionalProperties: false
+      required: [stillWidths, thumbWidth, maxJsonBodyBytes, sessionLockTimeoutSeconds]
+      properties:
+        stillWidths:
+          type: array
+          items: { type: integer }
+          description: The only accepted `w` values. Anything else is `400 unsupported_width`.
+        thumbWidth: { type: integer, const: 320 }
+        maxJsonBodyBytes: { type: integer }
+        sessionLockTimeoutSeconds: { type: integer }
+
+    PingSession:
+      type: object
+      additionalProperties: false
+      required: [open, sessionId, folder, state]
+      properties:
+        open: { type: boolean }
+        sessionId: { type: [string, "null"] }
+        folder: { type: [string, "null"] }
+        state:
+          oneOf:
+            - { $ref: '#/components/schemas/SessionState' }
+            - { type: "null" }
+
+    RootsResponse:
+      type: object
+      additionalProperties: false
+      required: [roots]
+      properties:
+        roots:
+          type: array
+          items: { $ref: '#/components/schemas/RootEntry' }
+
+    RootEntry:
+      type: object
+      additionalProperties: false
+      required: [path, label, kind, available, totalBytes, freeBytes]
+      properties:
+        path: { type: string }
+        label: { type: [string, "null"] }
+        kind: { type: string, enum: [fixed, removable, network, ram, unknown] }
+        available:
+          type: boolean
+          description: |
+            A root that exists but is not ready — an empty optical drive, a disconnected share — is
+            still listed, with false here, rather than being silently dropped.
+        totalBytes: { type: [integer, "null"] }
+        freeBytes: { type: [integer, "null"] }
+
+    BrowseResponse:
+      type: object
+      additionalProperties: false
+      required: [path, parent, entries]
+      properties:
+        path: { type: string }
+        parent: { type: [string, "null"], description: Null at a root. }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/BrowseEntry' }
+
+    BrowseEntry:
+      type: object
+      additionalProperties: false
+      required: [name, path, stillCount, videoCount, rankable, hasDatabase, accessible]
+      description: |
+        Direct child folders only; files are never listed. Counts apply `SPEC.md` § Media policy to
+        the **top-level files of that child**: same extension lists, same skipping of hidden and
+        system files and of `rankmaster_db.json`.
+      properties:
+        name: { type: string }
+        path: { type: string }
+        stillCount:
+          type: [integer, "null"]
+          description: Null means unknown — not counted, or not readable. Zero means counted and empty.
+        videoCount: { type: [integer, "null"] }
+        rankable:
+          type: [boolean, "null"]
+          description: |
+            Would this folder open? The same predicate `POST /session` applies, so a client can grey
+            out folders that would answer `409 folder_not_rankable`. Null when counts were skipped or
+            the folder is unreadable.
+        hasDatabase:
+          type: boolean
+          description: '`rankmaster_db.json` exists. Says nothing about whether it parses.'
+        accessible:
+          type: boolean
+          description: |
+            False when the child could not be enumerated. One unreadable child never fails the whole
+            listing.
