@@ -154,12 +154,15 @@ public sealed class StillRenderer : IDisposable
         int outputHeight,
         string path)
     {
-        RenderedStill? resized = null;
+        // Ownership moves as this runs, so none of these can be a `using`: the decode buffer is
+        // either handed to the result or released early, never both.
         var decodeBuffer = Reserve(decodeInfo.BytesSize64, path);
+        SKBitmap? decoded = null;
+        RenderedStill? resized = null;
 
         try
         {
-            using var decoded = new SKBitmap();
+            decoded = new SKBitmap();
             if (!decoded.InstallPixels(decodeInfo, decodeBuffer.Pointer, decodeInfo.RowBytes))
                 throw new StillDecodeException("Could not install a decode buffer for " + Path.GetFileName(path));
 
@@ -173,7 +176,9 @@ public sealed class StillRenderer : IDisposable
 
             if (resizedWidth == decodeInfo.Width && resizedHeight == decodeInfo.Height)
             {
+                // Already the right size. The decode buffer becomes the result's buffer.
                 resized = new RenderedStill(decoded, decodeBuffer);
+                decoded = null;
                 decodeBuffer = null;
             }
             else
@@ -181,18 +186,32 @@ public sealed class StillRenderer : IDisposable
                 var resizedInfo = decodeInfo.WithSize(resizedWidth, resizedHeight);
                 resized = Allocate(resizedInfo, path);
 
-                if (!decoded.ScalePixels(resized.Bitmap.PeekPixels(), Downscale))
-                    throw new StillDecodeException("Could not resample " + Path.GetFileName(path));
+                using (var destination = resized.Bitmap.PeekPixels())
+                {
+                    if (!decoded.ScalePixels(destination, Downscale))
+                        throw new StillDecodeException("Could not resample " + Path.GetFileName(path));
+                }
+
+                // Freed as early as the steps allow: the decode buffer is the big one, and it must
+                // not still be held while the oriented copy is taken.
+                decoded.Dispose();
+                decoded = null;
+                decodeBuffer.Dispose();
+                decodeBuffer = null;
             }
+        }
+        catch
+        {
+            resized?.Dispose();
+            throw;
         }
         finally
         {
-            // Released here rather than at the end: the full-size decode buffer is the big one,
-            // and it must not still be held while the oriented copy is taken.
+            decoded?.Dispose();
             decodeBuffer?.Dispose();
         }
 
-        if (origin is SKEncodedOrigin.TopLeft)
+        if (origin is SKEncodedOrigin.TopLeft or SKEncodedOrigin.Default)
             return resized;
 
         try
@@ -296,7 +315,7 @@ public sealed class StillRenderer : IDisposable
     /// Fits <paramref name="width"/> × <paramref name="height"/> inside a square box of
     /// <paramref name="target"/>, putting the long edge exactly on the target and never enlarging.
     /// </summary>
-    internal static (int Width, int Height) FitLongEdge(int width, int height, int target)
+    public static (int Width, int Height) FitLongEdge(int width, int height, int target)
     {
         if (width <= 0 || height <= 0)
             return (Math.Max(1, width), Math.Max(1, height));
@@ -314,7 +333,7 @@ public sealed class StillRenderer : IDisposable
     /// The eight EXIF orientations as transforms from stored space into displayed space. Values
     /// 1-8 of the TIFF <c>Orientation</c> tag, which <see cref="SKEncodedOrigin"/> mirrors exactly.
     /// </summary>
-    internal static SKMatrix OrientationMatrix(SKEncodedOrigin origin, int width, int height) => origin switch
+    public static SKMatrix OrientationMatrix(SKEncodedOrigin origin, int width, int height) => origin switch
     {
         // 2: mirrored horizontally.
         SKEncodedOrigin.TopRight => new SKMatrix(-1, 0, width, 0, 1, 0, 0, 0, 1),
@@ -334,7 +353,7 @@ public sealed class StillRenderer : IDisposable
     };
 
     /// <summary>EXIF orientations 5-8 are the transposed ones; they swap width and height.</summary>
-    internal static bool SwapsAxes(SKEncodedOrigin origin) =>
+    public static bool SwapsAxes(SKEncodedOrigin origin) =>
         origin is SKEncodedOrigin.LeftTop or SKEncodedOrigin.RightTop
                or SKEncodedOrigin.RightBottom or SKEncodedOrigin.LeftBottom;
 

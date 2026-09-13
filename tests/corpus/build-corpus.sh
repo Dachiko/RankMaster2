@@ -58,10 +58,21 @@ small.save("stills/lossy.webp", quality=80)
 small.save("stills/lossless.webp", lossless=True)
 frames = [small.resize((240,180)).rotate(a) for a in (0, 90, 180)]
 frames[0].save("stills/animated.gif", save_all=True, append_images=frames[1:], duration=120, loop=0)
-# A wide-gamut file: tag it Display P3 without converting, so a decoder that ignores the
-# profile renders it visibly oversaturated. This is the exact bug fixed in the desktop app.
-p3 = ImageCms.createProfile("sRGB")          # placeholder primaries; the tag is what matters
-small.save("stills/wide_gamut.jpg", quality=90, icc_profile=ImageCms.ImageCmsProfile(p3).tobytes())
+# A genuinely wide-gamut file: real Adobe RGB (1998) primaries, so a decoder that ignores
+# the profile renders it visibly oversaturated. The exact bug fixed in the desktop app.
+#
+# Flat blocks of MIXED colours, deliberately. Pure primaries clip at the gamut boundary and
+# hide the shift; a dithered photograph buries it in JPEG noise. Flat mixed fields are the
+# only clean instrument, and quality=98 keeps the encoder out of the way.
+sys.path.insert(0, os.path.dirname(os.path.abspath("build-corpus.sh")))
+from make_icc import ADOBE_RGB
+swatch = Image.new("RGB", (600, 400))
+for i, colour in enumerate([(120, 180, 90), (90, 140, 200), (180, 120, 60), (150, 90, 170)]):
+    swatch.paste(colour, (0, i * 100, 600, (i + 1) * 100))
+swatch.save("stills/wide_gamut.jpg", quality=98, icc_profile=ADOBE_RGB)
+# The same pixels with no profile at all: any difference between the two renders IS the
+# transform, because everything else about them is identical.
+swatch.save("stills/wide_gamut_untagged.jpg", quality=98)
 # 40 megapixels from a tiny file: a decoder that allocates before checking will fall over.
 Image.new("RGB", (8000, 5000), (200, 40, 40)).save("stills/bomb_40mp.jpg", quality=20)
 print("   derived:", ", ".join(sorted(os.path.basename(p) for p in os.listdir("stills") if not p.startswith(("exif_","photo_")))))
