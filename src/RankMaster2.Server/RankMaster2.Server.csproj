@@ -12,7 +12,17 @@
     <ProjectReference Include="..\RankMaster2.Catalog\RankMaster2.Catalog.csproj" />
     <ProjectReference Include="..\RankMaster2.Actions\RankMaster2.Actions.csproj" />
   </ItemGroup>
+  <!-- Stills are decoded with SkiaSharp (MIT). ImageSharp 4.x was the earlier choice and is
+       gone on purpose: its build-time licence check fails `-c Release` without a Six Labors key,
+       and publish.ps1 builds Release, so it blocked shipping. Downgrading to the Apache-2.0
+       ImageSharp 2.x was not an option either - it predates DecoderOptions.TargetSize, and the
+       reduced-size decode is the whole reason the still path fits the memory budget. -->
   <ItemGroup>
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.1" />
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <!-- The native libSkiaSharp, per platform. Win32 is the real target; Linux is what the test
+         suite runs on here. NoDependencies avoids pulling a system fontconfig requirement in for
+         a server that only ever decodes and re-encodes photographs - it draws no text. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
   </ItemGroup>
 </Project>

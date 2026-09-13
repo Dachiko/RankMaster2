@@ -38,15 +38,18 @@ public sealed class MediaOptions
     public int MaxConcurrentDecodes { get; set; } = 2;
 
     /// <summary>
-    /// Hard ceiling on live ImageSharp buffers, enforced by the allocator rather than hoped for.
-    /// A reduced-size decode of a 48 MP JPEG to 1080 px peaks around 13 MB, so this is roughly
-    /// ten times the working figure and still well inside the server's budget. A decode that
-    /// would exceed it throws and is reported as <c>media_decode_failed</c>.
+    /// Hard ceiling on the pixel buffers one decode may hold at once, enforced by
+    /// <see cref="DecodeBudget"/> before the memory is taken rather than discovered afterwards.
+    /// A reduced-size decode of a 48 MP JPEG to 1080 px peaks around 12 MB, so this is roughly ten
+    /// times the working figure and still well inside the server's budget. A decode that would
+    /// exceed it is refused and reported as <c>media_decode_failed</c>.
+    /// <para/>
+    /// The headroom is for the formats with no sampled decode. JPEG scales during the IDCT, so it
+    /// is cheap at any target; PNG, BMP and GIF have no equivalent and must be decoded whole,
+    /// which is one buffer of width × height × 4. At this ceiling that caps a non-JPEG still at
+    /// about 32 megapixels.
     /// </summary>
     public int DecodeMemoryLimitMegabytes { get; set; } = 128;
-
-    /// <summary>Pool retained between decodes. Small: stills are decoded at target size.</summary>
-    public int DecodePoolMegabytes { get; set; } = 32;
 
     /// <summary>
     /// The server's own data directory. Not named in SERVER_SPEC.md; chosen here as the platform

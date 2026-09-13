@@ -1,10 +1,5 @@
 using RankMaster2.Server.Media;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Memory;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -14,28 +9,31 @@ namespace RankMaster2.Server.Tests.Media;
 /// The memory budget, which is the one property of the media layer that cannot be inspected by
 /// reading a response.
 /// <para/>
-/// <b>What is being measured, and why it is not <c>GC.GetTotalMemory</c>.</b> ImageSharp's pixel
-/// buffers come from its own <see cref="MemoryAllocator"/>, which allocates unmanaged and pools.
-/// The managed heap therefore barely moves whichever path you take — measured here at about 3 MB
-/// either way — while the process working set moves from ~58 MB to ~189 MB. Sampling
-/// <c>GC.GetTotalMemory</c> would give a test that passes on the careless path, which is worse
+/// <b>What is being measured, and why it is not <c>GC.GetTotalMemory</c>.</b> Skia decodes into
+/// native memory, so the managed heap barely moves whichever path the renderer takes — measured at
+/// well under a megabyte either way, while the process working set moves by more than a hundred.
+/// Sampling the managed heap would give a test that passes on the careless path, which is worse
 /// than no test.
 /// <para/>
-/// So the budget is enforced where the bytes actually are: the allocator is given a hard
-/// accumulative ceiling, and the assertion is that the render completes under it. That is
-/// deterministic — no sampling, no timing, no tolerance for a machine under load — and it fails
-/// loudly the moment someone replaces the reduced-size decode with a decode-then-resize.
+/// So the renderer supplies Skia's pixel buffers itself, through <see cref="DecodeBudget"/>, and
+/// these tests read that budget. Two things follow that the previous ImageSharp arrangement could
+/// not do: the ceiling is enforced before the memory is taken, and
+/// <see cref="DecodeBudget.PeakBytes"/> is the true high-water mark — so the assertion is the
+/// actual number of bytes a resize cost, not merely that it finished.
 /// <see cref="FullDecodeOfTheSameImage_BlowsTheSameBudget"/> is the control that proves the
 /// ceiling is a real constraint and not a number chosen to be un-hittable.
 /// </summary>
 public class StillRendererMemoryTests(ITestOutputHelper output)
 {
     /// <summary>
-    /// Low tens of megabytes. A 48 MP JPEG decoded to 1080 px peaks at about 13 MB of allocator
-    /// memory; this leaves generous headroom for a differently-shaped image and is still an order
-    /// of magnitude below the 144 MB a single full-size RGB buffer needs.
+    /// Low tens of megabytes. A 48 MP JPEG decoded to 1080 px peaks at about 12 MB; this leaves
+    /// generous headroom for a differently-shaped image and is still an order of magnitude below
+    /// the 192 MB a single full-size RGBA buffer needs.
     /// </summary>
     private const int BudgetMegabytes = 32;
+
+    /// <summary>What one full-size RGBA buffer for the fixture would cost: 8000 × 6000 × 4.</summary>
+    private const long FullDecodeBytes = (long)LargeImageFixture.Width * LargeImageFixture.Height * 4;
 
     [Fact]
     public async Task Resizing_A48MegapixelJpeg_StaysInsideTheMemoryBudget()
@@ -45,11 +43,11 @@ public class StillRendererMemoryTests(ITestOutputHelper output)
         using var renderer = new StillRenderer(new MediaOptions
         {
             DecodeMemoryLimitMegabytes = BudgetMegabytes,
-            DecodePoolMegabytes = 0,
             MaxConcurrentDecodes = 1,
         });
 
-        var before = SettledManagedBytes();
+        renderer.Budget.ResetPeak();
+        var managedBefore = SettledManagedBytes();
         var workingSetBefore = Environment.WorkingSet;
 
         using var rendered = new MemoryStream();
@@ -59,94 +57,130 @@ public class StillRendererMemoryTests(ITestOutputHelper output)
             rendered,
             CancellationToken.None);
 
-        var managedDelta = SettledManagedBytes() - before;
+        var peak = renderer.Budget.PeakBytes;
+        var managedDelta = SettledManagedBytes() - managedBefore;
         var workingSetDelta = Environment.WorkingSet - workingSetBefore;
 
         output.WriteLine($"source            {LargeImageFixture.Width}x{LargeImageFixture.Height} ({LargeImageFixture.Megapixels:F0} MP), {new FileInfo(path).Length / 1024 / 1024} MB on disk");
-        output.WriteLine($"allocator ceiling {BudgetMegabytes} MB (hard, enforced)");
-        output.WriteLine($"full decode needs {LargeImageFixture.FullDecodeBytes / 1024 / 1024} MB in one buffer");
+        output.WriteLine($"budget ceiling    {BudgetMegabytes} MB (hard, enforced before allocation)");
+        output.WriteLine($"full decode needs {FullDecodeBytes / 1024 / 1024} MB in one buffer");
+        output.WriteLine($"peak pixel bytes  {peak / 1024.0 / 1024.0:F1} MB   <-- the measurement");
         output.WriteLine($"managed delta     {managedDelta / 1024.0 / 1024.0:F1} MB");
         output.WriteLine($"working set delta {workingSetDelta / 1024.0 / 1024.0:F1} MB");
         output.WriteLine($"encoded           {rendered.Length / 1024} KB");
 
-        // It completed, which under a hard accumulative ceiling means it never held more than
-        // BudgetMegabytes of pixel buffers at once.
         Assert.True(rendered.Length > 0);
 
-        rendered.Position = 0;
-        using var check = Image.Load(rendered);
+        // Every pixel buffer went back.
+        Assert.Equal(0, renderer.Budget.LiveBytes);
+
+        // The measurement itself: low tens of megabytes, not the 192 MB a full decode would need.
+        Assert.True(
+            peak < 24L * 1024 * 1024,
+            $"Peak pixel memory was {peak / 1024 / 1024} MB; a target-size decode of this image should be nearer 12 MB.");
+
+        Assert.True(
+            peak < FullDecodeBytes / 4,
+            $"Peak pixel memory was {peak:N0} bytes against {FullDecodeBytes:N0} for a full decode — not a reduced-size decode.");
+
+        using var check = SKBitmap.Decode(rendered.ToArray());
         Assert.Equal(1080, check.Width);
         Assert.Equal(810, check.Height);
 
-        // The managed heap is the secondary signal. It is small on both paths, so this is a
-        // sanity bound rather than the thing being proven.
         Assert.True(
             managedDelta < 24L * 1024 * 1024,
-            $"Managed heap grew by {managedDelta / 1024 / 1024} MB, which is more than a target-size decode should cost.");
+            $"Managed heap grew by {managedDelta / 1024 / 1024} MB, which a native-buffer decode should not.");
     }
 
     /// <summary>
-    /// The control. Decoding the same file in full and then shrinking it needs one contiguous
-    /// 8000 × 6000 × 3 = 144 MB buffer, so it cannot fit under the ceiling the renderer works
-    /// inside. If this ever stops throwing, the ceiling has been raised to meaninglessness and the
-    /// test above is no longer asserting anything.
+    /// The control. Decoding the same file at full size needs one 8000 × 6000 × 4 = 192 MB buffer,
+    /// so it cannot fit under the ceiling the renderer works inside. If this ever stops throwing,
+    /// the ceiling has been raised to meaninglessness and the test above asserts nothing.
+    /// <para/>
+    /// It goes through the same <see cref="DecodeBudget"/> the renderer uses, so what is being
+    /// proven is that the budget refuses the careless path — not merely that Skia can be made to
+    /// fail some other way.
     /// </summary>
     [Fact]
     public void FullDecodeOfTheSameImage_BlowsTheSameBudget()
     {
-        var path = LargeImageFixture.Path;
+        var budget = new DecodeBudget(BudgetMegabytes * 1024L * 1024L);
 
-        var configuration = Configuration.Default.Clone();
-        configuration.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
+        using var stream = File.OpenRead(LargeImageFixture.Path);
+        using var codec = SKCodec.Create(stream);
+        Assert.NotNull(codec);
+
+        // No GetScaledDimensions: the careless path, full decode and then shrink.
+        var fullInfo = new SKImageInfo(
+            codec!.Info.Width,
+            codec.Info.Height,
+            SKColorType.Rgba8888,
+            SKAlphaType.Opaque,
+            SKColorSpace.CreateSrgb());
+
+        Assert.Equal(FullDecodeBytes, fullInfo.BytesSize64);
+
+        var thrown = Assert.Throws<DecodeBudgetExceededException>(() => budget.Allocate(fullInfo.BytesSize64));
+
+        output.WriteLine($"full decode of {codec.Info.Width}x{codec.Info.Height} wanted {thrown.RequestedBytes / 1024 / 1024} MB");
+        output.WriteLine($"the ceiling the renderer runs under is {thrown.CeilingBytes / 1024 / 1024} MB");
+
+        Assert.Equal(FullDecodeBytes, thrown.RequestedBytes);
+        Assert.Equal(0, budget.LiveBytes);
+    }
+
+    /// <summary>
+    /// And the same again through the renderer: told to produce the source's own size, it has
+    /// nothing left to scale down to and is refused, which is what a ceiling being real looks
+    /// like from the outside. A refusal is a 422, never a 500.
+    /// </summary>
+    [Fact]
+    public async Task ARenderThatCannotFitTheBudget_IsRefusedAsUndecodable()
+    {
+        using var renderer = new StillRenderer(new MediaOptions
         {
-            AccumulativeAllocationLimitMegabytes = BudgetMegabytes,
-            MaximumPoolSizeMegabytes = 0,
+            DecodeMemoryLimitMegabytes = 16,
+            MaxConcurrentDecodes = 1,
         });
 
-        var thrown = Record.Exception(() =>
-        {
-            using var stream = File.OpenRead(path);
+        using var rendered = new MemoryStream();
 
-            // No TargetSize: the careless path, full decode and then shrink.
-            using var image = Image.Load<Rgb24>(new DecoderOptions { Configuration = configuration }, stream);
-            image.Mutate(x => x.Resize(new ResizeOptions { Size = new Size(1080, 1080), Mode = ResizeMode.Max }));
-            image.SaveAsJpeg(Stream.Null, new JpegEncoder { Quality = 85 });
-        });
+        var thrown = await Assert.ThrowsAsync<StillDecodeException>(() => renderer.RenderAsync(
+            LargeImageFixture.Path,
+            new StillVariant(2160, StillFormat.Jpeg, IsThumb: false, FormatSource.Default),
+            rendered,
+            CancellationToken.None));
 
-        Assert.NotNull(thrown);
-        output.WriteLine("full decode under the same ceiling: " + thrown!.GetType().Name);
-
-        // ImageSharp wraps the allocator's refusal in a decode failure; either is proof enough
-        // that 144 MB did not fit where 13 MB did.
-        var chain = Unwind(thrown).ToList();
-        Assert.Contains(chain, e => e is InvalidMemoryOperationException);
+        Assert.IsType<DecodeBudgetExceededException>(thrown.InnerException);
+        Assert.Equal(0, renderer.Budget.LiveBytes);
     }
 
     /// <summary>
     /// Every allowed width, each against the ceiling it actually needs.
     /// <para/>
     /// The numbers are not uniform, and the reason is worth writing down: the JPEG decoder scales
-    /// during the IDCT in powers of two, so the intermediate buffer is the source at 1/8, 1/4 or
-    /// 1/2 depending on how far the target is below it. For this 8000 × 6000 source, widths up to
-    /// 1080 land on the 1/4 step (2000 × 1500 × 3 = 9 MB) while 2160 lands on the 1/2 step
-    /// (4000 × 3000 × 3 = 36 MB). So <c>w=2160</c> genuinely costs about four times <c>w=1080</c>
-    /// — still a quarter of a full decode, and the reason the server's own default ceiling is
-    /// 128 MB rather than the 32 MB the headline test uses.
+    /// during the IDCT in powers of two, so the decode buffer is the source at 1/8, 1/4 or 1/2
+    /// depending on how far the target is below it. For this 8000 × 6000 source, widths up to 1080
+    /// land on the 1/4 step (2000 × 1500 × 4 = 12 MB) while 2160 lands on the 1/2 step
+    /// (4000 × 3000 × 4 = 48 MB). So <c>w=2160</c> genuinely costs about four times
+    /// <c>w=1080</c> — still a quarter of a full decode, and the reason the server's own default
+    /// ceiling is 128 MB rather than the 32 MB the headline test uses.
     /// </summary>
     [Theory]
     [InlineData(360, BudgetMegabytes)]
     [InlineData(540, BudgetMegabytes)]
     [InlineData(720, BudgetMegabytes)]
     [InlineData(1080, BudgetMegabytes)]
-    [InlineData(1440, 64)]
-    [InlineData(2160, 64)]
+    [InlineData(1440, 96)]
+    [InlineData(2160, 96)]
     public async Task EveryAllowedWidth_RendersInsideItsBudget(int width, int budgetMegabytes)
     {
         using var renderer = new StillRenderer(new MediaOptions
         {
             DecodeMemoryLimitMegabytes = budgetMegabytes,
-            DecodePoolMegabytes = 0,
         });
+
+        renderer.Budget.ResetPeak();
 
         using var rendered = new MemoryStream();
         await renderer.RenderAsync(
@@ -155,9 +189,11 @@ public class StillRendererMemoryTests(ITestOutputHelper output)
             rendered,
             CancellationToken.None);
 
-        rendered.Position = 0;
-        using var check = Image.Load(rendered);
+        output.WriteLine($"w={width,-5} peak {renderer.Budget.PeakBytes / 1024.0 / 1024.0,6:F1} MB");
+
+        using var check = SKBitmap.Decode(rendered.ToArray());
         Assert.Equal(width, check.Width);
+        Assert.Equal(0, renderer.Budget.LiveBytes);
     }
 
     /// <summary>
@@ -170,8 +206,9 @@ public class StillRendererMemoryTests(ITestOutputHelper output)
         using var renderer = new StillRenderer(new MediaOptions
         {
             DecodeMemoryLimitMegabytes = BudgetMegabytes,
-            DecodePoolMegabytes = 0,
         });
+
+        renderer.Budget.ResetPeak();
 
         using var rendered = new MemoryStream();
         await renderer.RenderAsync(
@@ -180,10 +217,43 @@ public class StillRendererMemoryTests(ITestOutputHelper output)
             rendered,
             CancellationToken.None);
 
-        rendered.Position = 0;
-        using var check = Image.Load(rendered);
+        output.WriteLine($"thumb peak {renderer.Budget.PeakBytes / 1024.0 / 1024.0:F1} MB");
+
+        using var check = SKBitmap.Decode(rendered.ToArray());
         Assert.Equal(320, check.Width);
         Assert.Equal(240, check.Height);
+    }
+
+    /// <summary>
+    /// Concurrent renders share one ceiling, which is the point: two 48 MP decodes at once is the
+    /// spike the budget exists to bound, and the layer would rather queue than swell.
+    /// </summary>
+    [Fact]
+    public async Task ConcurrentRenders_ShareTheOneCeiling()
+    {
+        using var renderer = new StillRenderer(new MediaOptions
+        {
+            DecodeMemoryLimitMegabytes = BudgetMegabytes,
+            MaxConcurrentDecodes = 2,
+        });
+
+        renderer.Budget.ResetPeak();
+
+        await Task.WhenAll(Enumerable.Range(0, 6).Select(async i =>
+        {
+            using var rendered = new MemoryStream();
+            await renderer.RenderAsync(
+                LargeImageFixture.Path,
+                new StillVariant(i % 2 == 0 ? 720 : 1080, StillFormat.Jpeg, IsThumb: false, FormatSource.Default),
+                rendered,
+                CancellationToken.None);
+            Assert.True(rendered.Length > 0);
+        }));
+
+        output.WriteLine($"six concurrent renders peaked at {renderer.Budget.PeakBytes / 1024.0 / 1024.0:F1} MB");
+
+        Assert.Equal(0, renderer.Budget.LiveBytes);
+        Assert.True(renderer.Budget.PeakBytes <= BudgetMegabytes * 1024L * 1024L);
     }
 
     private static long SettledManagedBytes()
@@ -192,11 +262,5 @@ public class StillRendererMemoryTests(ITestOutputHelper output)
         GC.WaitForPendingFinalizers();
         GC.Collect();
         return GC.GetTotalMemory(forceFullCollection: true);
-    }
-
-    private static IEnumerable<Exception> Unwind(Exception ex)
-    {
-        for (var e = ex; e is not null; e = e.InnerException)
-            yield return e;
     }
 }

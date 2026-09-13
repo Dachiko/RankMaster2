@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using RankMaster2.Server.Media;
 using RankMaster2.Server.Tests.Fixtures;
-using SixLabors.ImageSharp;
+using SkiaSharp;
 using Xunit;
 
 namespace RankMaster2.Server.Tests.Media;
@@ -111,7 +111,7 @@ public class MediaEndpointTests
         Assert.StartsWith("\"s1080j-", response.Headers.ETag!.ToString());
         Assert.False(response.Headers.ETag.IsWeak);
 
-        using var image = Image.Load(await response.Content.ReadAsStreamAsync());
+        using var image = SKBitmap.Decode(await response.Content.ReadAsByteArrayAsync());
         Assert.Equal(1080, image.Width);
     }
 
@@ -144,7 +144,7 @@ public class MediaEndpointTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.StartsWith($"\"s{width}j-", response.Headers.ETag!.ToString());
 
-        using var image = Image.Load(await response.Content.ReadAsStreamAsync());
+        using var image = SKBitmap.Decode(await response.Content.ReadAsByteArrayAsync());
         Assert.Equal(width, image.Width);
     }
 
@@ -192,7 +192,7 @@ public class MediaEndpointTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.StartsWith("\"t320j-", response.Headers.ETag!.ToString());
 
-        using var image = Image.Load(await response.Content.ReadAsStreamAsync());
+        using var image = SKBitmap.Decode(await response.Content.ReadAsByteArrayAsync());
         Assert.Equal(320, image.Width);
     }
 
@@ -212,7 +212,7 @@ public class MediaEndpointTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.StartsWith("\"s2160j-", response.Headers.ETag!.ToString());
 
-        using var image = Image.Load(await response.Content.ReadAsStreamAsync());
+        using var image = SKBitmap.Decode(await response.Content.ReadAsByteArrayAsync());
         Assert.Equal(200, image.Width);
         Assert.Equal(150, image.Height);
     }
@@ -224,7 +224,7 @@ public class MediaEndpointTests
         session.Add("tall.jpg", MediaFixtures.Jpeg(600, 1800));
         await using var host = new MediaHost(session);
 
-        using var image = Image.Load(await host.Client.GetStreamAsync(Url("tall.jpg", "still", "?w=720")));
+        using var image = SKBitmap.Decode(await host.Client.GetByteArrayAsync(Url("tall.jpg", "still", "?w=720")));
 
         // Long edge bounded by w, aspect ratio kept to the pixel.
         Assert.Equal(720, image.Height);
@@ -246,7 +246,7 @@ public class MediaEndpointTests
         Assert.Equal(MediaFixtures.ExifRotatedDisplayed.Width, meta.RootElement.GetProperty("width").GetInt32());
         Assert.Equal(MediaFixtures.ExifRotatedDisplayed.Height, meta.RootElement.GetProperty("height").GetInt32());
 
-        using var image = Image.Load(await host.Client.GetStreamAsync(Url("rotated.jpg", "still")));
+        using var image = SKBitmap.Decode(await host.Client.GetByteArrayAsync(Url("rotated.jpg", "still")));
         Assert.True(image.Height > image.Width, "The stored image is landscape; oriented it is portrait.");
     }
 

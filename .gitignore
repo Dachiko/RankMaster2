@@ -33,3 +33,6 @@ Desktop.ini
 
 # Agent harness artifact, not part of the project
 user_history.txt
+
+# Test corpus: real media, fetched and derived by tests/corpus/build-corpus.sh
+tests/corpus/media/
