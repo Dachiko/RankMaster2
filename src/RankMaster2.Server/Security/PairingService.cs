@@ -38,7 +38,7 @@ public sealed record PairingOffer(
 /// <para><b>The pairing payload format</b> (defined here; this is the string <c>rm2ctl</c> renders
 /// as a QR code):</para>
 /// <code>
-/// rm2://pair?v=1&amp;host=192.168.1.42&amp;port=8611&amp;fp=&lt;64 lowercase hex&gt;&amp;code=418250&amp;exp=1789000000
+/// rm2://pair?v=1&amp;host=192.168.1.42&amp;port=18611&amp;fp=&lt;64 lowercase hex&gt;&amp;code=418250&amp;exp=1789000000
 /// </code>
 /// <list type="bullet">
 /// <item><c>v</c> — payload version, currently <c>1</c>. A client MUST refuse a version it does not know.</item>

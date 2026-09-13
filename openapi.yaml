@@ -37,7 +37,7 @@ servers:
         default: rankmaster.local
         description: Explicit LAN address or the mDNS name advertised as _rankmaster._tcp.
       port:
-        default: "8611"
+        default: "18611"
 
 security:
   - bearerAuth: []

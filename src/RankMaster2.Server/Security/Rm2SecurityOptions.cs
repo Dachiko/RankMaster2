@@ -24,8 +24,8 @@ public sealed class Rm2SecurityOptions
     /// </summary>
     public string ListenAddress { get; set; } = "127.0.0.1";
 
-    /// <summary>TLS port. 8611 is the port the OpenAPI server block advertises.</summary>
-    public int Port { get; set; } = 8611;
+    /// <summary>TLS port. 18611. Out of the way of the crowded 8xxx range, where it collided with an unrelated service.</summary>
+    public int Port { get; set; } = 18611;
 
     /// <summary>
     /// Where the certificate and the device store live. Empty means the per-user default:

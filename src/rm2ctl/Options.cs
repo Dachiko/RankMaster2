@@ -7,7 +7,7 @@ public sealed class Options
     public bool WantsHelp { get; private set; }
     public bool Verbose { get; private set; }
 
-    public string BaseUrl { get; private set; } = "https://127.0.0.1:8611/api/v1";
+    public string BaseUrl { get; private set; } = "https://127.0.0.1:18611/api/v1";
 
     /// <summary>True once --base was actually given, so a published pairing offer can fill it in.</summary>
     public bool BaseUrlGiven { get; private set; }
@@ -150,7 +150,7 @@ public sealed class Options
                                    of six images and deletes it afterwards.
 
             OPTIONS
-              --base URL           The server (default https://127.0.0.1:8611/api/v1). A bare host
+              --base URL           The server (default https://127.0.0.1:18611/api/v1). A bare host
                                    or host:port is fine; /api/v1 is appended if missing.
               --token TOKEN        The device token. Defaults to $RM2_TOKEN.
               --pin sha256:HEX     Require this certificate fingerprint. Defaults to $RM2_PIN.
@@ -167,8 +167,8 @@ public sealed class Options
               2  the server could not be reached, or the command line was wrong
 
             EXAMPLES
-              rm2ctl pair --take --base 192.168.1.20:8611
-              RM2_TOKEN=... rm2ctl cycle --base 192.168.1.20:8611 --folder /photos/trip
+              rm2ctl pair --take --base 192.168.1.20:18611
+              RM2_TOKEN=... rm2ctl cycle --base 192.168.1.20:18611 --folder /photos/trip
               rm2ctl cycle --insecure -v
 
             """);
