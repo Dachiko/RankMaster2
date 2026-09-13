@@ -10,7 +10,11 @@
       "src\\rm2ctl\\rm2ctl.csproj",
       "tests\\RankMaster2.Ranking.Tests\\RankMaster2.Ranking.Tests.csproj",
       "tests\\RankMaster2.Catalog.Tests\\RankMaster2.Catalog.Tests.csproj",
-      "tests\\RankMaster2.Server.Tests\\RankMaster2.Server.Tests.csproj"
+      "tests\\RankMaster2.Server.Tests\\RankMaster2.Server.Tests.csproj",
+      "tests\\RankMaster2.Audit.Conformance\\RankMaster2.Audit.Conformance.csproj",
+      "tests\\RankMaster2.Audit.StateMachine\\RankMaster2.Audit.StateMachine.csproj",
+      "tests\\RankMaster2.Audit.Security\\RankMaster2.Audit.Security.csproj",
+      "tests\\RankMaster2.Audit.Compatibility\\RankMaster2.Audit.Compatibility.csproj"
     ]
   }
 }
