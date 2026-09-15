@@ -154,12 +154,76 @@ Two panes, and the phone is usually portrait:
 - **Portrait:** stacked, top and bottom, each half the screen. "Left" is the top pane and the UI says
   so; the API's left/right is never shown to the user.
 - **Landscape:** side by side, which matches the desktop.
-- Tap a pane to vote for it. A long press opens that pane full-screen for a proper look, with no
-  action attached — looking is not voting.
-- The bottom bar carries skip, undo, and an overflow with discard / special / save / close.
-- Discard and special act on **one side**, so they are offered as a per-pane control, not a bar
-  button — a bar button would have to ask "which one?" every time.
-- The match strip renders `cues` oldest-first, up to 10 (§ 9.1), exactly as the desktop does.
+- Tap a pane to vote for it. A long press opens that pane's own actions — view, discard, special —
+  anchored where the thumb landed. Discard and special act on one side, and the press is what says
+  which, so they are never a control that has to ask.
+- Full screen swipes between the two, because comparing a pair properly means going back and forth
+  between them at full size.
+- A tap in a thin band along the seam does nothing: a wrong vote is expensive and a thumb on the
+  border between two targets must not guess.
+- The match strip renders `cues` oldest-first, up to 10 (§ 9.1), faint, on the seam.
+
+### 3.6.1 What is *not* on this screen
+
+Settled after the first session on a real library, 2026-09-15. There is no menu, no bar, and no
+button that is not the cancel notch:
+
+| Removed | Why |
+|---|---|
+| Skip | The owner does not skip. A control nobody uses is a control in the way |
+| Save | Every action is already on disk before its response is sent (`SERVER_SPEC.md` § 13.1). There was never anything to save |
+| Close folder | Back does it |
+| The stats row | Replaced by the progress line below |
+
+What is left floating over the pair: the match strip, the cancel notch, and the progress line. That
+is the whole of the chrome.
+
+### 3.6.2 The progress line
+
+A hairline along the bottom edge, **growing from the centre outwards to both edges** as the folder
+gets ranked, and running from pale red at 0% to pale green at 100%. Semi-transparent, a few pixels
+tall, no numbers.
+
+It replaces a percentage because a number invites reading, and reading is not the job of this screen.
+A line that reaches the edges tells you the same thing from the corner of your eye.
+
+`progressPercent` (§ 9.1) is the input, and it is an overlay figure, not a measurement: it is a mean
+over rankable records only, and it can move **down** after a discard. The line animates between
+values rather than jumping, and must handle going backwards without looking broken.
+
+### 3.6.2a The notch has to look like a notch
+
+First look on a real screen, 2026-09-15: the word reads clearly and the tab under it does not exist.
+It is a 30%-black fill, which is invisible against a dark photograph and nearly invisible against a
+bright one — so what is actually on screen is the word "cancel" floating in mid-air.
+
+That is backwards. The owner asked for *an outline with the word inside*: the shape is the control
+and the word only names it.
+
+- Draw the tab as a **stroked outline**, not a fill — light stroke with a dark halo under it, the
+  same two-pass trick the dots use, so the edge survives a white photograph and a black one.
+- **Turn the word down** below the outline's weight. It labels the shape once; after the first use
+  nobody reads it again.
+- Keep it small. It is a safety net, not a control the hand should find by accident.
+
+### 3.6.3 Conflicts resolve themselves
+
+A session left open on the PC is **not** something to ask the owner about.
+
+There is one user. He is either holding the phone or sitting at the PC, never both, and a folder
+left open is always his own phone's doing — a crash, or Android reclaiming the app while it was in
+the background, neither of which he did and neither of which he can act on. Telling him "a folder is
+still open on the PC" describes an internal state, blames nothing he can see, and leaves him
+hunting for a window that is not running.
+
+So: `409 session_already_open` is handled by closing the other session and opening the one that was
+asked for, silently.
+
+The exception is `423 folder_locked`, which is a **different** claim and a real one: something other
+than this server holds the folder — the desktop app, or a second server. That is worth a message,
+because it is the one case where the owner has to go and do something.
+
+The rule: **say something only when the owner is the one who can fix it.**
 
 ### 3.7 What the client must never do
 
