@@ -21,7 +21,7 @@ Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-
 - Thumbnail grid or filmstrip
 - Recursive scan
 - HEIC / HEVC / RAW / TIFF / AVIF
-- Tie vote, vote-undo, persisted match log
+- Tie vote, persisted match log, undo stack (undo is one level — see Ranking)
 - In-app leaderboard
 - Folder watcher
 - Play / pause / seek / volume
@@ -135,7 +135,7 @@ File: `<folder>/rankmaster_db.json`
 - Move with a unique name on collision (`name (2).ext`, …).
 - Before move: `Pipeline.Release` the id, wait until the OS lock is gone, then `File.Move`.
 - After move: drop the id from Ranking/Catalog, if the current or any queued pair contains it, throw that pair away and refill, then save.
-- **Undo** restores only the most recent successful move (file back + catalog row). No undo stack. Vote undo does not exist.
+- **Undo** restores only the most recent successful move (file back + catalog row). No undo stack. The desktop app's `Ctrl+Z` is move-only and stays that way; the engine's wider one-level undo (see Ranking) is used by the server, where a mis-tap on a phone can cast a vote nobody meant.
 - v1 only *creates* `special 1`. Do not create `special 2` until we ask.
 
 ### Rename by rank
@@ -240,6 +240,8 @@ Do **not** sample 50 random files. Sorting 20k records is fine.
 **Match strip (session only):** `RecentCues`, cap `MatchCueLimit = 10`. On vote, **before** the TrueSkill update, if winner `μ ≥` loser `μ` append Confirmation, else Upset. Skip / drop do not append. `Start()` clears cues, session vote count, and the recent-shown set. Not written to JSON.
 
 `RankingSession` keeps the folder string so it can `Save`. Pair picking still uses ids only.
+
+**One-level action undo:** `RankingSession` keeps the snapshot it already takes before `ApplyVote` and `Skip` — records, `Current`, `SessionVotes`, the warm queue, the recent-shown set and the cues — instead of discarding it on success, and `UndoLastAction()` puts it back and saves. Restoring by snapshot, never by inverse arithmetic: a TrueSkill update does not invert cleanly, and a rating that drifts on every undo is worse than no undo. Exactly one level; a second call finds nothing. The desktop app does not call it (its `Ctrl+Z` remains move-only); the server exposes it as `POST /session/undo`, which is a phone's cancel button (`SERVER_SPEC.md` § 10.10).
 
 Prefetch: the Shell may ask for the next pair before the current vote. That pair is allowed to be one vote stale. Do not increment `impressions` until the user votes or skips that pair. After a vote/skip, clear `Current` before `Pick()` so a 2–3 file library can pair again (the just-finished pair must not stay reserved).
 

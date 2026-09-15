@@ -377,4 +377,82 @@ public sealed class RollbackAsymmetryTests(Rm2Server server) : AuditTestBase(ser
             "nothing_to_undo", "§ 13.3: a second undo cannot undo two moves");
         Assert.True(File.Exists(folder.Discarded(first)));
     }
+
+    // ---- cancelling a vote: all-or-nothing (SERVER_SPEC.md § 10.10) -----------------------------
+
+    /// <summary>
+    /// Cancelling a vote moves no file, so unlike cancelling a move it can be all-or-nothing — and
+    /// § 10.10 says it must be. If the write throws, the vote stays applied, <c>pairSeq</c> does not
+    /// move and the token the client is holding is still the current one, so the identical cancel
+    /// may simply be pressed again.
+    ///
+    /// <para>The failure that would matter: reporting the cancel as done while the file on disk
+    /// still carries the vote. The phone would show the pair back on screen, the desktop app would
+    /// open the folder and see the vote, and nothing would ever reconcile them.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_vote_whose_save_throws_leaves_the_vote_applied_and_says_so()
+    {
+        using var folder = AuditFolder.SixStills();
+        var opened = await OpenAsync(folder);
+        var client = await ClientAsync();
+
+        var voted = (await client.VoteAsync(opened.RequireToken("ranking"), "left", "req-vote"))
+            .ShouldBeSnapshot(200, "the vote lands cleanly");
+        var tokenAfterVote = voted.RequireToken("ranking");
+
+        folder.JamSave();
+        var error = (await client.UndoAsync("req-cancel"))
+            .ShouldBeError("save_failed",
+                "SERVER_SPEC.md § 10.10: cancelling a vote is all-or-nothing, so a failed write is a " +
+                "save_failed that changed nothing");
+
+        Assert.False(error.Detail("recordsChanged", "§ 10.10").GetBoolean(),
+            "SERVER_SPEC.md § 10.10: nothing changed, so recordsChanged is false. Saying otherwise " +
+            "tells the client its vote is gone when the file still carries it.");
+        Assert.False(error.Detail("fileMoved", "§ 10.10").GetBoolean());
+
+        var after = error.RequireSession("§ 4");
+        Assert.Equal(voted.PairSeq, after.PairSeq);
+        Assert.Equal(tokenAfterVote, after.PairToken);
+        Assert.Equal(voted.SessionVotes, after.SessionVotes);
+        Assert.Equal(voted.Cues, after.Cues);
+        Assert.True(after.UndoAvailable,
+            "the cancel did not happen, so it is still there to be pressed again.");
+
+        // And pressing it again, once the disk lets go, does exactly what it was always going to do.
+        folder.UnjamSave();
+        var cancelled = (await client.UndoAsync("req-cancel"))
+            .ShouldBeSnapshot(200, "the retried cancel succeeds");
+        Assert.Equal(opened.PairIds, cancelled.PairIds);
+        Assert.Equal(opened.SessionVotes, cancelled.SessionVotes);
+    }
+
+    /// <summary>
+    /// The double-vote surface, from the other side: a vote whose response was lost, cancelled by
+    /// the user, then retried by the phone's own recovery. § 13.3 keeps exactly one vote, and after
+    /// a cancel that count is zero — not two, and not one.
+    /// </summary>
+    [Fact]
+    public async Task A_retried_vote_cannot_slip_past_a_cancel()
+    {
+        using var folder = AuditFolder.SixStills();
+        var opened = await OpenAsync(folder);
+        var client = await ClientAsync();
+        var token = opened.RequireToken("ranking");
+
+        (await client.VoteAsync(token, "left", "same-logical-vote")).ShouldBeSnapshot(200, "it lands");
+        var cancelled = (await client.UndoAsync()).ShouldBeSnapshot(200, "the user takes it back");
+
+        // The phone never saw the first answer and retries with the token it still holds.
+        (await client.VoteAsync(token, "left", "same-logical-vote"))
+            .ShouldBeError("stale_pair_token",
+                "SERVER_SPEC.md § 13.3: replaying the same token is safe precisely because the token " +
+                "is consumed once. The cancel issued a new one, so the replay is refused.");
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "final state");
+        Assert.Equal(0, after.SessionVotes);
+        Assert.Equal(cancelled.PairToken, after.PairToken);
+        Assert.Empty(after.Cues);
+    }
 }

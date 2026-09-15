@@ -12,6 +12,14 @@ public sealed class RankingSession
     private readonly Queue<Pair> _warm = new();
     private readonly List<MatchCue> _cues = [];
 
+    /// <summary>
+    /// The state as it was immediately before the last successful vote or skip, kept so that one
+    /// action can be taken back (SPEC.md § Ranking, SERVER_SPEC.md § 10.10). It is the same
+    /// snapshot a failed save rolls back to; the only change is that success no longer throws it
+    /// away. Null means there is nothing to take back.
+    /// </summary>
+    private SessionSnap? _undo;
+
     public RankingSession(
         string folder,
         ICatalog catalog,
@@ -45,6 +53,7 @@ public sealed class RankingSession
         _recent.Clear();
         _recentOrder.Clear();
         SessionVotes = 0;
+        _undo = null;
         Current = null;
         Current = Pick();
         FillWarm();
@@ -66,6 +75,7 @@ public sealed class RankingSession
             Remember(Current.Value);
             _catalog.Save(Folder, _records);
             Advance();
+            _undo = rollback;
         }
         catch
         {
@@ -76,11 +86,50 @@ public sealed class RankingSession
 
     public void Save() => _catalog.Save(Folder, _records);
 
+    /// <summary>True when <see cref="UndoLastAction"/> has something to take back.</summary>
+    public bool CanUndoLastAction => _undo is not null;
+
+    /// <summary>
+    /// Takes back the last vote or skip: ratings, match and impression counts, the session vote
+    /// count, the cue strip, the recent-shown set and the pair that action consumed all return to
+    /// exactly what they were, and the result is saved.
+    ///
+    /// <para>By snapshot, never by inverse arithmetic — a TrueSkill update does not invert cleanly,
+    /// and a rating that drifts a little on every undo is worse than no undo at all.</para>
+    ///
+    /// <para>One level: a second call finds nothing and returns false. All-or-nothing: if the save
+    /// throws, the action stays applied and nothing moves, which is the same guarantee the vote
+    /// itself gives.</para>
+    /// </summary>
+    public bool UndoLastAction()
+    {
+        if (_undo is not { } point)
+            return false;
+
+        var applied = Snapshot();
+        try
+        {
+            RestoreSnapshot(point);
+            _catalog.Save(Folder, _records);
+            _undo = null;
+            return true;
+        }
+        catch
+        {
+            RestoreSnapshot(applied);
+            throw;
+        }
+    }
+
     public MediaRecord? Drop(MediaId id)
     {
         var i = _records.FindIndex(r => r.Id == id);
         if (i < 0)
             return null;
+
+        // A discard or a drop supersedes the vote before it: the snapshot holds a record that is
+        // no longer in the folder, and restoring it would resurrect a file that has been moved away.
+        _undo = null;
 
         var removed = _records[i];
         _records.RemoveAt(i);
@@ -118,6 +167,7 @@ public sealed class RankingSession
     {
         if (_records.Any(r => r.Id == record.Id))
             return;
+        _undo = null;
         _records.Add(record);
         // Same rule as after a vote/skip: clear Current first so a 2-3 file
         // library can pair again instead of staying reserved.
@@ -128,6 +178,7 @@ public sealed class RankingSession
 
     public void ReplaceAll(IReadOnlyList<MediaRecord> records)
     {
+        _undo = null;
         _records.Clear();
         _records.AddRange(records);
         _warm.Clear();
@@ -174,6 +225,7 @@ public sealed class RankingSession
             SessionVotes++;
             _catalog.Save(Folder, _records);
             Advance();
+            _undo = rollback;
         }
         catch
         {

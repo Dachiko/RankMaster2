@@ -591,6 +591,12 @@ public sealed class SessionRegistry : IDisposable
             if (error is not null)
                 return BodyFail(error, open);
 
+            // § 10.10. A vote or skip is the most recent action whenever the engine still holds an
+            // undo point: any discard, special or drop clears it. So this branch is "cancel the
+            // action", and the one below is "cancel the move", and they can never both apply.
+            if (open.Session.CanUndoLastAction)
+                return UndoAction(open, clientRequestId);
+
             if (open.Actions.LastMove is not { } move)
             {
                 return SessionOutcome.Fail(
@@ -611,6 +617,12 @@ public sealed class SessionRegistry : IDisposable
             }
 
             var before = open.Session.Records.Select(r => r.Id).ToHashSet();
+
+            // § 9.4 undoneType: which action this cancel is taking back. Read before the undo, since
+            // LastAction is about to be replaced by the undo itself.
+            var undoneMove = open.LastAction?.Type == ActionTypes.Special
+                ? ActionTypes.Special
+                : ActionTypes.Discard;
 
             bool undone;
             try
@@ -644,7 +656,8 @@ public sealed class SessionRegistry : IDisposable
                     pairToken: null,
                     clientRequestId,
                     id: move.OriginalName,
-                    restoredId: RestoredId(open, before, move.OriginalName));
+                    restoredId: RestoredId(open, before, move.OriginalName),
+                    undoneType: undoneMove);
                 return SessionOutcome.Fail(
                     ErrorCodes.SaveFailed,
                     "The file was moved back but the ranking file could not be written.",
@@ -669,7 +682,8 @@ public sealed class SessionRegistry : IDisposable
                 pairToken: null,
                 clientRequestId,
                 id: move.OriginalName,
-                restoredId: RestoredId(open, before, move.OriginalName));
+                restoredId: RestoredId(open, before, move.OriginalName),
+                undoneType: undoneMove);
             return SessionOutcome.Ok(Materialise(open));
         });
 
@@ -727,6 +741,55 @@ public sealed class SessionRegistry : IDisposable
         return fallback;
     }
 
+    /// <summary>
+    /// § 10.10 for a <c>vote</c> or <c>skip</c>: the engine restores the snapshot it took before
+    /// that action and saves. Nothing moves on disk, so unlike cancelling a move this is
+    /// all-or-nothing — a failed save leaves the action applied and the client's token valid.
+    /// </summary>
+    private SessionOutcome UndoAction(OpenSession open, string? clientRequestId)
+    {
+        var undoneType = open.LastAction?.Type switch
+        {
+            ActionTypes.Vote => ActionTypes.Vote,
+            ActionTypes.Skip => ActionTypes.Skip,
+            _ => ActionTypes.Vote,
+        };
+
+        try
+        {
+            if (!open.Session.UndoLastAction())
+            {
+                return SessionOutcome.Fail(
+                    ErrorCodes.NothingToUndo,
+                    "There is nothing to undo.",
+                    null,
+                    Materialise(open));
+            }
+        }
+        catch (Exception)
+        {
+            // The engine put the applied state back before rethrowing, so the vote stands, the pair
+            // has not moved and the token the client holds is still current: the identical undo may
+            // be retried.
+            return SessionOutcome.Fail(
+                ErrorCodes.SaveFailed,
+                "The ranking file could not be written; the action was not taken back.",
+                new { recordsChanged = false, fileMoved = false },
+                Materialise(open));
+        }
+
+        // One level (§ 10.10): an older move is no longer offered once this cancel has been spent.
+        // Leaving it would make cancel walk backwards through the session one press at a time,
+        // which is an undo stack by the back door.
+        open.Actions.ClearLastMove();
+
+        open.PairSeq++;
+        open.LastSavedAt = DateTimeOffset.UtcNow;
+        open.LastAction = NewAction(
+            open, ActionTypes.Undo, pairToken: null, clientRequestId, undoneType: undoneType);
+        return SessionOutcome.Ok(Materialise(open));
+    }
+
     private static SnapshotLastAction NewAction(
         OpenSession open,
         string type,
@@ -735,7 +798,8 @@ public sealed class SessionRegistry : IDisposable
         string? winner = null,
         string? side = null,
         string? id = null,
-        string? restoredId = null) =>
+        string? restoredId = null,
+        string? undoneType = null) =>
         new(
             open.PairSeq,
             type,
@@ -745,6 +809,7 @@ public sealed class SessionRegistry : IDisposable
             side,
             id,
             restoredId,
+            undoneType,
             Rfc3339(DateTimeOffset.UtcNow));
 
     private static SessionOutcome NoSession() =>
@@ -822,8 +887,12 @@ public sealed class SessionRegistry : IDisposable
             records.Count(r => r.Kind == MediaKind.Still),
             records.Count(r => r.Kind == MediaKind.Video));
 
-        var undoAvailable = open.Actions.LastMove is { } move
-            && string.Equals(move.Folder, open.Folder, PathComparison);
+        // § 9.1: is there an action to cancel? A vote or skip leaves one in the engine; a move
+        // leaves one in LibraryActions. The engine's is cleared by any structural change to the
+        // record set, so "the engine has one" already means "a vote/skip was the most recent thing
+        // that happened" (§ 10.10).
+        var undoAvailable = session.CanUndoLastAction
+            || (open.Actions.LastMove is { } move && string.Equals(move.Folder, open.Folder, PathComparison));
 
         return new SessionSnapshot(
             open.SessionId,

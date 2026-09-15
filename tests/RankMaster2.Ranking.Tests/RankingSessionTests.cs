@@ -212,6 +212,93 @@ public class RankingSessionTests
     private static RankingSession Session(params MediaRecord[] files) =>
         new("mem", new MemoryCatalog(files), new TrueSkill(), new PairSelector(), 2);
 
+    // ---- one-level action undo (SPEC.md § Ranking) ---------------------------------------------
+
+    [Fact]
+    public void UndoLastAction_PutsEveryRatingAndCounterBackExactly()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        var pair = session.Current!.Value;
+        var before = session.Records.ToDictionary(r => r.Id, r => r);
+        Assert.False(session.CanUndoLastAction);
+
+        session.VoteLeft();
+        Assert.True(session.CanUndoLastAction);
+        Assert.Equal(1, session.SessionVotes);
+        Assert.Single(session.RecentCues);
+
+        Assert.True(session.UndoLastAction());
+
+        foreach (var (id, was) in before)
+        {
+            var now = session.Find(id);
+            Assert.Equal(was.Rating.Mu, now.Rating.Mu);
+            Assert.Equal(was.Rating.Sigma, now.Rating.Sigma);
+            Assert.Equal(was.Matches, now.Matches);
+            Assert.Equal(was.Impressions, now.Impressions);
+            Assert.Equal(was.LastPlayed, now.LastPlayed);
+        }
+
+        Assert.Equal(0, session.SessionVotes);
+        Assert.Empty(session.RecentCues);
+        Assert.Equal(pair, session.Current);
+        Assert.False(session.CanUndoLastAction);
+    }
+
+    [Fact]
+    public void UndoLastAction_IsOneLevel()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        session.VoteLeft();
+        session.VoteLeft();
+
+        Assert.True(session.UndoLastAction());
+        Assert.False(session.UndoLastAction());
+        Assert.Equal(1, session.SessionVotes);
+    }
+
+    [Fact]
+    public void UndoLastAction_IsGivenUpWhenTheRecordSetChangesUnderneath()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        session.VoteLeft();
+        Assert.True(session.CanUndoLastAction);
+
+        // A discard moves a file out of the folder. The snapshot still names it, so restoring would
+        // resurrect a record whose file has gone - the point is dropped instead.
+        session.Drop(session.Current!.Value.Left);
+
+        Assert.False(session.CanUndoLastAction);
+        Assert.False(session.UndoLastAction());
+    }
+
+    [Fact]
+    public void UndoLastAction_TakesBackASkipToo()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        var pair = session.Current!.Value;
+        var impressions = session.Find(pair.Left).Impressions;
+
+        session.Skip();
+        Assert.True(session.CanUndoLastAction);
+        Assert.True(session.UndoLastAction());
+
+        Assert.Equal(pair, session.Current);
+        Assert.Equal(impressions, session.Find(pair.Left).Impressions);
+    }
+
     private static MediaRecord Rec(string name, double mu = RankingConstants.InitialMu, double sigma = RankingConstants.InitialSigma) =>
         new(new MediaId(name), MediaExtensions.KindOf(name) ?? MediaKind.Still, new Rating(mu, sigma), 0, 0, 0);
 

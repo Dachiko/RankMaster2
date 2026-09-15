@@ -37,8 +37,10 @@ pair tokens. It owns **no** ranking logic.
   server never decodes a video frame. `GET /media/{id}/thumb` and `GET /media/{id}/still` MUST fail
   with `wrong_media_kind` for a video id.
 - **Multi-client session sharing.** One session exists server-wide (`SERVER_PLAN.md` § 7).
-- **Vote undo, tie votes, a persisted match log, a leaderboard, recursive scan** — non-goals in
-  `SPEC.md` and non-goals here.
+- **Tie votes, a persisted match log, a leaderboard, recursive scan** — non-goals in `SPEC.md` and
+  non-goals here.
+- **An undo stack.** Undo is one level and covers the last action of any kind (§ 10.10). Depth is a
+  product decision, not a limitation: each level costs a copy of the library's records.
 
 ---
 
@@ -398,8 +400,10 @@ The asymmetry is deliberate and mirrors the library:
 | vote/skip throws in `Save` | full in-memory rollback (§ 7.4.5) | unchanged | **still valid — retry with the same token** |
 | discard/special: move throws | nothing changed | unchanged | still valid |
 | discard/special: move ok, `Drop` ok, `Save` throws | file already moved, record already gone | **+1** | stale |
-| undo: move-back throws | nothing changed | unchanged | still valid |
-| undo: move-back ok, `Restore` ok, `Save` throws | file already back, record already restored | **+1** | stale |
+| undo of a vote/skip: succeeds | the snapshot is restored and the pair it consumed is current again | **+1** | stale |
+| undo of a vote/skip: `Save` throws | full in-memory rollback — the action stays applied | unchanged | still valid |
+| undo of a move: move-back throws | nothing changed | unchanged | still valid |
+| undo of a move: move-back ok, `Restore` ok, `Save` throws | file already back, record already restored | **+1** | stale |
 | `POST /session/save`, any `GET` | — | unchanged | still valid |
 
 `pairSeq` never decreases and never resets while a session is open. It resets to 0 only when a new
@@ -481,7 +485,7 @@ object, with the same fields, in the same shape. There is no "small" variant and
 | `pairToken` | string | **yes** | § 8. `null` iff `pair` is `null`. |
 | `pairSeq` | integer | no | Monotonic, starts at 0 (§ 8.3). Exposed for logging and for ordering two snapshots; it is **not** a substitute for `pairToken` and MUST NOT be sent in an action body. |
 | `warmPairs` | array of Pair | no | 0…`prefetchPairs` entries, in the order they will be dequeued. **Prefetch hints only** — see § 9.5. |
-| `undoAvailable` | boolean | no | `LibraryActions.LastMove` is non-null **and** its folder matches the open session. A `POST /session/undo` while this is `false` returns `409 nothing_to_undo`. |
+| `undoAvailable` | boolean | no | There is an action to cancel (§ 10.10): the session has applied a `vote`, `skip`, `discard` or `special` that has not already been cancelled, and for a move, its folder matches the open session. A `POST /session/undo` while this is `false` returns `409 nothing_to_undo`. |
 | `lastAction` | LastAction | **yes** | § 9.4. `null` immediately after a session opens. In-memory only. |
 | `lastSavedAt` | string | **yes** | RFC 3339 UTC of the last successful `JsonCatalog.Save` by this session, or `null` if this session has not saved yet. |
 
@@ -538,7 +542,8 @@ The most recent **successful** mutation of this session. Used for retry disambig
 | `winner` | enum | **yes** | `left` \| `right` — `vote` only. |
 | `side` | enum | **yes** | `left` \| `right` — `discard` and `special` only. |
 | `id` | string | **yes** | The media id the action moved or dropped — `discard`, `special`, `drop_missing`. |
-| `restoredId` | string | **yes** | `undo` only. The id the file came back as, which **differs** from `id` when the original name was taken and `FileOps.UniqueFileName` produced `name (2).ext`. |
+| `restoredId` | string | **yes** | `undo` of a move only. The id the file came back as, which **differs** from `id` when the original name was taken and `FileOps.UniqueFileName` produced `name (2).ext`. `null` when the cancelled action moved no file. |
+| `undoneType` | enum | **yes** | `undo` only: which action was cancelled — `vote` \| `skip` \| `discard` \| `special`. `null` for every other type. It is what lets a client say "vote taken back" rather than a bare "undone". |
 | `at` | string | no | RFC 3339 UTC. |
 
 `lastAction` is in-memory and is lost on restart. § 13.4 says what that costs.
@@ -734,36 +739,81 @@ Identical to § 10.8 in every respect except the destination, `<folder>/special 
 { "clientRequestId": "1f0c…" }
 ```
 
-Undoes the **last successful move only** — one level, no stack. **Vote undo does not exist**
-(`SPEC.md` § Non-goals); this endpoint MUST NOT be presented to a user as undoing a vote.
+Cancels the **last successful action of this session** — one level, no stack. An action is a `vote`,
+`skip`, `discard` or `special`.
+
+This is the endpoint a phone's cancel button calls. It covers votes because a mis-tap on a touch
+screen is a real vote: without it the only way back from a wrong tap is to keep voting and hope the
+ratings recover, which they do not.
 
 **It takes no `pairToken`, deliberately.** `SERVER_PLAN.md` § 4 heads the action block with "every
 action takes `pairToken`" but lists `undo` with no body; the two cannot both be honoured. Undo is not
-pair-scoped — the move it reverses happened in a previous pair generation, so by construction the
+pair-scoped — the action it reverses happened in a previous pair generation, so by construction the
 client's token for that generation is already stale, and requiring it would make undo permanently
 unusable. Sending `pairToken` in the body is allowed and MUST be ignored.
 
-Behaviour (`LibraryActions.UndoLastMove`):
+#### What is restored
 
-- No recorded move → `409 nothing_to_undo` (with `error.session`). A retried undo whose response was
-  lost lands here; the client distinguishes "mine landed" from "there was never anything" via
-  `lastAction` (§ 8.5).
-- The recorded move belongs to another folder → the server clears it and returns
-  `409 undo_folder_changed`.
-- Otherwise: the file is moved back from `discarded/`/`special 1/`, `RankingSession.Restore` puts the
-  record back, `Save()` runs, `LastMove` is cleared → `200`, `pairSeq` +1, `undoAvailable` now
-  `false`.
+| Cancelled | Ratings and counters | Files | The pair afterwards |
+|---|---|---|---|
+| `vote` | both records' `mu`, `sigma`, `matches`, `impressions` and `lastPlayed` exactly as they were; `sessionVotes` − 1; the match cue removed | none move | **the pair that vote consumed is current again** |
+| `skip` | both records' `impressions` and `lastPlayed` as they were | none move | the pair that skip consumed is current again |
+| `discard`, `special` | the record is restored | the file is moved back out of `discarded/` or `special 1/` | a freshly picked pair (§ 7.4.4) |
 
-Two consequences the client MUST expect:
+Ratings are restored **by snapshot, never by inverse arithmetic**. The server keeps the state as it
+was immediately before the action and puts that back. A TrueSkill update is not invertible to the
+last bit, and a rating that drifts a little every time someone cancels is worse than having no cancel
+at all. This is the same snapshot `RankingSession` already takes to roll back a failed save
+(§ 7.4.5), so cancelling exercises a path the engine has always had.
 
-1. **The current pair is replaced** (§ 7.4.4), even if it was perfectly valid. `pairToken` changes.
+#### What cannot be cancelled
+
+`undoAvailable` is `false`, and `POST /session/undo` answers `409 nothing_to_undo`, when:
+
+- the session has applied nothing yet;
+- the last action has already been cancelled — there is exactly one level;
+- the last action was `drop_missing` (§ 10.8). The server dropped that record because its file had
+  vanished from the folder; that is the server coping, not the user acting, and putting the record
+  back only wedges the same pair again on the next pick.
+
+A recorded move belonging to another folder answers `409 undo_folder_changed`, and the server clears
+it so the stale offer disappears.
+
+#### On success
+
+`200` with the snapshot: `pairSeq` + 1, a **new** `pairToken`, `undoAvailable` now `false`,
+`lastAction.type` = `undo`, and `lastAction.undoneType` naming what was cancelled.
+
+**`pairSeq` still increases and the token still changes**, even when cancelling a vote puts the
+identical pair back on screen. That is exactly what makes cancel safe against a retry: a vote that
+was in flight when the cancel landed arrives holding the old token, is answered `409
+stale_pair_token` with the current state, and is never applied a second time. Per § 13.3 the client
+MUST NOT re-send it against a fresh token.
+
+#### When the write fails
+
+Cancelling a `vote` or `skip` rewrites `rankmaster_db.json` and moves no file. If that write throws,
+the cancel is rolled back in full: the action stays applied, `pairSeq` does not move, the client's
+token stays valid, and the reply is `500 save_failed` with `recordsChanged: false` and
+`fileMoved: false`. **Cancelling a vote is all-or-nothing**, exactly like the vote it reverses.
+
+Cancelling a move cannot be all-or-nothing, because the file is already back by the time the write is
+attempted. Those two outcomes are unchanged and are the two `undo of a move` rows of § 8.3: if the
+move back throws, nothing changed; if the move back succeeded and the write threw, the change is
+committed and says so.
+
+#### Two consequences the client MUST expect
+
+1. **The current pair is replaced.** For a cancelled `vote` or `skip` it is replaced by the pair that
+   action consumed — which is the whole point, since that is the pair you meant to vote differently.
+   For a cancelled move it is a freshly picked pair.
 2. **The restored id may differ from the discarded id.** If the original name has since been taken,
    `FileOps.UniqueFileName` gives the file back as `name (2).ext` and the record's id changes with
    it. `lastAction.id` holds the old id, `lastAction.restoredId` the new one. Any URL the client
    cached for the old id is dead.
 
 `Restore` recovers the session from `exhausted` back to `ranking` when it brings the eligible count
-back to two.
+back to two. So does cancelling the vote that exhausted it.
 
 ### 10.11 `POST /pair`
 
@@ -1123,7 +1173,7 @@ response proves nothing.**
 | `POST /session/save` | JSON written | yes |
 | `POST /session/vote`, `/skip` | JSON written, then the pair advances | yes |
 | `POST /session/discard`, `/special` | file moved, then JSON written | yes, and in that order |
-| `POST /session/undo` | file moved back, then JSON written | yes, and in that order |
+| `POST /session/undo` | of a move: file moved back, then JSON written. Of a vote/skip: JSON written, no file touched | yes, and in that order |
 | `DELETE /session` | lock file closed and removed; **no JSON write** | yes |
 | `GET /media/*` | none | — |
 
@@ -1144,7 +1194,7 @@ The client does not know the outcome. It MUST resolve, never guess:
 | `DELETE /session` | yes | a second call is `404 no_session` |
 | `POST /session/vote`, `/skip` | **yes, with the same `pairToken`** | if it landed, the retry gets `409 stale_pair_token`; if it did not, the retry votes. Either way one vote, never two. A retry with a *new* token after resyncing is a **double vote** and MUST NOT be done. |
 | `POST /session/discard`, `/special` | **yes, with the same `pairToken`** | same reasoning |
-| `POST /session/undo` | yes | a second undo is `409 nothing_to_undo`; it cannot undo two moves, because there is only ever one recorded move |
+| `POST /session/undo` | yes | a second undo is `409 nothing_to_undo`; it cannot reach back two actions, because only one is ever recorded |
 | `POST /pair` | **no** | the code is single-use; a retry of a landed pairing gets `401 invalid_pairing_code` and the token is lost. Restart pairing. |
 
 **The rule that makes this work:** replaying the *same* `pairToken` is always safe, because a token
@@ -1159,7 +1209,7 @@ MUST hold the token of an in-flight action until they have a definite answer.
 | files already moved to `discarded/` / `special 1/` | yes |
 | the session itself, `sessionId`, `sessionSecret`, all `pairToken`s | **no** |
 | `SessionVotes`, `cues`, the recent-shown set, warm pairs | **no** — session-only by design (`SPEC.md`) |
-| `LastMove`, so `undoAvailable` | **no** — a discard made before the restart can never be undone |
+| the recorded last action, so `undoAvailable` | **no** — nothing done before the restart can be cancelled |
 | `lastAction` | **no** |
 
 After a restart the client re-opens the folder and gets a new `sessionId`. Every old token is stale.

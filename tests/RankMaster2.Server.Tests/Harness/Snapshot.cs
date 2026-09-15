@@ -125,6 +125,7 @@ public sealed class LastAction(JsonElement json)
     public string? SideValue => Text("side");
     public string? Id => Text("id");
     public string? RestoredId => Text("restoredId");
+    public string? UndoneType => Text("undoneType");
     public string At => Json.GetProperty("at").GetString()!;
 
     private string? Text(string name)

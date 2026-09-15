@@ -1078,6 +1078,8 @@ components:
                       side: null
                       id: null
                       restoredId: null
+          undoneType: null
+                      undoneType: null
                       at: "2026-09-12T18:04:11.400Z"
                     lastSavedAt: "2026-09-12T18:04:11.398Z"
             noCurrentPair:
@@ -1426,6 +1428,7 @@ components:
           side: null
           id: null
           restoredId: null
+          undoneType: null
           at: "2026-09-12T18:04:11.400Z"
         lastSavedAt: "2026-09-12T18:04:11.398Z"
 
@@ -1458,6 +1461,7 @@ components:
           side: right
           id: "IMG_0311.jpg"
           restoredId: null
+          undoneType: null
           at: "2026-09-12T18:09:50.120Z"
         lastSavedAt: "2026-09-12T18:09:50.118Z"
 
@@ -1772,7 +1776,7 @@ components:
     LastAction:
       type: object
       additionalProperties: false
-      required: [seq, type, pairToken, clientRequestId, winner, side, id, restoredId, at]
+      required: [seq, type, pairToken, clientRequestId, winner, side, id, restoredId, undoneType, at]
       description: |
         Retry disambiguation. After a `409 stale_pair_token`, a client compares its own
         `clientRequestId` and `pairToken` against these fields to learn whether its lost request
@@ -1798,9 +1802,14 @@ components:
         restoredId:
           type: [string, "null"]
           description: |
-            `undo` only. **Differs from `id`** when the original name had been taken and
+            `undo` of a move only. **Differs from `id`** when the original name had been taken and
             `FileOps.UniqueFileName` brought the file back as `name (2).ext`. Any URL cached for the
-            old id is then dead.
+            old id is then dead. Null when the cancelled action moved no file.
+        undoneType:
+          description: |
+            `undo` only: which action was cancelled. Null for every other type. It is what lets a
+            client say "vote taken back" rather than a bare "undone".
+          oneOf: [{ $ref: '#/components/schemas/ActionType' }, { type: "null" }]
         at: { type: string, format: date-time }
 
     OpenSessionRequest:

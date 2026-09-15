@@ -27,7 +27,7 @@ public static class ContractShape
 
     public static readonly string[] LastActionKeys =
     {
-        "seq", "type", "pairToken", "clientRequestId", "winner", "side", "id", "restoredId", "at"
+        "seq", "type", "pairToken", "clientRequestId", "winner", "side", "id", "restoredId", "undoneType", "at"
     };
 
     public static readonly string[] MediaMetaKeys =

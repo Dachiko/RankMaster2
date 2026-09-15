@@ -65,6 +65,7 @@ public sealed record SnapshotLastAction(
     [property: JsonPropertyName("side")] string? Side,
     [property: JsonPropertyName("id")] string? Id,
     [property: JsonPropertyName("restoredId")] string? RestoredId,
+    [property: JsonPropertyName("undoneType")] string? UndoneType,
     [property: JsonPropertyName("at")] string At);
 
 /// <summary>SERVER_SPEC.md § 9.1 / § 9.4 / openapi ActionType. String constants, not enums: the

@@ -340,4 +340,59 @@ public class PairTokenTests(Rm2Server server) : SessionTestBase(server)
                 $"SERVER_SPEC.md § 8.2: pairToken is base64url with no padding. '{token}' is not.");
         }
     }
+
+    // ---- § 8.4, the validation order ------------------------------------------------------------
+
+    /// <summary>
+    /// Kept from the phase-4 conformance audit, which is where this was caught: the endpoints used
+    /// to answer a body they could not parse before anyone asked whether a session was open, so a
+    /// client with no session heard "your body is bad" and retried the body forever.
+    /// </summary>
+    [Theory]
+    [InlineData("/session/vote")]
+    [InlineData("/session/skip")]
+    [InlineData("/session/discard")]
+    [InlineData("/session/special")]
+    public async Task No_session_is_reported_before_a_malformed_body(string path)
+    {
+        var client = await ClientAsync();
+
+        var response = await client.SendAsync(HttpMethod.Post, path, "{ not json at all");
+
+        response.ShouldBeError("no_session",
+            "SERVER_SPEC.md § 8.4 fixes the order: \"1. No session -> 404 no_session. 2. Body invalid " +
+            "-> 400\". A client that branches on the code (§ 4) must be told to reopen the session, " +
+            "not to fix a body that was never the problem.");
+    }
+
+    [Theory]
+    [InlineData("/session/vote", "{}")]
+    [InlineData("/session/vote", "{\"pairToken\":\"x\",\"winner\":\"sideways\"}")]
+    [InlineData("/session/discard", "{\"pairToken\":\"x\",\"side\":\"up\"}")]
+    public async Task No_session_is_reported_before_a_well_formed_but_invalid_body(string path, string body)
+    {
+        var client = await ClientAsync();
+
+        var response = await client.SendAsync(HttpMethod.Post, path, body);
+
+        response.ShouldBeError("no_session",
+            "SERVER_SPEC.md § 8.4: step 1 is \"No session\"; every § 5.2 body failure is step 2 and " +
+            "must not pre-empt it.");
+    }
+
+    /// <summary>The other half of the order: with a session open, the body is judged before the token.</summary>
+    [Fact]
+    public async Task A_malformed_body_is_reported_before_a_stale_token()
+    {
+        using var folder = LibraryFolder.SixStills();
+        var client = await ClientAsync();
+        await client.OpenSessionAsync(folder.Path);
+
+        var response = await client.SendAsync(HttpMethod.Post, "/session/vote",
+            new { pairToken = "definitely-not-current", winner = "sideways" });
+
+        var error = response.ShouldBeError("invalid_side",
+            "SERVER_SPEC.md § 8.4: \"2. Body invalid\" comes before \"4. pairToken != current\".");
+        Assert.Equal("winner", error.Detail("field", "invalid_side details").GetString());
+    }
 }

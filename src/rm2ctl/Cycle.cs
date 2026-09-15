@@ -24,6 +24,7 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         await FetchStillsAsync(snapshot);
 
         snapshot = await VoteAsync(snapshot) ?? snapshot;
+        snapshot = await CancelVoteAsync(snapshot) ?? snapshot;
         snapshot = await SkipAsync(snapshot) ?? snapshot;
         snapshot = await DiscardAsync(snapshot) ?? snapshot;
         snapshot = await SpecialAsync(snapshot) ?? snapshot;
@@ -144,6 +145,17 @@ public sealed class Cycle(Rm2Api api, Journal journal)
     {
         journal.Step("fetch the pair's bytes");
 
+        // What the counters read before a single byte is fetched. § 7.4.10 says fetching bytes is
+        // never an impression, and that is a statement about change, not about zero.
+        var beforeFetch = new Dictionary<string, int>();
+        foreach (var reference in new[] { snapshot.Left, snapshot.Right })
+        {
+            if (reference is null) continue;
+            var seen = await api.MetaAsync(reference.Id);
+            if (seen.Status == 200 && seen.Json is { } seenBody)
+                beforeFetch[reference.Id] = seenBody.GetProperty("impressions").GetInt32();
+        }
+
         foreach (var reference in new[] { snapshot.Left, snapshot.Right })
         {
             if (reference is null) continue;
@@ -207,14 +219,19 @@ public sealed class Cycle(Rm2Api api, Journal journal)
             journal.Check(meta.Status == 200,
                 $"{reference.Id}: GET /media/{{id}}/meta (SERVER_SPEC.md § 12.1)", Explain(meta));
 
+
             if (meta.Status == 200 && meta.Json is { } body)
             {
                 journal.Check(body.GetProperty("id").GetString() == reference.Id,
                     $"{reference.Id}: meta echoes the on-disk spelling (SERVER_SPEC.md § 11.1 step 6)");
 
-                journal.Check(body.GetProperty("impressions").GetInt32() == 0,
+                // Compared against the reading taken before any bytes were fetched, not against
+                // zero: a folder that has been ranked before starts above zero and the rule being
+                // checked is that fetching does not move it.
+                var now = body.GetProperty("impressions").GetInt32();
+                journal.Check(!beforeFetch.TryGetValue(reference.Id, out var was) || now == was,
                     $"{reference.Id}: fetching bytes is not an impression (SERVER_SPEC.md § 7.4.10)",
-                    $"impressions was {body.GetProperty("impressions").GetInt32()}");
+                    $"impressions {(beforeFetch.TryGetValue(reference.Id, out var w) ? w : 0)} -> {now}");
             }
         }
     }
@@ -231,6 +248,19 @@ public sealed class Cycle(Rm2Api api, Journal journal)
 
         var winner = before.Left!.Id;
         var loser = before.Right!.Id;
+
+        // Read first, compare after. Asserting matches == 1 only holds on a folder nobody has ever
+        // ranked, and the folder someone reaches for is usually their own.
+        var counted = new Dictionary<string, (int Matches, int Impressions)>();
+        foreach (var id in new[] { winner, loser })
+        {
+            var meta = await api.MetaAsync(id);
+            if (meta.Status == 200 && meta.Json is { } body)
+            {
+                counted[id] = (body.GetProperty("matches").GetInt32(),
+                               body.GetProperty("impressions").GetInt32());
+            }
+        }
 
         var reply = await api.VoteAsync(before.PairToken, "left", "rm2ctl-vote-1");
         if (!journal.Check(reply.Status == 200, "POST /session/vote (SERVER_SPEC.md § 10.6)", Explain(reply)))
@@ -272,12 +302,14 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         {
             var meta = await api.MetaAsync(id);
             if (meta.Status != 200 || meta.Json is not { } body) continue;
+            if (!counted.TryGetValue(id, out var was)) continue;
 
-            journal.Check(body.GetProperty("matches").GetInt32() == 1 &&
-                          body.GetProperty("impressions").GetInt32() == 1,
+            var matches = body.GetProperty("matches").GetInt32();
+            var impressions = body.GetProperty("impressions").GetInt32();
+
+            journal.Check(matches == was.Matches + 1 && impressions == was.Impressions + 1,
                 $"{id}: a vote sets matches + 1 and impressions + 1 on both records (SERVER_SPEC.md § 10.6)",
-                $"matches {body.GetProperty("matches").GetInt32()}, " +
-                $"impressions {body.GetProperty("impressions").GetInt32()}");
+                $"matches {was.Matches} -> {matches}, impressions {was.Impressions} -> {impressions}");
         }
 
         return after;
@@ -401,6 +433,72 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         return after;
     }
 
+    /// <summary>
+    /// § 10.10 as it now stands: cancel takes back the last action of any kind, including a vote.
+    /// This is the phone's cancel button, and the property that matters is not that it works but
+    /// that it is exact — the pair comes back, the vote count goes back, and the token changes so a
+    /// retry of the cancelled vote cannot slip in behind it.
+    /// </summary>
+    private async Task<Snapshot?> CancelVoteAsync(Snapshot before)
+    {
+        journal.Step("cancel the vote");
+
+        if (!before.UndoAvailable)
+        {
+            journal.Note("nothing to cancel; skipping");
+            return null;
+        }
+
+        var staleToken = before.PairToken;
+
+        var reply = await api.UndoAsync("rm2ctl-cancel-1");
+        if (!journal.Check(reply.Status == 200, "POST /session/undo cancels a vote (SERVER_SPEC.md § 10.10)", Explain(reply)))
+            return null;
+
+        var after = Snapshot.From(reply);
+        if (after is null) return null;
+
+        journal.Detail(after.Describe());
+
+        journal.Check(after.LastActionType == "undo" && after.LastActionField("undoneType") == "vote",
+            "lastAction.undoneType names what was cancelled (SERVER_SPEC.md § 9.4)",
+            $"undoneType {after.LastActionField("undoneType")}");
+
+        journal.Check(after.SessionVotes == before.SessionVotes - 1,
+            "a cancelled vote is no longer counted (SERVER_SPEC.md § 10.10)",
+            $"sessionVotes {before.SessionVotes} -> {after.SessionVotes}");
+
+        journal.Check(after.Total == before.Total,
+            "cancelling a vote moves no file and drops no record (SERVER_SPEC.md § 10.10)",
+            $"total {before.Total} -> {after.Total}");
+
+        journal.Check(after.PairSeq == before.PairSeq + 1,
+            "pairSeq still advances, even though the pair went back (SERVER_SPEC.md § 8.3)",
+            $"{before.PairSeq} -> {after.PairSeq}");
+
+        journal.Check(after.PairToken is not null && after.PairToken != staleToken,
+            "the restored pair carries a NEW token, so a vote still in flight cannot apply twice " +
+            "(SERVER_SPEC.md § 10.10)");
+
+        journal.Check(!after.UndoAvailable,
+            "one level: the cancel is spent (SERVER_SPEC.md § 10.10)");
+
+        if (staleToken is not null)
+        {
+            var replay = await api.VoteAsync(staleToken, "left", "rm2ctl-cancel-replay");
+            journal.Check(replay.Status == 409 && replay.ErrorCode == "stale_pair_token",
+                "replaying the cancelled vote is refused rather than re-applied (SERVER_SPEC.md § 13.3)",
+                Explain(replay));
+        }
+
+        var second = await api.UndoAsync("rm2ctl-cancel-2");
+        journal.Check(second.Status == 409 && second.ErrorCode == "nothing_to_undo",
+            "a second cancel finds nothing — one level, no stack (SERVER_SPEC.md § 10.10)",
+            Explain(second));
+
+        return after;
+    }
+
     private async Task<Snapshot?> UndoAsync(Snapshot before)
     {
         journal.Step("undo");
@@ -441,12 +539,16 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         journal.Check(!after.UndoAvailable,
             "one level, no stack: after an undo there is nothing left to undo (SERVER_SPEC.md § 10.10)");
 
+        journal.Check(after.LastActionField("undoneType") is "discard" or "special",
+            "lastAction.undoneType names the move that was cancelled (SERVER_SPEC.md § 9.4)",
+            $"undoneType {after.LastActionField("undoneType")}");
+
         journal.Check(after.PairToken != before.PairToken,
             "undo always replaces the current pair, even a perfectly valid one (SERVER_SPEC.md § 7.4.4)");
 
         var second = await api.UndoAsync("rm2ctl-undo-2");
         journal.Check(second.Status == 409 && second.ErrorCode == "nothing_to_undo",
-            "a second undo is 409 nothing_to_undo — it cannot undo two moves (SERVER_SPEC.md § 13.3)",
+            "a second undo is 409 nothing_to_undo — it cannot reach back two actions (SERVER_SPEC.md § 13.3)",
             Explain(second));
 
         return after;
