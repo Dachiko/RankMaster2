@@ -36,3 +36,12 @@ user_history.txt
 
 # Test corpus: real media, fetched and derived by tests/corpus/build-corpus.sh
 tests/corpus/media/
+
+# Android client
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+*.jks
+*.keystore

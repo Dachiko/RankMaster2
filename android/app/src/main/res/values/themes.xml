@@ -1,0 +1,8 @@
+<resources>
+    <!-- Black, because every screen in this app is a photograph on a dark ground. -->
+    <style name="Theme.RankMaster2" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+    </style>
+</resources>
