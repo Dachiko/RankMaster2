@@ -23,7 +23,8 @@ import com.rankmaster2.phone.ui.pairing.PairingClientFactory
 import com.rankmaster2.phone.ui.pairing.PairingFlow
 import com.rankmaster2.phone.ui.pairing.PairingScreen
 import com.rankmaster2.phone.ui.pairing.PairingViewModel
-import com.rankmaster2.phone.ui.rank.RankPlaceholder
+import com.rankmaster2.phone.ui.rank.RankRoute
+import com.rankmaster2.phone.ui.rank.RankViewModel
 
 /**
  * The whole app's flow, which is short on purpose: pair once, pick a folder, rank.
@@ -52,9 +53,10 @@ fun Rm2App(context: Context) {
             onOpened = { opened = it },
         )
 
-        else -> RankPlaceholder(
-            snapshot = opened!!,
+        else -> RankGate(
+            context = context,
             identity = paired,
+            opened = opened!!,
             onLeave = { opened = null },
         )
     }
@@ -111,6 +113,26 @@ private fun BrowseGate(context: Context, identity: ServerIdentity, onOpened: (Sn
         )
     )
     BrowseRoute(viewModel)
+}
+
+@Composable
+private fun RankGate(
+    context: Context,
+    identity: ServerIdentity,
+    opened: Snapshot,
+    onLeave: () -> Unit,
+) {
+    val client: Rm2Client = remember(identity) { OkHttpRm2Client(identity) }
+    val media = rememberMedia(context, identity)
+
+    // Keyed by the session, so opening a different folder is a different screen with a different
+    // view model rather than the old one holding a token from a session that has gone.
+    val viewModel: RankViewModel = viewModel(
+        key = opened.sessionId,
+        factory = RankViewModel.factory(client, opened),
+    )
+
+    RankRoute(viewModel = viewModel, media = media, onLeave = onLeave)
 }
 
 /**
