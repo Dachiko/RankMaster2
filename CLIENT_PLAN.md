@@ -221,11 +221,32 @@ bright one — so what is actually on screen is the word "cancel" floating in mi
 That is backwards. The owner asked for *an outline with the word inside*: the shape is the control
 and the word only names it.
 
-- Draw the tab as a **stroked outline**, not a fill — light stroke with a dark halo under it, the
+- Draw the tab as a **stroked outline**, not a fill — faint white, with a dark halo under it, the
   same two-pass trick the dots use, so the edge survives a white photograph and a black one.
 - **Turn the word down** below the outline's weight. It labels the shape once; after the first use
   nobody reads it again.
 - Keep it small. It is a safety net, not a control the hand should find by accident.
+
+**The shape is a notch, not a rounded box.** A `RoundedCornerShape` is a rectangle with soft
+corners, and it reads as crude because it is a panel stuck to the edge rather than a shape the edge
+grew. The owner's sketch has **angled sides**: the screen edge runs flat, rises, slopes inward to a
+short flat top, and slopes back down — a trapezoid with its base open to the edge, shoulders eased
+rather than cut square.
+
+A custom `Shape` drawing that path:
+
+| | |
+|---|---|
+| Base width | the full tab, ~110 dp along the edge |
+| Top width | ~62% of the base, so the slope is obvious rather than a hint |
+| Height | ~26 dp |
+| Shoulder radius | ~9 dp, so the corners are eased and the slopes stay straight between them |
+| Stroke | 1.25 dp, white at ~40%, over a 1 px dark halo |
+| Fill | barely there — enough wash to keep the word legible over a busy photograph, no more |
+
+The base stays open: the tab rises *out of* the edge and is not a floating object near it. Portrait
+puts the same shape on the right edge, rotated a quarter turn, so it grows out of that edge the
+same way.
 
 ### 3.6.3 Conflicts resolve themselves
 
