@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rankmaster2.phone.media.MediaPane
@@ -112,13 +114,20 @@ fun FullScreenViewer(
             Dot(filled = state.currentPage == 1)
         }
 
+        // A media id is a filename (SERVER_SPEC.md section 11.1), and filenames from a real
+        // library are long. Unbounded, this wrapped into a paragraph of grey text across the
+        // bottom of the photograph it is naming.
         Text(
             text = pages[state.currentPage].id,
             color = Color(0x80ECEEF2),
             fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 24.dp)
                 .padding(bottom = 8.dp),
         )
     }

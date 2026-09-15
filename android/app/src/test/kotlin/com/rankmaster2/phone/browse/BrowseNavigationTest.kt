@@ -137,6 +137,40 @@ class BrowseNavigationTest {
         }
 
     @Test
+    fun `the back gesture has somewhere to go in a folder and nowhere at the drive list`() =
+        runTest(dispatcher) {
+            // The back gesture is enabled off exactly this flag. Until it was wired up, walking
+            // four folders down and pressing back closed the app - Android's default for a screen
+            // that never claimed the gesture.
+            client.rootsResult = Rm2Result.Ok(Roots(listOf(Root("D:\\", "Photos (D:)", "fixed", true, null, null))))
+            client.listings["D:\\" to false] = listing("D:\\", null, uncounted("Iceland", "D:\\Iceland"))
+            client.listings["D:\\" to true] = listing("D:\\", null, counted("Iceland", "D:\\Iceland", 30, 0))
+            client.listings["D:\\Iceland" to false] = listing("D:\\Iceland", "D:\\")
+            client.listings["D:\\Iceland" to true] = listing("D:\\Iceland", "D:\\")
+
+            val vm = vm()
+            advanceUntilIdle()
+
+            // At the drive list there is nothing above us, and back means leave the app.
+            assertFalse(vm.state.value.canGoUp)
+
+            vm.enter("D:\\")
+            advanceUntilIdle()
+            // A drive root has no parent, but back still has somewhere to go: the drive list.
+            assertTrue(vm.state.value.atRoot)
+            assertTrue(vm.state.value.canGoUp)
+
+            vm.enter("D:\\Iceland")
+            advanceUntilIdle()
+            assertTrue(vm.state.value.canGoUp)
+
+            // And back goes where "Up" goes: the parent the server named.
+            vm.up()
+            advanceUntilIdle()
+            assertEquals("D:\\", (vm.state.value.place as Place.Folder).path)
+        }
+
+    @Test
     fun `a listing that fails leaves a message and a way back`() = runTest(dispatcher) {
         client.rootsResult = Rm2Result.Ok(Roots(listOf(Root("D:\\", "Data (D:)", "fixed", true, null, null))))
         client.listings["D:\\Locked" to false] =

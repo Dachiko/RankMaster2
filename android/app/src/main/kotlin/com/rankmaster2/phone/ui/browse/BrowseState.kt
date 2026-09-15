@@ -224,6 +224,18 @@ data class BrowseUiState(
     /** The folder whose `POST /session` is in flight, if any. */
     val openingPath: String? = null,
     val openFailure: OpenFailure? = null,
+
+    /**
+     * This phone is not paired with that PC any more, and nothing it asks will work again.
+     *
+     * Two causes, and neither is a network problem: the PC presented a certificate this phone did
+     * not pin (its certificate was regenerated, or something else answered), or the token was
+     * revoked or is no longer accepted. Both are permanent until the phone is paired again, which
+     * is why they are a state of the screen rather than one more failure message - the old message
+     * said "pair again" and the app had no way back to the pairing screen at all, so the only
+     * remaining move was to uninstall it.
+     */
+    val pairingLost: Boolean = false,
 ) {
 
     /** § 10.15: `parent == null` means a root. Not "the path is three characters long". */

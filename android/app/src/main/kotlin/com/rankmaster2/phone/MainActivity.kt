@@ -9,15 +9,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import com.rankmaster2.phone.net.Rm2Http
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 
 /// The one activity. Every screen is a composable inside it; there is no navigation library and no
@@ -26,29 +21,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
+        // Before anything can ask for an HTTP client, because a client built without the cache
+        // keeps not having one. This one line is what makes "each photograph crosses the network
+        // once, ever" true rather than aspirational.
+        Rm2Http.configure(cacheDir)
         hideFromTheAppSwitcher()
         enableEdgeToEdge()
         goFullScreen()
         setContent { Rm2Theme { Rm2App(this) } }
     }
 
-    /**
-     * The app switcher must show black, not the pair of photographs that happened to be on screen.
-     *
-     * Android keeps that thumbnail after the app is left, so without this a glance at someone's
-     * recent apps is a glance at whatever they were ranking. Which is the whole library, eventually.
-     *
-     * Two ways to do it, and they are not equivalent:
-     *
-     *  - `setRecentsScreenshotEnabled(false)` (Android 13+) blanks the switcher and nothing else.
-     *    Screenshots still work, which matters while this app is being built: a screenshot is how
-     *    a layout problem gets reported.
-     *  - `FLAG_SECURE` also blanks it, but blocks screenshots and screen recording entirely, and
-     *    blocks mirroring to an external display.
-     *
-     * So: the narrow API where it exists, and the blunt one only below Android 13, where nothing
-     * else will do it. The target device is Android 14 and takes the first path.
-     */
     /**
      * No status bar, no navigation bar: the two photographs get the glass.
      *
@@ -72,6 +54,23 @@ class MainActivity : ComponentActivity() {
         if (hasFocus) goFullScreen()
     }
 
+    /**
+     * The app switcher must show black, not the pair of photographs that happened to be on screen.
+     *
+     * Android keeps that thumbnail after the app is left, so without this a glance at someone's
+     * recent apps is a glance at whatever they were ranking. Which is the whole library, eventually.
+     *
+     * Two ways to do it, and they are not equivalent:
+     *
+     *  - `setRecentsScreenshotEnabled(false)` (Android 13+) blanks the switcher and nothing else.
+     *    Screenshots still work, which matters while this app is being built: a screenshot is how
+     *    a layout problem gets reported.
+     *  - `FLAG_SECURE` also blanks it, but blocks screenshots and screen recording entirely, and
+     *    blocks mirroring to an external display.
+     *
+     * So: the narrow API where it exists, and the blunt one only below Android 13, where nothing
+     * else will do it. The target device is Android 14 and takes the first path.
+     */
     private fun hideFromTheAppSwitcher() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(false)
@@ -93,14 +92,4 @@ fun Rm2Theme(content: @Composable () -> Unit) {
         ),
         content = content,
     )
-}
-
-@Composable
-private fun Skeleton() {
-    Box(
-        modifier = Modifier.fillMaxSize().background(Color.Black),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("Rank Master 2", color = Color(0xFFECEEF2))
-    }
 }

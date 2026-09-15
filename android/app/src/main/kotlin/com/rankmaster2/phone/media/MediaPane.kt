@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
@@ -167,14 +168,34 @@ private fun VideoPane(
         return
     }
 
+    // The shape of the picture, owned by Compose.
+    //
+    // The player reports it once the first frame is decoded, which is well after this pane was
+    // first measured. Reading it as state here means the arrival of the true shape is a
+    // recomposition and therefore a re-measure - so the box the video is drawn into is the right
+    // shape from the moment anyone could know what the right shape is, and stays right across a
+    // rotation without anything being asked to look again.
+    //
+    // Until then the pane fills its box, and `RESIZE_MODE_FIT` inside it means the worst this can
+    // ever look is a picture drawn smaller than it could be. It is never stretched.
+    val ratio = video.aspectRatio.value
+
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        modifier = if (ratio != null) Modifier.aspectRatio(ratio) else Modifier.fillMaxSize(),
         factory = { context ->
             PlayerView(context).apply {
                 // No controller, no transport bar, nothing that can swallow a tap that was meant
                 // to be a vote. See Rm2VideoPlayers.
                 useController = false
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
+                // FIT, always, and never FILL.
+                //
+                // The box around this view is already the picture's shape, so FIT has nothing
+                // left to letterbox and costs nothing. What it buys is that the one remaining way
+                // to be wrong stays harmless: if the ratio Compose was given ever disagreed with
+                // the picture, FIT draws it *small* and correctly proportioned, while FILL would
+                // stretch it - which is the bug this whole change exists to remove, on a narrower
+                // path. A safety net that costs nothing stays.
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -229,9 +250,15 @@ private fun StatusPane(state: MediaPaneState, onState: (MediaPaneState) -> Unit)
         when (state) {
             is MediaPaneState.Loading -> CircularProgressIndicator(color = Color(0xFF6B7280))
             is MediaPaneState.Loaded -> Unit
-            is MediaPaneState.Gone -> Message("This file is no longer in the folder.")
-            is MediaPaneState.Undecodable -> Message("This file will not open.")
-            is MediaPaneState.Unavailable -> Message("Could not load this one.")
+            // Each of these names the one thing that can be done about it, and that one thing is
+            // always the same gesture: press and hold this side. Saying so is what turns a pane
+            // that has gone blank into a pane with an answer in it.
+            is MediaPaneState.Gone ->
+                Message("This file is not in the folder any more.\n\nPress and hold here to drop it.")
+            is MediaPaneState.Undecodable ->
+                Message("This phone cannot open this file.\n\nPress and hold here to drop it.")
+            is MediaPaneState.Unavailable ->
+                Message("This one did not arrive from the PC.\n\nIt will try again on the next pair.")
         }
     }
 }

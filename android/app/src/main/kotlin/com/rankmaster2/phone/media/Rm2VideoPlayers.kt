@@ -5,6 +5,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.media3.common.util.UnstableApi
@@ -139,21 +140,11 @@ class Rm2VideoPlayers(
         player.repeatMode = Player.REPEAT_MODE_ONE   // nobody uses twice.
         player.playWhenReady = false
 
-        val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
-                when (state) {
-                    Player.STATE_BUFFERING, Player.STATE_IDLE -> onState(MediaPaneState.Loading)
-                    Player.STATE_READY -> onState(MediaPaneState.Loaded)
-                    else -> Unit
-                }
-            }
-
-            override fun onPlayerError(error: PlaybackException) = onState(stateOf(error))
-        }
-        player.addListener(listener)
-
         onState(MediaPaneState.Loading)
-        val video = Rm2Video(player, listener)
+        // The listener belongs to the Rm2Video, which is what both of the things it reports -
+        // the pane's state and the video's shape - are read off. Registering it here and handing
+        // it over separately is how one of the two used to be forgotten on release.
+        val video = Rm2Video(player, onState)
 
         // § the owner's ask, 2026-09-15: instead of a probe screen, the video that cannot keep up
         // says so on itself. Media3 counts frames the renderer had to throw away because they were
@@ -180,7 +171,7 @@ class Rm2VideoPlayers(
          * An [Rm2Video] with no player behind it, for testing the dropped-frame rule alone. The
          * rule is arithmetic and deserves a test; a real ExoPlayer on a build machine does not.
          */
-        internal fun testVideo(): Rm2Video = Rm2Video(maybePlayer = null, listener = null)
+        internal fun testVideo(): Rm2Video = Rm2Video(maybePlayer = null)
 
         /** Frames a second the renderer may throw away before a pane admits it is struggling. */
         const val STRUGGLING_FRAMES_PER_SECOND = 5.0
@@ -201,6 +192,25 @@ class Rm2VideoPlayers(
         const val MIN_BUFFER_MS = 4_000
         const val MAX_BUFFER_MS = 20_000
 
+
+        /**
+         * The shape a video pane must be, from what the decoder reported. Null until it has.
+         *
+         * `onVideoSizeChanged` gives three numbers, not two: [pixelWidthHeightRatio] is 1 for
+         * almost every file and is **not** 1 for an anamorphic one, where the stored pixels are
+         * not square and the picture is wider than `width / height` says. Multiplying it in is the
+         * difference between this fix and a subtler version of the bug it replaces.
+         *
+         * Null for anything that cannot describe a shape - a zero dimension, an audio-only track,
+         * the state before the first frame is decoded - so the caller can leave the pane filling
+         * its box until the truth arrives rather than guessing at 16:9.
+         */
+        internal fun aspectRatioOf(width: Int, height: Int, pixelWidthHeightRatio: Float): Float? {
+            if (width <= 0 || height <= 0) return null
+            if (!pixelWidthHeightRatio.isFinite() || pixelWidthHeightRatio <= 0f) return null
+            val ratio = width * pixelWidthHeightRatio / height
+            return if (ratio.isFinite() && ratio > 0f) ratio else null
+        }
 
         /**
          * A playback failure, in the terms a pane can act on.
@@ -257,13 +267,51 @@ class Rm2VideoPlayers(
 class Rm2Video internal constructor(
     /** For attaching to a `PlayerView`, and for nothing else. Null only in a test of the rule. */
     private val maybePlayer: ExoPlayer?,
-    private val listener: Player.Listener?,
+    private val onState: (MediaPaneState) -> Unit = {},
 ) {
 
     val player: ExoPlayer get() = requireNotNull(maybePlayer) { "this Rm2Video has no player" }
 
     var isReleased: Boolean = false
         private set
+
+    /**
+     * The shape of the picture, once the decoder knows it, and null until then.
+     *
+     * This exists because the pane used to take its shape from the `PlayerView` inside it. The
+     * video's size arrives after the first frame is decoded, which is long after Compose measured
+     * the pane, and nothing told Compose to look again - so the picture kept whatever box it had
+     * been given and drew stretched until a rotation forced a fresh layout pass. That is the whole
+     * of "rotating twice fixes it".
+     *
+     * Reported as Compose state instead, so the *Compose* layout owns the shape: a new value is a
+     * recomposition and a re-measure, which is the one thing the old arrangement could not produce.
+     */
+    val aspectRatio: MutableState<Float?> = mutableStateOf(null)
+
+    private val listener = object : Player.Listener {
+        override fun onPlaybackStateChanged(state: Int) {
+            when (state) {
+                Player.STATE_BUFFERING, Player.STATE_IDLE -> onState(MediaPaneState.Loading)
+                Player.STATE_READY -> onState(MediaPaneState.Loaded)
+                else -> Unit
+            }
+        }
+
+        override fun onPlayerError(error: PlaybackException) = onState(Rm2VideoPlayers.stateOf(error))
+
+        override fun onVideoSizeChanged(size: VideoSize) {
+            aspectRatio.value = Rm2VideoPlayers.aspectRatioOf(
+                width = size.width,
+                height = size.height,
+                pixelWidthHeightRatio = size.pixelWidthHeightRatio,
+            )
+        }
+    }
+
+    init {
+        maybePlayer?.addListener(listener)
+    }
 
     /**
      * True while this file is beyond this phone in real time — the mark a pane draws on itself.
@@ -316,7 +364,7 @@ class Rm2Video internal constructor(
     fun release() {
         if (isReleased) return
         isReleased = true
-        listener?.let { maybePlayer?.removeListener(it) }
+        maybePlayer?.removeListener(listener)
         maybePlayer?.release()
     }
 }

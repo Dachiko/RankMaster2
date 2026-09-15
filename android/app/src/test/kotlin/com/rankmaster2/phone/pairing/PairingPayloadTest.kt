@@ -351,4 +351,36 @@ class PairingPayloadTest {
         )
         reasons.forEach { assertTrue(it.message.length > 20) }
     }
+
+    @Test
+    fun `a host carrying anything but an address is refused`() {
+        // Each of these would be spliced into "https://<host>:<port>/api/v1", where it means
+        // something other than part of the address - and the best case is a URL the HTTP client
+        // refuses outright, which reaches the screen as a crash instead of as an answer.
+        listOf("10.0.0.5:18611", "10.0.0.5/api", "10.0.0.5?x=1", "10.0.0.5#f", "user@10.0.0.5")
+            .forEach { host ->
+                val result = PairingPayloads.fromManualEntry(
+                    host = host,
+                    port = "18611",
+                    fingerprint = "ab".repeat(32),
+                    code = "418250",
+                )
+                val rejected = result as? PayloadResult.Rejected
+                    ?: error("“$host” should not be accepted as an address")
+                assertEquals("host", (rejected.reason as PayloadRejection.MalformedField).field)
+            }
+    }
+
+    @Test
+    fun `an ordinary name or address is still fine`() {
+        listOf("192.168.1.42", "rankpc.local", "rank-pc", "RankPC").forEach { host ->
+            val result = PairingPayloads.fromManualEntry(
+                host = host,
+                port = "18611",
+                fingerprint = "ab".repeat(32),
+                code = "418250",
+            )
+            assertTrue("“$host” should be accepted", result is PayloadResult.Ok)
+        }
+    }
 }

@@ -40,7 +40,19 @@ class Rm2Media internal constructor(
     /** The URL for [ref]'s video, or null if it is not one. */
     fun videoUrl(ref: MediaRef): String? = players.videoUrl(ref)
 
-    /** Drops the decoded bitmaps. The bytes stay in OkHttp's cache, where they belong. */
+    /**
+     * Drops the decoded bitmaps and keeps everything else.
+     *
+     * Called when the app goes to the background (CLIENT_PLAN.md section 3.4.1). The bytes stay in
+     * OkHttp's disk cache, where they belong and where they cost no heap, so the pictures come back
+     * just as fast - this only gives up the *decoded* copies, which are the ones competing with two
+     * video decoders for the same heap.
+     */
+    fun dropDecodedImages() {
+        imageLoader.memoryCache?.clear()
+    }
+
+    /** For a handle that is finished with: stops the loader as well as emptying it. */
     fun shutdown() {
         imageLoader.shutdown()
     }

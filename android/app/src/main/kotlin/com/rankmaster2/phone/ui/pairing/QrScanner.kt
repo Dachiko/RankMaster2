@@ -170,9 +170,22 @@ private fun CameraPreview(
     DisposableEffect(lifecycleOwner) {
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
+        // The provider arrives asynchronously and the screen can be gone before it does - pairing
+        // succeeds and the folder list replaces this in well under the time the camera takes to
+        // start on a cold app. Without this flag that late callback binds a camera nothing is
+        // watching, and `onDispose` has already run with nothing to unbind: the camera stays on,
+        // with its indicator lit, until the process ends.
+        var disposed = false
+
         future.addListener({
-            val cameraProvider = future.get()
+            // `get()` throws on a device with no camera service, or one that is already claimed.
+            // That is a screen that says "type it instead", not a crash on a background thread.
+            val cameraProvider = runCatching { future.get() }.getOrNull() ?: return@addListener
             provider = cameraProvider
+            if (disposed) {
+                cameraProvider.unbindAll()
+                return@addListener
+            }
 
             val preview = Preview.Builder().build()
             preview.setSurfaceProvider(previewView.surfaceProvider)
@@ -200,6 +213,7 @@ private fun CameraPreview(
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
+            disposed = true
             provider?.unbindAll()
             scanner.close()
             analysisExecutor.shutdown()
@@ -219,7 +233,13 @@ private fun scan(image: ImageProxy, scanner: BarcodeScanner, onFound: (String) -
         return
     }
     val input = InputImage.fromMediaImage(media, image.imageInfo.rotationDegrees)
-    scanner.process(input)
+    // The scanner is closed when the screen goes, and a frame already in flight then meets a
+    // detector that is gone. That throws on the analysis thread, where nothing is catching it.
+    val scanning = runCatching { scanner.process(input) }.getOrElse {
+        image.close()
+        return
+    }
+    scanning
         .addOnSuccessListener { barcodes ->
             barcodes.firstNotNullOfOrNull { it.rawValue }?.let(onFound)
         }

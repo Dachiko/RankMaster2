@@ -113,6 +113,34 @@ fun openFailureAdvice(failure: OpenFailure): String = when (failure) {
 /** True when the banner should offer "close it and open this one" (§ 10.1: the client must ask). */
 fun offersCloseAndRetry(failure: OpenFailure): Boolean = failure is OpenFailure.AlreadyOpen
 
+/**
+ * A folder's name, for a heading. **Display only.**
+ *
+ * Everywhere this app *navigates*, it uses the `path` and `parent` values the server handed back and
+ * never takes a Windows path apart - section 10.15, and the reason `\\server\share`, `D:\` and
+ * `\\?\D:\x` are all roots that look nothing like each other. This is the one exception and it is
+ * safe because nothing is done with the result except draw it: if the slicing is wrong the owner
+ * sees an odd word at the top of a list, not a request for the wrong folder.
+ *
+ * It earns its place because the heading it replaces said "12 folders", which tells the owner
+ * how many things are below him and nothing at all about where he is standing.
+ */
+fun folderLabel(path: String): String {
+    val trimmed = path.trimEnd('\\', '/')
+    // A drive root or a bare share trims away to nothing useful; show it as it is.
+    if (trimmed.isEmpty()) return path
+    val cut = maxOf(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'))
+    val tail = if (cut < 0) trimmed else trimmed.substring(cut + 1)
+    return tail.ifBlank { path }
+}
+
+/** "12 folders", or nothing at all when there are none to count. */
+fun folderCount(rows: Int): String = when (rows) {
+    0 -> ""
+    1 -> "1 folder"
+    else -> "$rows folders"
+}
+
 /** The drive-list subtitle: "234 GB free of 1.8 TB", or why the drive is no use right now. */
 fun rootDetail(available: Boolean, totalBytes: Long?, freeBytes: Long?): String {
     // § 10.14: a listed-but-unavailable root must still appear. Say why rather than dim it silently.

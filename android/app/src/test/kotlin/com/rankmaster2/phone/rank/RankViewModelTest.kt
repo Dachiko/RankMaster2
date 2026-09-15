@@ -279,4 +279,59 @@ class RankViewModelTest {
         vm.onForeground(false)
         assertFalse(vm.state.value.panesPlaying)
     }
+
+    // -- coming back to a folder the PC never let go of -------------------------------------------
+
+    @Test
+    fun `re-opening a session that resumed adopts the snapshot it answered with`() = runTest {
+        // SERVER_SPEC.md § 10.1: opening the folder that is already open is a pure read and
+        // returns the *same* sessionId. These view models are keyed by that id and outlive the
+        // screen, so the one handed back is the one from before, still holding the old pair.
+        val vm = viewModel(FakeRankClient(), opened = RankFixtures.ranking(pairSeq = 3), scope = this)
+
+        val live = RankFixtures.ranking(pairSeq = 9, token = "token-live")
+        vm.resume(live)
+
+        assertEquals("token-live", vm.state.value.snapshot?.pairToken)
+        assertEquals(9L, vm.state.value.snapshot?.pairSeq)
+    }
+
+    @Test
+    fun `resuming sends nothing - it is a read of what the open already answered`() = runTest {
+        val client = FakeRankClient()
+        val vm = viewModel(client, scope = this)
+
+        vm.resume(RankFixtures.ranking(pairSeq = 7, token = "token-live"))
+
+        assertEquals(0, client.votes.size)
+        assertEquals(0, client.sessionReads)
+    }
+
+    @Test
+    fun `resuming does not drag the screen back to an older pair`() = runTest {
+        // The screen has been voting since it opened; the snapshot it was *opened* with is by now
+        // several pairs stale. Recomposition must not undo that.
+        val client = FakeRankClient().apply {
+            voteResults += Rm2Result.Ok(RankFixtures.ranking(pairSeq = 5, token = "token-5"))
+        }
+        val opened = RankFixtures.ranking(pairSeq = 0)
+        val vm = viewModel(client, opened = opened, scope = this)
+        vm.vote(Side.LEFT)
+
+        vm.resume(opened)
+
+        assertEquals("token-5", vm.state.value.snapshot?.pairToken)
+    }
+
+    @Test
+    fun `resuming clears a busy flag left behind by the last visit`() = runTest {
+        val client = FakeRankClient().apply { holdVote = true }
+        val vm = viewModel(client, scope = this)
+        vm.vote(Side.LEFT)
+        assertTrue(vm.state.value.busy)
+
+        vm.resume(RankFixtures.ranking(pairSeq = 4, token = "token-4"))
+
+        assertFalse("a screen that comes back deaf is a screen that looks broken", vm.state.value.busy)
+    }
 }

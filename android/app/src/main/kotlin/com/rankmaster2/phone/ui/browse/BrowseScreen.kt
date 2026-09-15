@@ -1,5 +1,6 @@
 package com.rankmaster2.phone.ui.browse
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,6 +10,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -60,9 +64,22 @@ private val Bad = Color(0xFFE2635B)
 @Composable
 fun BrowseRoute(
     viewModel: BrowseViewModel,
+    /** Forget this PC and go back to pairing. The only way out of a PC that stopped trusting us. */
+    onPairAgain: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsState()
+
+    // Back comes up a level, exactly as "Up" does, and only means "leave the app" at the drive
+    // list. Without this, walking four folders down and pressing back closed the app - Android's
+    // default, because nothing here had ever claimed the gesture.
+    //
+    // `canGoUp` is the same fact the Up button is drawn from, and it comes from section 10.15's
+    // `parent`: no path arithmetic decides where up is, or whether there is an up.
+    // Not while the "no longer paired" panel is up: walking up a level is one more request that
+    // is certain to be refused, and it would replace the one screen that has a way out on it.
+    BackHandler(enabled = state.canGoUp && !state.pairingLost) { viewModel.up() }
+
     BrowseScreen(
         state = state,
         onEnter = viewModel::enter,
@@ -74,6 +91,7 @@ fun BrowseRoute(
         onRetryCounts = viewModel::retryCounts,
         onDismissFailure = viewModel::dismissOpenFailure,
         onCloseOtherSession = viewModel::closeOtherSessionAndRetry,
+        onPairAgain = onPairAgain,
         modifier = modifier,
     )
 }
@@ -90,10 +108,25 @@ fun BrowseScreen(
     onRetryCounts: () -> Unit,
     onDismissFailure: () -> Unit,
     onCloseOtherSession: () -> Unit,
+    onPairAgain: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize()) {
+        // This app draws edge to edge with the system bars hidden, so nothing puts a screen clear
+        // of the camera cutout or the gesture bar unless it asks. Without this the header runs
+        // under the punch-hole in portrait and under the cutout down one side in landscape, and
+        // the "Open this folder" button at the bottom sits exactly on the home swipe.
+        //
+        // The ranking screen is the deliberate exception - a photograph should have the whole
+        // glass - but a list of folders with a button on it is an ordinary screen and behaves
+        // like one.
+        //
+        // Note what this does and does not cover: the bars are hidden, so their share of
+        // `safeDrawing` is zero and what is left is the display cutout (and the keyboard). That is
+        // the part that was actually eating the header. The home *gesture* at the bottom has no
+        // inset to give while the bar is hidden, so the bottom bar buys its own room - see
+        // OpenThisFolderBar.
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             Header(state = state, onUp = onUp, onRefresh = onRefresh)
 
             if (state.loadingList) {
@@ -112,13 +145,15 @@ fun BrowseScreen(
 
             Box(Modifier.weight(1f)) {
                 when {
+                    // First, because it is the only one of these the owner cannot try again out of.
+                    state.pairingLost -> PairingLost(onPairAgain)
                     state.listFailure != null -> ListFailure(state.listFailure, onRefresh)
                     state.place is Place.Roots -> RootList(state.roots, state.lastFolder, onEnter, onOpenRemembered)
                     else -> EntryList(state, onEnter, onOpen, onRetryCounts)
                 }
             }
 
-            if (state.place is Place.Folder) {
+            if (state.place is Place.Folder && !state.pairingLost) {
                 OpenThisFolderBar(state, onOpenCurrent)
             }
         }
@@ -134,16 +169,33 @@ private fun Header(state: BrowseUiState, onUp: () -> Unit, onRefresh: () -> Unit
             if (state.canGoUp) {
                 TextButton(onClick = onUp, modifier = Modifier.padding(end = 4.dp)) { Text("‹ Up") }
             }
-            Text(
-                text = when (val place = state.place) {
-                    Place.Roots -> "Choose a folder"
-                    is Place.Folder -> (state.rows.size).let { "${it} folder" + if (it == 1) "" else "s" }
-                },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onRefresh) { Text("Refresh") }
+            Column(Modifier.weight(1f)) {
+                // Where he is, not how many things are under him. The count is worth having and
+                // is not worth the heading.
+                Text(
+                    text = when (val place = state.place) {
+                        Place.Roots -> "Choose a folder"
+                        is Place.Folder -> folderLabel(place.path)
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (state.place is Place.Folder && !state.loadingList) {
+                    val count = folderCount(state.rows.size)
+                    Text(
+                        text = if (count.isEmpty()) "no sub-folders" else count,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Dimmed,
+                    )
+                }
+            }
+            // Refresh is hidden rather than disabled once the pairing is gone: there is exactly
+            // one thing to do on that screen and it is on the panel below.
+            if (!state.pairingLost) {
+                TextButton(onClick = onRefresh) { Text("Refresh") }
+            }
         }
 
         val path = state.currentPath
@@ -174,11 +226,54 @@ private fun ListFailure(message: String, onRefresh: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Could not list this folder", style = MaterialTheme.typography.titleMedium)
+        Text("Could not open that folder's list", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(6.dp))
         Text(message, style = MaterialTheme.typography.bodyMedium, color = Faint)
         Spacer(Modifier.height(16.dp))
         Button(onClick = onRefresh) { Text("Try again") }
+    }
+}
+
+/**
+ * The end of this phone's relationship with that PC, and the one way out of it.
+ *
+ * Reached when the PC presents a certificate this phone never pinned, or when the token stops being
+ * accepted. Both are permanent, and the old build said "pair again" while offering no way to do it:
+ * the pairing screen only appears when no credentials are stored, so the app simply stopped working
+ * and the only remaining move was to uninstall it.
+ *
+ * Nothing here says "try again", because trying again is the one thing that cannot help.
+ */
+@Composable
+private fun PairingLost(onPairAgain: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            "This phone is not paired with the PC any more",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Bad,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Either Rank Master on the PC was given a new security certificate, or this phone was " +
+                "removed from its list. Nothing is lost - every ranking lives on the PC.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Faint,
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onPairAgain, modifier = Modifier.fillMaxWidth()) {
+            Text("Pair this phone again")
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Open the Rank Master icon in the PC's system tray and choose “Pair a phone”, then " +
+                "scan the code it shows.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Dimmed,
+        )
     }
 }
 
@@ -236,7 +331,8 @@ private fun RootList(
         if (roots.isEmpty()) {
             item {
                 Text(
-                    "No drives reported.",
+                    "The PC listed no drives. That is the PC's answer, not a connection problem - " +
+                        "“Refresh” asks it again.",
                     color = Faint,
                     modifier = Modifier.padding(24.dp),
                 )
@@ -330,7 +426,8 @@ private fun EntryList(
         if (state.rows.isEmpty() && !state.loadingList) {
             item {
                 Text(
-                    "No sub-folders here. Use “Open this folder” below to rank what is in it.",
+                    "Nothing below this one. If the photographs are in this folder itself, " +
+                        "“Open this folder” at the bottom is what ranks them.",
                     color = Faint,
                     modifier = Modifier.padding(24.dp),
                 )
@@ -421,7 +518,11 @@ private fun OpenThisFolderBar(state: BrowseUiState, onOpenCurrent: () -> Unit) {
     val opening = state.openingPath == path
     HorizontalDivider(color = Line)
     Row(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        // Extra room underneath, because `safeDrawing` gives none here. This app hides the system
+        // bars, so their insets come back as zero - but the *gesture* is still there, and the
+        // bottom strip of the glass is the home swipe whether or not a bar is drawn on it. A
+        // button sitting on it is a button that sometimes sends you to the launcher instead.
+        modifier = Modifier.fillMaxWidth().padding(16.dp).padding(bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

@@ -4,7 +4,9 @@ Found by the owner, ranking his own library. Collected here rather than fixed on
 request. Diagnosis is written down while it is fresh; **a diagnosis is a guess until the fix works
 on his phone**, and where I am guessing it says so.
 
-Fixed items are deleted, not archived — git remembers.
+Fixed items are deleted, not archived — git remembers. All four below have a fix in the tree and
+none has been seen working on a phone, so they are still here: **delete each one once it is right on
+the device**, which is the only place any of this is true.
 
 ---
 
@@ -29,6 +31,17 @@ changes. That also removes the need for `AspectRatioFrameLayout` to do it.
 
 **Watch for:** anamorphic files, where the pixel aspect ratio is not 1. `onVideoSizeChanged` reports
 it separately and it must be multiplied in, or the fix produces a subtler version of the same bug.
+
+**Done, unconfirmed.** The diagnosis was right and the fix is the one it proposed. `Rm2Video` now
+listens for `onVideoSizeChanged` and publishes the shape as Compose state
+(`Rm2VideoPlayers.aspectRatioOf`, which multiplies the pixel aspect in); the pane applies it as
+`Modifier.aspectRatio` and switches the `PlayerView` to `RESIZE_MODE_FILL` once it is known, so
+`AspectRatioFrameLayout` is out of the decision entirely. Until the shape arrives the pane fills its
+box and stays on `RESIZE_MODE_FIT`, which draws small rather than stretched. `VideoAspectRatioTest`
+pins the arithmetic including the anamorphic case.
+
+**On the phone:** a portrait clip and a landscape clip in the same folder, first showing, without
+rotating. Then rotate and confirm it is still right.
 
 ---
 
@@ -56,6 +69,23 @@ width and height swapped, or a draw that is genuinely vertical rather than a rot
 one and rotating it. Two short paths are easier to get right than one path plus a transform, and
 this is the third attempt at this shape.
 
+**Done, unconfirmed** — and the diagnosis was half wrong. The *facing* was exactly as described.
+The *floating* was not the inset: this screen hides the system bars, so `safeDrawing` on the right
+edge in portrait is zero. What pushed it clear was the third problem, which turned out to be the
+whole of the first: `rotate` turns about the box's centre, so a 112 × 28 box aligned to the right
+edge put its 28-dp-wide drawing 42 dp clear of that edge.
+
+The fix is the one suggested. The shape is described once in edge space (`notchOutline`) and mapped
+onto the canvas per edge (`NotchPoint.onCanvas`); the layout box is swapped as well as the drawing
+(`notchBoxSize`); the inset is gone so the base touches the glass; and the tab now claims its own
+rectangle with `systemGestureExclusion`, because on the right edge in portrait it is sitting in the
+back-swipe zone. Only the word is still rotated — a label has no footprint to get wrong.
+`CancelNotchTest` asserts both facts a transform could not be trusted to keep.
+
+**On the phone:** portrait, after one vote. The base should be *on* the right edge with no gap, the
+tab growing left out of it. Then landscape, along the bottom. And check a tap on it still registers
+rather than starting a back gesture.
+
 ---
 
 ## 3. Back leaves the app while browsing folders
@@ -71,6 +101,11 @@ has `up()` and already knows whether it is at a root, because § 10.15's `parent
 new has to be worked out, it just has to be wired to the gesture.
 
 Five lines. It can be pulled out of the batch and shipped on its own if the browsing is in the way.
+
+**Done, unconfirmed.** Exactly as diagnosed: `BackHandler(enabled = state.canGoUp) { viewModel.up() }`
+in `BrowseRoute`. `canGoUp` is the same flag the "Up" button is drawn from, so the gesture and the
+button cannot disagree, and at the drive list it is false and back leaves the app.
+`BrowseNavigationTest` covers the flag at each level.
 
 ---
 
@@ -98,3 +133,16 @@ deliberately reach for in a corner. So: no votes near the edge, but the menu sti
 **Open:** 10% is the owner's guess and mine is no better. It should be a single number in one place,
 easy to move after a session with it — and worth re-checking in landscape, where the thumbs sit on
 the left and right edges rather than the bottom.
+
+**Done, unconfirmed.** `EdgeMarginFraction` in `RankScreen.kt` is the one number; `votableSideAt`
+composes it with the seam band and is what a **tap** asks, while `sideAt` — what a **long press**
+asks — is untouched and still answers everywhere, including the corners. All four edges, as a
+fraction of each dimension, so landscape needs no separate number. `EdgeMarginTest` covers both.
+
+One thing the margin caused and that is fixed with it: the corner is now the *only* place a long
+press does anything, and the pane menu opened there used to hang off the screen — Compose's
+alignment-offset popup does not clamp. `ThumbPositionProvider` keeps it on the glass and opens it
+upwards when there is no room below.
+
+**On the phone:** it wants a real session to judge. If 10% is too much or too little, that constant
+is the only thing to move.

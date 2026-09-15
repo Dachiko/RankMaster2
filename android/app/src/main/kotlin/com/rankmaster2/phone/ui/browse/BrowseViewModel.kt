@@ -89,12 +89,24 @@ class BrowseViewModel(
 
                 is Rm2Result.Refused -> {
                     if (gen != generation) return@launch
-                    _state.update { it.copy(loadingList = false, listFailure = result.message) }
+                    _state.update {
+                        it.copy(
+                            loadingList = false,
+                            listFailure = result.message,
+                            pairingLost = it.pairingLost || result.isPairingLost,
+                        )
+                    }
                 }
 
                 is Rm2Result.Unreachable -> {
                     if (gen != generation) return@launch
-                    _state.update { it.copy(loadingList = false, listFailure = unreachableText(result)) }
+                    _state.update {
+                        it.copy(
+                            loadingList = false,
+                            listFailure = unreachableText(result),
+                            pairingLost = it.pairingLost || result.pinMismatch,
+                        )
+                    }
                 }
             }
         }
@@ -139,12 +151,24 @@ class BrowseViewModel(
 
                 is Rm2Result.Refused -> {
                     if (gen != generation) return@launch
-                    _state.update { it.copy(loadingList = false, listFailure = result.message) }
+                    _state.update {
+                        it.copy(
+                            loadingList = false,
+                            listFailure = result.message,
+                            pairingLost = it.pairingLost || result.isPairingLost,
+                        )
+                    }
                 }
 
                 is Rm2Result.Unreachable -> {
                     if (gen != generation) return@launch
-                    _state.update { it.copy(loadingList = false, listFailure = unreachableText(result)) }
+                    _state.update {
+                        it.copy(
+                            loadingList = false,
+                            listFailure = unreachableText(result),
+                            pairingLost = it.pairingLost || result.pinMismatch,
+                        )
+                    }
                 }
             }
         }
@@ -195,9 +219,29 @@ class BrowseViewModel(
 
             // The names already work. § 10.15 warns this is the slow call; losing it is a
             // degraded listing, not a failed one, and it must never clear what is on screen.
-            is Rm2Result.Refused, is Rm2Result.Unreachable -> {
+            //
+            // Except when it is not about the folder at all. A counting pass refused because this
+            // phone is no longer paired says the same thing any other call would have, and a
+            // browser that reports it as "could not count the files" is a browser that looks
+            // merely slow while nothing will ever work again.
+            is Rm2Result.Refused -> {
                 if (gen != generation) return
-                _state.update { it.copy(counts = CountsPhase.Failed) }
+                _state.update {
+                    it.copy(
+                        counts = CountsPhase.Failed,
+                        pairingLost = it.pairingLost || result.isPairingLost,
+                    )
+                }
+            }
+
+            is Rm2Result.Unreachable -> {
+                if (gen != generation) return
+                _state.update {
+                    it.copy(
+                        counts = CountsPhase.Failed,
+                        pairingLost = it.pairingLost || result.pinMismatch,
+                    )
+                }
             }
         }
     }
@@ -275,6 +319,7 @@ class BrowseViewModel(
 
             is Rm2Result.Refused -> {
                 val failure = refusalToFailure(path, result)
+                if (result.isPairingLost) _state.update { it.copy(pairingLost = true) }
                 // A remembered folder that is gone stops being offered, or rule 6 turns into a
                 // shortcut to an error message every single launch.
                 if (failure is OpenFailure.NotFound && lastFolders.last()?.path == path) {
@@ -293,6 +338,7 @@ class BrowseViewModel(
                 it.copy(
                     openingPath = null,
                     openFailure = OpenFailure.Unreachable(path, result.detail, result.pinMismatch),
+                    pairingLost = it.pairingLost || result.pinMismatch,
                 )
             }
         }
@@ -351,10 +397,21 @@ class BrowseViewModel(
 
     private fun unreachableText(result: Rm2Result.Unreachable): String =
         if (result.pinMismatch) {
-            "The PC answered with a certificate this phone did not pair with. Pair again."
+            "The PC answered with a certificate this phone did not pair with."
         } else {
             result.detail
         }
+
+    /**
+     * § 5.1: the three codes that mean this phone's token will never be accepted again.
+     *
+     * Kept apart from every other refusal because the others are about a folder and this one is
+     * about the phone: no amount of trying again, refreshing or picking somewhere else will move it.
+     */
+    private val Rm2Result.Refused.isPairingLost: Boolean
+        get() = code == ErrorCodes.TOKEN_REVOKED ||
+            code == ErrorCodes.INVALID_TOKEN ||
+            code == ErrorCodes.UNAUTHENTICATED
 
     companion object {
         private const val LOCKED = 423

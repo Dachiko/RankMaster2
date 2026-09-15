@@ -43,11 +43,31 @@ object Rm2Http {
     private var cacheDirectory: File? = null
     private val clients = HashMap<String, OkHttpClient>()
 
-    /** Call once at startup. The cache is what makes each photo cross the network once, ever. */
+    /**
+     * Call once at startup, **before anything asks for a client**. The cache is what makes each
+     * photo cross the network once, ever.
+     *
+     * Until this runs there is no disk cache at all, and without one every promise the media layer
+     * is built on quietly stops being true: a photograph is re-fetched every time it comes back
+     * round, and the warm-pair prefetch writes its bytes into nothing and helps nobody. The server
+     * goes to the trouble of sending a strong ETag and `immutable` on every byte response
+     * (SERVER_SPEC.md section 12.5) precisely so this is free; JSON endpoints are `no-store` at the
+     * server, so nothing that must be fresh is at risk.
+     *
+     * Any client built before this call has no cache in it, so they are dropped rather than left
+     * in the map: a cacheless client that outlives configuration is the same bug one restart later.
+     */
     @Synchronized
     fun configure(cacheDir: File) {
-        cacheDirectory = File(cacheDir, "rm2-media")
+        val directory = File(cacheDir, "rm2-media")
+        if (directory == cacheDirectory) return
+        cacheDirectory = directory
+        clients.clear()
     }
+
+    /** What [configure] set, or null if nothing has. Here so a test can see the difference. */
+    @Synchronized
+    fun cacheDirectory(): File? = cacheDirectory
 
     /**
      * The client for a paired server: pinned to its certificate, carrying its token on every

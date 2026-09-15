@@ -22,7 +22,6 @@ data class RankState(
     val problem: Problem? = null,
     /** The pane whose long-press menu is open, if any. */
     val paneMenu: Side? = null,
-    val overflowOpen: Boolean = false,
     /** Set while the app is not in front, so videos stop and nothing is prefetched. */
     val foreground: Boolean = true,
     /**

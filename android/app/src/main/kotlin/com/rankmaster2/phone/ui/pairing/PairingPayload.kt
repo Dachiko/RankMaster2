@@ -104,6 +104,9 @@ object PairingPayloads {
 
     private const val PREFIX = "rm2://pair"
 
+    /** Characters that mean something other than "part of the address" in a URL. */
+    private const val HOST_FORBIDDEN = "/\\?#@:[]\"'<>"
+
     private val HEX = Regex("^[0-9a-f]{64}$")
     private val SIX_DIGITS = Regex("^[0-9]{6}$")
 
@@ -166,8 +169,18 @@ object PairingPayloads {
     ): PayloadResult {
         val cleanHost = host.trim()
         if (cleanHost.isEmpty()) return reject(PayloadRejection.MissingField("host"))
-        if (cleanHost.any { it.isWhitespace() } || cleanHost.contains('/')) {
-            return reject(PayloadRejection.MalformedField("host", "“$cleanHost” is not an address."))
+        // A bare host and nothing else. Everything rejected here would go on to be spliced into
+        // `https://<host>:<port>/api/v1`, where a `/`, `?`, `#`, `@` or `:` does not mean what it
+        // looks like it means - and where the least bad outcome is a URL the HTTP client refuses
+        // to parse at all, which reaches the screen as a crash rather than as an answer.
+        if (cleanHost.any { it.isWhitespace() || it in HOST_FORBIDDEN }) {
+            return reject(
+                PayloadRejection.MalformedField(
+                    "host",
+                    "“$cleanHost” is not an address. It should be just the name or the " +
+                        "numbers, like 192.168.1.42 - no slashes, no port, nothing else."
+                )
+            )
         }
 
         val cleanPort = port.trim().toIntOrNull()

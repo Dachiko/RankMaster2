@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -54,7 +57,19 @@ fun PairingScreen(
     onPaired: (ServerIdentity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier = modifier.fillMaxSize(), color = Color.Black) {
+    // Edge to edge with the bars hidden, so the cutout is this screen's problem - and so is the
+    // keyboard, which is the difference between typing a 64-character fingerprint and typing it
+    // into a field the keyboard is sitting on top of.
+    //
+    // `safeDrawing` is `systemBars ∪ displayCutout ∪ ime`, so it covers the keyboard as well and a
+    // chained `imePadding()` would add nothing: `windowInsetsPadding` consumes what it applies.
+    // One inset, doing both jobs, rather than a second line that reads as if it were load-bearing.
+    Surface(
+        modifier = modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+        color = Color.Black,
+    ) {
         val paired = state.paired
         when {
             paired != null -> PairedPanel(paired, onContinue = { onPaired(paired) })
@@ -190,7 +205,10 @@ private fun ManualPanel(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(24.dp),
+            .padding(24.dp)
+            // Room to scroll the last field clear of the keyboard. Four fields and two buttons are
+            // taller than what is left of a phone once the keyboard is up.
+            .padding(bottom = 48.dp),
     ) {
         Heading("Type it in")
         Spacer(Modifier.height(8.dp))
