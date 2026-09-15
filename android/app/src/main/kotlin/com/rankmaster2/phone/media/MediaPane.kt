@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -189,6 +191,20 @@ private fun VideoPane(
     )
 
     if (state !is MediaPaneState.Loaded) StatusPane(state, onState = {})
+
+    // The mark. A red dot in the corner of a video that cannot hold its frame rate, so the limit
+    // being hit is something the owner *sees*, on his own files, in the middle of ranking - rather
+    // than something anyone has to go and measure.
+    if (video.struggling.value) {
+        Box(Modifier.fillMaxSize().padding(10.dp), contentAlignment = Alignment.TopEnd) {
+            Box(
+                Modifier.size(9.dp).drawBehind {
+                    drawCircle(Color(0x99000000), radius = size.minDimension / 2f + 1.5f)
+                    drawCircle(Color(0xCCE24A4A), radius = size.minDimension / 2f)
+                }
+            )
+        }
+    }
 }
 
 /** Holds a player for exactly as long as the composition that asked for it. */

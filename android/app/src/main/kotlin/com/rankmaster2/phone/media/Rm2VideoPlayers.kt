@@ -5,8 +5,12 @@ import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -55,8 +59,23 @@ class Rm2VideoPlayers(
      * Range and is watched once in passing; photographs are fetched repeatedly across a session.
      * `no-store` keeps the cache for the ones that benefit from it.
      */
-    private val dataSourceFactory = OkHttpDataSource.Factory(client)
+    private val upstream = OkHttpDataSource.Factory(client)
         .setCacheControl(CacheControl.Builder().noStore().build())
+
+    /**
+     * The player reads from disk, and only reaches the network for bytes it has never seen.
+     *
+     * `no-store` above keeps video out of the *photographs'* HTTP cache; this puts it in one of its
+     * own (see [Rm2VideoCache]). The difference that matters is the loop: a clip that repeats for
+     * as long as a pair is on screen used to be re-downloaded in full every few seconds.
+     *
+     * `FLAG_IGNORE_CACHE_ON_ERROR` so a cache that cannot be written - full disk, evicted
+     * mid-read - degrades to plain streaming instead of failing the pane.
+     */
+    private val dataSourceFactory = CacheDataSource.Factory()
+        .setCache(Rm2VideoCache.get(context))
+        .setUpstreamDataSourceFactory(upstream)
+        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
     /**
      * How much of a file a player may hoard, for a file that is one Wi-Fi hop away.
@@ -134,12 +153,40 @@ class Rm2VideoPlayers(
         player.addListener(listener)
 
         onState(MediaPaneState.Loading)
+        val video = Rm2Video(player, listener)
+
+        // § the owner's ask, 2026-09-15: instead of a probe screen, the video that cannot keep up
+        // says so on itself. Media3 counts frames the renderer had to throw away because they were
+        // already late; sustained drops are precisely "this phone cannot decode this file in real
+        // time", which is the only decoder question worth answering.
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onDroppedVideoFrames(
+                eventTime: AnalyticsListener.EventTime,
+                droppedFrames: Int,
+                elapsedMs: Long,
+            ) {
+                video.reportDroppedFrames(droppedFrames, elapsedMs)
+            }
+        })
+
         player.setMediaItem(MediaItem.fromUri(url))
         player.prepare()
-        return Rm2Video(player, listener)
+        return video
     }
 
     internal companion object {
+
+        /**
+         * An [Rm2Video] with no player behind it, for testing the dropped-frame rule alone. The
+         * rule is arithmetic and deserves a test; a real ExoPlayer on a build machine does not.
+         */
+        internal fun testVideo(): Rm2Video = Rm2Video(maybePlayer = null, listener = null)
+
+        /** Frames a second the renderer may throw away before a pane admits it is struggling. */
+        const val STRUGGLING_FRAMES_PER_SECOND = 5.0
+
+        /** How long it must run clean before the mark comes off again. */
+        const val RECOVERED_AFTER_MS = 4_000L
 
         /**
          * The ceiling that matters, and the number both crashes came down to.
@@ -208,22 +255,57 @@ class Rm2VideoPlayers(
  */
 @OptIn(UnstableApi::class)
 class Rm2Video internal constructor(
-    /** For attaching to a `PlayerView`, and for nothing else. */
-    val player: ExoPlayer,
-    private val listener: Player.Listener,
+    /** For attaching to a `PlayerView`, and for nothing else. Null only in a test of the rule. */
+    private val maybePlayer: ExoPlayer?,
+    private val listener: Player.Listener?,
 ) {
+
+    val player: ExoPlayer get() = requireNotNull(maybePlayer) { "this Rm2Video has no player" }
 
     var isReleased: Boolean = false
         private set
 
+    /**
+     * True while this file is beyond this phone in real time — the mark a pane draws on itself.
+     *
+     * Asked for instead of a probe screen, and it is the better instrument: it reports on the
+     * owner's own files, during real use, at the moment it matters. If the dot never appears, the
+     * decoder question is answered. If it appears on 4K AV1 and nothing else, that is the answer
+     * too, and it arrives without anyone running a test.
+     */
+    val struggling: MutableState<Boolean> = mutableStateOf(false)
+
+    private var struggledAt = 0L
+
+    /**
+     * Dropped frames, turned into that one boolean.
+     *
+     * A frame is dropped when the renderer finds it already late, so a steady trickle is a decoder
+     * that cannot hold real time. One late frame after a start is not — hence a rate over the
+     * window Media3 reports, and a clean recovery when it stops.
+     */
+    internal fun reportDroppedFrames(dropped: Int, elapsedMs: Long) {
+        if (elapsedMs <= 0) return
+
+        val perSecond = dropped * 1000.0 / elapsedMs
+        val now = System.currentTimeMillis()
+
+        if (perSecond >= Rm2VideoPlayers.STRUGGLING_FRAMES_PER_SECOND) {
+            struggledAt = now
+            struggling.value = true
+        } else if (struggling.value && now - struggledAt > Rm2VideoPlayers.RECOVERED_AFTER_MS) {
+            struggling.value = false
+        }
+    }
+
     /** Play. Called when the pane is on screen and settled. */
     fun start() {
-        if (!isReleased) player.playWhenReady = true
+        if (!isReleased) maybePlayer?.playWhenReady = true
     }
 
     /** Pause, keeping the buffer, for a pane that is still on screen but not the one in front. */
     fun stop() {
-        if (!isReleased) player.playWhenReady = false
+        if (!isReleased) maybePlayer?.playWhenReady = false
     }
 
     /**
@@ -234,7 +316,7 @@ class Rm2Video internal constructor(
     fun release() {
         if (isReleased) return
         isReleased = true
-        player.removeListener(listener)
-        player.release()
+        listener?.let { maybePlayer?.removeListener(it) }
+        maybePlayer?.release()
     }
 }
