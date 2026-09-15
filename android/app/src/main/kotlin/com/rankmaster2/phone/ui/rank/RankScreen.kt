@@ -1,10 +1,8 @@
 package com.rankmaster2.phone.ui.rank
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,13 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rankmaster2.phone.media.MediaPane
@@ -105,18 +96,6 @@ fun RankScreen(
 
         // -- the overlays, in the order they may cover one another ---------------------------------
 
-        state.paneMenu?.let { side ->
-            PaneMenu(
-                side = side,
-                at = pressedAt,
-                state = state,
-                onDismiss = onClosePaneMenu,
-                onView = { onView(side) },
-                onDiscard = { onDiscard(side) },
-                onSpecial = { onSpecial(side) },
-            )
-        }
-
         if (state.canCancel) {
             val portrait = maxHeight >= maxWidth
             CancelNotch(
@@ -158,6 +137,26 @@ fun RankScreen(
             percent = state.snapshot?.progressPercent ?: 0,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+
+        // The menu goes on *after* the chrome, not before it. Its scrim is the modal state made
+        // visible, and a cancel tab still glowing at full strength over a dimmed screen would be
+        // both a lie about what is live and a second thing to aim at.
+        state.paneMenu?.let { side ->
+            PaneMenu(
+                side = side,
+                at = pressedAt,
+                // The window the menu is positioned in, so it can work out which corner of itself
+                // the press point is - and grow from there. See `menuTransformOrigin`.
+                windowSize = with(LocalDensity.current) {
+                    IntSize(maxWidth.roundToPx(), maxHeight.roundToPx())
+                },
+                state = state,
+                onDismiss = onClosePaneMenu,
+                onView = { onView(side) },
+                onDiscard = { onDiscard(side) },
+                onSpecial = { onSpecial(side) },
+            )
+        }
 
         state.problem?.let { problem ->
             ProblemPanel(problem = problem, onDismiss = onDismissProblem, onLeave = onLeave)
@@ -333,66 +332,6 @@ private fun Pane(ref: MediaRef, media: Rm2Media, playing: Boolean, modifier: Mod
     }
 }
 
-/**
- * One photograph's own actions. Anchored to the pane that was pressed, so "which one?" is never a
- * question the owner has to answer twice.
- */
-@Composable
-private fun PaneMenu(
-    side: Side,
-    at: Offset,
-    state: RankState,
-    onDismiss: () -> Unit,
-    onView: () -> Unit,
-    onDiscard: () -> Unit,
-    onSpecial: () -> Unit,
-) {
-    val ref = if (side == Side.LEFT) state.left else state.right
-
-    // Anchored where the thumb was, and then pushed back onto the screen if that would hang it
-    // off the edge. A long press in the bottom corner of the lower pane - which the edge margin
-    // now makes a *likely* place to press, because it is the one thing left that works there -
-    // otherwise opens a menu the owner can only see half of.
-    val press = IntOffset(at.x.toInt(), at.y.toInt())
-
-    Popup(
-        popupPositionProvider = remember(press) { ThumbPositionProvider(press) },
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
-    ) {
-        Surface(
-            color = Color(0xF21A1D23),
-            shape = RoundedCornerShape(12.dp),
-            tonalElevation = 6.dp,
-        ) {
-            Column(Modifier.padding(vertical = 6.dp)) {
-                Text(
-                    text = ref?.id.orEmpty(),
-                    color = Color(0xFF9AA3B2),
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                )
-                MenuLine("View full screen", enabled = true, onClick = onView)
-                MenuLine("Discard", enabled = state.actionable, onClick = onDiscard)
-                MenuLine("Move to special", enabled = state.actionable, onClick = onSpecial)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MenuLine(text: String, enabled: Boolean, onClick: () -> Unit) {
-    Text(
-        text = text,
-        color = if (enabled) Color(0xFFECEEF2) else Color(0xFF606878),
-        fontSize = 15.sp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickableWhen(enabled, onClick)
-            .padding(horizontal = 20.dp, vertical = 11.dp),
-    )
-}
-
 @Composable
 private fun Exhausted(onLeave: () -> Unit) {
     Column(
@@ -453,57 +392,6 @@ private fun ProblemPanel(
 private fun Centred(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, color = Color(0xFF9AA3B2))
-    }
-}
-
-/**
- * Opens a popup at the point that was pressed, and never off the glass.
- *
- * Compose's own alignment-plus-offset provider does not clamp: asked for a position near the bottom
- * or the right of the window it hands back exactly that, and the part of the menu past the edge is
- * simply not on the screen. Every candidate here is clamped into the window instead, and when there
- * is no room below the press the menu opens above it - the way a context menu on any other Android
- * surface behaves.
- */
-internal class ThumbPositionProvider(private val at: IntOffset) : PopupPositionProvider {
-
-    override fun calculatePosition(
-        anchorBounds: IntRect,
-        windowSize: IntSize,
-        layoutDirection: LayoutDirection,
-        popupContentSize: IntSize,
-    ): IntOffset = positionAt(
-        pressX = anchorBounds.left + at.x,
-        pressY = anchorBounds.top + at.y,
-        windowSize = windowSize,
-        popupContentSize = popupContentSize,
-    )
-
-    internal companion object {
-
-        /** Kept apart from the Compose interface so the arithmetic can be tested on its own. */
-        fun positionAt(
-            pressX: Int,
-            pressY: Int,
-            windowSize: IntSize,
-            popupContentSize: IntSize,
-        ): IntOffset {
-            // Below and to the right of the thumb where there is room; flipped above it where
-            // there is not, so the press point stays visible rather than being covered.
-            val preferredY = if (pressY + popupContentSize.height <= windowSize.height) {
-                pressY
-            } else {
-                pressY - popupContentSize.height
-            }
-            return IntOffset(
-                x = clamp(pressX, popupContentSize.width, windowSize.width),
-                y = clamp(preferredY, popupContentSize.height, windowSize.height),
-            )
-        }
-
-        /** Inside the window if it fits, and hard against the leading edge if it does not. */
-        private fun clamp(start: Int, size: Int, extent: Int): Int =
-            start.coerceIn(0, maxOf(0, extent - size))
     }
 }
 
