@@ -171,6 +171,10 @@ private fun VideoPane(
         },
         update = { view -> view.player = video.player },
         onReset = { view -> view.player = null },
+        // onReset fires when the view is recycled; onRelease when it is thrown away. A PlayerView
+        // that leaves the screen still holding a player keeps its surface, and the next video finds
+        // the decoder occupied.
+        onRelease = { view -> view.player = null },
     )
 
     if (state !is MediaPaneState.Loaded) StatusPane(state, onState = {})

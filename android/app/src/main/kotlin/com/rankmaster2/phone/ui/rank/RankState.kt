@@ -25,6 +25,12 @@ data class RankState(
     val overflowOpen: Boolean = false,
     /** Set while the app is not in front, so videos stop and nothing is prefetched. */
     val foreground: Boolean = true,
+    /**
+     * Which pane is open full screen, if any. While something is, the panes underneath must stop:
+     * a second player on the same file means two hardware decoders on one video, which is how the
+     * app died the first time it was asked to watch one.
+     */
+    val viewing: Side? = null,
 ) {
     val pair get() = snapshot?.pair
     val left: MediaRef? get() = pair?.left
@@ -40,6 +46,9 @@ data class RankState(
 
     /** A pane may be acted on only while a token exists and nothing else is in flight. */
     val actionable: Boolean get() = !busy && snapshot?.pairToken != null
+
+    /** Whether the panes behind should be running. */
+    val panesPlaying: Boolean get() = foreground && viewing == null
 
     data class Problem(val title: String, val body: String, val fatal: Boolean = false)
 }

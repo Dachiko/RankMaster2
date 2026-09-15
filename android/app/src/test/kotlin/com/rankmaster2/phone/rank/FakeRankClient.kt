@@ -90,7 +90,13 @@ class FakeRankClient : Rm2Client {
     override suspend fun roots(): Rm2Result<Roots> = error("not used")
     override suspend fun browse(path: String, counts: Boolean): Rm2Result<Browse> = error("not used")
     override suspend fun openSession(folder: String): Rm2Result<Snapshot> = error("not used")
-    override suspend fun closeSession(): Rm2Result<Unit> = Rm2Result.Ok(Unit)
+    var sessionClosed = false
+        private set
+
+    override suspend fun closeSession(): Rm2Result<Unit> {
+        sessionClosed = true
+        return Rm2Result.Ok(Unit)
+    }
     override fun url(link: String): String = baseUrl.removeSuffix("/api/v1") + link
 }
 

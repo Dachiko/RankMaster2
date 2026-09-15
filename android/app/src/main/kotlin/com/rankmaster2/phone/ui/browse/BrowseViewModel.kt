@@ -279,7 +279,11 @@ class BrowseViewModel(
     private fun refusalToFailure(path: String, refused: Rm2Result.Refused): OpenFailure = when {
         refused.code == ErrorCodes.FOLDER_NOT_RANKABLE -> OpenFailure.NotRankable(path, refused.message)
         refused.code == ErrorCodes.FOLDER_NOT_FOUND -> OpenFailure.NotFound(path, refused.message)
-        refused.code == ErrorCodes.SESSION_ALREADY_OPEN -> OpenFailure.AlreadyOpen(path, refused.message)
+        refused.code == ErrorCodes.SESSION_ALREADY_OPEN -> OpenFailure.AlreadyOpen(
+            folder = path,
+            serverMessage = refused.message,
+            openFolder = refused.detailText("openFolder"),
+        )
         // § 4 says branch on the code, and `folder_locked` is the code § 10.1 step 4 produces. It
         // is not in `ErrorCodes`, so the status is the reliable half here: 423 is Locked and
         // nothing else in this API returns it.

@@ -242,4 +242,41 @@ class RankViewModelTest {
         assertEquals(1, client.sessionReads)
         assertEquals("token-9", vm.state.value.snapshot?.pairToken)
     }
+
+    // -- leaving, and the folder the PC was left holding ------------------------------------------
+
+    @Test
+    fun `leaving closes the session on the PC`() = runTest {
+        val client = FakeRankClient()
+        val vm = viewModel(client, scope = this)
+        var left = false
+
+        vm.leave { left = true }
+
+        assertTrue("the session must be closed before the screen goes", client.sessionClosed)
+        assertTrue(left)
+    }
+
+    @Test
+    fun `opening the viewer stops the panes underneath`() = runTest {
+        val vm = viewModel(FakeRankClient(), scope = this)
+        assertTrue(vm.state.value.panesPlaying)
+
+        vm.view(Side.LEFT)
+        assertFalse(
+            "two players on one video is two decoders on one file",
+            vm.state.value.panesPlaying,
+        )
+
+        vm.view(null)
+        assertTrue(vm.state.value.panesPlaying)
+    }
+
+    @Test
+    fun `backgrounding stops the panes whatever else is open`() = runTest {
+        val vm = viewModel(FakeRankClient(), scope = this)
+
+        vm.onForeground(false)
+        assertFalse(vm.state.value.panesPlaying)
+    }
 }

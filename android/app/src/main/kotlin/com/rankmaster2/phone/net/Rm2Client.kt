@@ -107,6 +107,10 @@ sealed interface Rm2Result<out T> {
         /** One integer out of [details], or null. The shape is the code's, so read it by name. */
         fun detailInt(name: String): Int? =
             (details?.get(name) as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+
+        /** One string out of [details], or null. */
+        fun detailText(name: String): String? =
+            (details?.get(name) as? JsonPrimitive)?.contentOrNull
     }
 
     /**

@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -29,13 +30,19 @@ import androidx.compose.ui.unit.sp
  * under a light mark. That costs nothing and removes the only way these can disappear.
  */
 
-/** Emerald: the winner was already ahead. The desktop's colour, kept so the strip reads the same. */
-private val Confirmation = Color(0xFF2ECC71)
+/**
+ * Emerald and amber, at the weight the owner asked for: faint.
+ *
+ * These are the desktop's hues, but the desktop draws them on a chrome strip and this draws them on
+ * a photograph. At full strength they read as part of the picture; at this weight they are a mark
+ * you can consult and otherwise ignore, which is what the strip is for. The halo underneath is what
+ * lets them stay this faint and still be findable on a white photograph.
+ */
+private val Confirmation = Color(0x8C2ECC71)
 
-/** Amber: an upset. The one that means the ranking learned something. */
-private val Upset = Color(0xFFF0A020)
+private val Upset = Color(0x8CF0A020)
 
-private val Halo = Color(0x99000000)
+private val Halo = Color(0x66000000)
 
 /**
  * The match strip: up to ten dots, oldest first, exactly `snapshot.cues` (§ 9.1).
@@ -50,8 +57,8 @@ fun MatchStrip(cues: List<String>, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(50))
-            .background(Color(0x40000000))
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .background(Color(0x26000000))
+            .padding(horizontal = 7.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -59,7 +66,7 @@ fun MatchStrip(cues: List<String>, modifier: Modifier = Modifier) {
             val colour = if (cue == "upset") Upset else Confirmation
             Box(
                 Modifier
-                    .size(9.dp)
+                    .size(8.dp)
                     .drawBehind {
                         drawCircle(Halo, radius = size.minDimension / 2f + 1.5f, center = center)
                         drawCircle(colour, radius = size.minDimension / 2f, center = center)
@@ -70,32 +77,52 @@ fun MatchStrip(cues: List<String>, modifier: Modifier = Modifier) {
 }
 
 /**
- * The cancel notch: a tab rising out of the screen edge with the word in it.
+ * The cancel notch, on the bottom edge: a tab with the word in it, rising out of the screen.
  *
- * It appears only when there is something to take back (§ 10.10's `undoAvailable`), so like the
- * strip it starts absent and its arrival is the signal that something happened. A button that is
- * always there but usually does nothing teaches you to stop looking at it.
+ * Pushed off-centre because the middle of the bottom edge belongs to Android's home gesture, and a
+ * tab underneath it is a tab that cannot be pressed.
  */
 @Composable
-fun CancelNotch(onCancel: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
-    val ink = if (enabled) Color(0xCCECEEF2) else Color(0x66ECEEF2)
-
+fun CancelNotchBottom(onCancel: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-            .background(Color(0x59000000))
+            .background(Color(0x4D000000))
             .clickableWhen(enabled, onCancel)
-            .padding(horizontal = 22.dp, vertical = 7.dp),
+            .padding(horizontal = 20.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = "cancel",
-            color = ink,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.drawBehind { },
-        )
+        CancelWord(enabled)
     }
+}
+
+/**
+ * The same tab on the right edge, for portrait, where the thumb already is and where nothing else
+ * lives. The word turns with the edge.
+ */
+@Composable
+fun CancelNotchRight(onCancel: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
+            .background(Color(0x4D000000))
+            .clickableWhen(enabled, onCancel)
+            .padding(horizontal = 7.dp, vertical = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.rotate(90f)) { CancelWord(enabled) }
+    }
+}
+
+@Composable
+private fun CancelWord(enabled: Boolean) {
+    Text(
+        text = "cancel",
+        color = if (enabled) Color(0xB3ECEEF2) else Color(0x4DECEEF2),
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+    )
 }
 
 /**

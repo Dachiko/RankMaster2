@@ -1,6 +1,7 @@
 package com.rankmaster2.phone.ui.rank
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -10,10 +11,14 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,6 +34,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rankmaster2.phone.media.MediaPane
@@ -78,12 +86,19 @@ fun RankScreen(
 ) {
     val snapshot = state.snapshot
 
-    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+    // Where the long press landed, so its menu opens under the thumb rather than in a corner of
+    // the screen the owner was not looking at.
+    var pressedAt by remember { mutableStateOf(Offset.Zero) }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(Color.Black)) {
         when {
             snapshot == null -> Centred("Opening…")
             state.exhausted -> Exhausted(onLeave = onLeave, onSave = onSave)
             state.left != null && state.right != null ->
-                Pair(state, media, onVote, onPaneMenu)
+                Pair(state, media, onVote) { side, at ->
+                    pressedAt = at
+                    onPaneMenu(side)
+                }
             else -> Centred("Nothing to rank here")
         }
 
@@ -91,7 +106,12 @@ fun RankScreen(
 
         OverflowDots(
             onOpen = onOpenOverflow,
-            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+            // Inside the safe area: a control under the status bar or a camera cutout is a control
+            // that cannot be pressed.
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(4.dp),
         )
 
         OverflowMenu(
@@ -101,12 +121,16 @@ fun RankScreen(
             onSkip = onSkip,
             onSave = onSave,
             onLeave = onLeave,
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 36.dp, end = 8.dp),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(top = 36.dp, end = 8.dp),
         )
 
         state.paneMenu?.let { side ->
             PaneMenu(
                 side = side,
+                at = pressedAt,
                 state = state,
                 onDismiss = onClosePaneMenu,
                 onView = { onView(side) },
@@ -116,11 +140,25 @@ fun RankScreen(
         }
 
         if (state.canCancel) {
-            CancelNotch(
-                onCancel = onCancel,
-                enabled = !state.busy,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            val portrait = maxHeight >= maxWidth
+            if (portrait) {
+                // The right edge, where the thumb already is and where nothing else lives.
+                CancelNotchRight(
+                    onCancel = onCancel,
+                    enabled = !state.busy,
+                    modifier = Modifier.align(Alignment.CenterEnd).windowInsetsPadding(WindowInsets.safeDrawing),
+                )
+            } else {
+                // Bottom, but off to the right: dead centre belongs to Android's home gesture.
+                CancelNotchBottom(
+                    onCancel = onCancel,
+                    enabled = !state.busy,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(end = 56.dp),
+                )
+            }
         }
 
         state.notice?.let { text ->
@@ -132,7 +170,8 @@ fun RankScreen(
                 text = text,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (state.canCancel) 46.dp else 18.dp),
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(bottom = 18.dp),
             )
         }
 
@@ -153,7 +192,7 @@ private fun Pair(
     state: RankState,
     media: Rm2Media,
     onVote: (Side) -> Unit,
-    onPaneMenu: (Side) -> Unit,
+    onPaneMenu: (Side, Offset) -> Unit,
 ) {
     val left = state.left ?: return
     val right = state.right ?: return
@@ -166,7 +205,7 @@ private fun Pair(
 
         // Videos run only while this screen is in front and nothing is in flight; two decoders
         // going while an action resolves is how a phone runs out of memory mid-session.
-        val playing = state.foreground
+        val playing = state.panesPlaying
 
         if (portrait) {
             Column(Modifier.fillMaxSize()) {
@@ -201,7 +240,7 @@ private fun Pair(
                         },
                         onLongPress = { at ->
                             sideAt(at, portrait, widthPx, heightPx, deadBandPx)
-                                ?.let(onPaneMenu)
+                                ?.let { side -> onPaneMenu(side, at) }
                         },
                     )
                 }
@@ -282,6 +321,7 @@ private fun OverflowMenu(
 @Composable
 private fun PaneMenu(
     side: Side,
+    at: Offset,
     state: RankState,
     onDismiss: () -> Unit,
     onView: () -> Unit,
@@ -289,37 +329,48 @@ private fun PaneMenu(
     onSpecial: () -> Unit,
 ) {
     val ref = if (side == Side.LEFT) state.left else state.right
-    Box(
-        Modifier
-            .fillMaxSize()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = if (side == Side.LEFT) Alignment.TopCenter else Alignment.BottomCenter,
+    val density = LocalDensity.current
+
+    // Anchored where the thumb was. A menu that opens across the screen from the press makes the
+    // owner hunt for the thing they just asked for.
+    val offset = with(density) { IntOffset(at.x.toInt(), at.y.toInt()) }
+
+    Popup(
+        offset = offset,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
     ) {
-        Box(Modifier.padding(vertical = 48.dp)) {
-            DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-                DropdownMenuItem(
-                    enabled = false,
-                    text = { Text(ref?.id ?: "", fontSize = 12.sp) },
-                    onClick = {},
+        Surface(
+            color = Color(0xF21A1D23),
+            shape = RoundedCornerShape(12.dp),
+            tonalElevation = 6.dp,
+        ) {
+            Column(Modifier.padding(vertical = 6.dp)) {
+                Text(
+                    text = ref?.id.orEmpty(),
+                    color = Color(0xFF9AA3B2),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
-                DropdownMenuItem(text = { Text("View full screen") }, onClick = onView)
-                DropdownMenuItem(
-                    text = { Text("Discard") },
-                    enabled = state.actionable,
-                    onClick = onDiscard,
-                )
-                DropdownMenuItem(
-                    text = { Text("Move to special") },
-                    enabled = state.actionable,
-                    onClick = onSpecial,
-                )
+                MenuLine("View full screen", enabled = true, onClick = onView)
+                MenuLine("Discard", enabled = state.actionable, onClick = onDiscard)
+                MenuLine("Move to special", enabled = state.actionable, onClick = onSpecial)
             }
         }
     }
+}
+
+@Composable
+private fun MenuLine(text: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        text = text,
+        color = if (enabled) Color(0xFFECEEF2) else Color(0xFF606878),
+        fontSize = 15.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickableWhen(enabled, onClick)
+            .padding(horizontal = 20.dp, vertical = 11.dp),
+    )
 }
 
 @Composable

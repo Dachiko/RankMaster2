@@ -174,7 +174,12 @@ sealed interface OpenFailure {
      * `DELETE /session` first. The server MUST NOT close the open session implicitly." So this is
      * the one failure that comes with an action attached: close that one, then open this one.
      */
-    data class AlreadyOpen(override val folder: String, override val serverMessage: String?) : OpenFailure
+    data class AlreadyOpen(
+        override val folder: String,
+        override val serverMessage: String?,
+        /** § 5.3's `details.openFolder`: the folder the PC actually has open. */
+        val openFolder: String? = null,
+    ) : OpenFailure
 
     /** `423 folder_locked` - `<folder>/.rankmaster.lock` is held (§ 10.1 step 4, § 10.4). */
     data class Locked(override val folder: String, override val serverMessage: String?) : OpenFailure

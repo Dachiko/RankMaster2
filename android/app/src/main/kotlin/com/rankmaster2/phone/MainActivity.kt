@@ -6,6 +6,9 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,8 +25,10 @@ import androidx.compose.ui.graphics.Color
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         hideFromTheAppSwitcher()
         enableEdgeToEdge()
+        goFullScreen()
         setContent { Rm2Theme { Rm2App(this) } }
     }
 
@@ -44,6 +49,29 @@ class MainActivity : ComponentActivity() {
      * So: the narrow API where it exists, and the blunt one only below Android 13, where nothing
      * else will do it. The target device is Android 14 and takes the first path.
      */
+    /**
+     * No status bar, no navigation bar: the two photographs get the glass.
+     *
+     * A clock and a battery icon above a picture being judged are two things competing with it, and
+     * this screen exists to ask one question. The bars come back on a swipe from the edge and go
+     * away again on their own - `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` - so nothing is lost, it is
+     * just not permanently in the way.
+     */
+    private fun goFullScreen() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Coming back from the app switcher, or from a permission dialog, restores the bars. Put
+        // them away again.
+        if (hasFocus) goFullScreen()
+    }
+
     private fun hideFromTheAppSwitcher() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(false)

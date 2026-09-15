@@ -67,7 +67,7 @@ fun notRankableReason(row: FolderRow): String = when (val t = row.tally) {
 fun openFailureHeadline(failure: OpenFailure): String = when (failure) {
     is OpenFailure.NotRankable -> "Nothing to rank in that folder"
     is OpenFailure.NotFound -> "That folder is not there any more"
-    is OpenFailure.AlreadyOpen -> "The PC is already ranking another folder"
+    is OpenFailure.AlreadyOpen -> "A folder is still open on the PC"
     is OpenFailure.Locked -> "That folder is in use"
     is OpenFailure.Refused -> "The PC would not open that folder"
     is OpenFailure.Unreachable ->
@@ -84,8 +84,15 @@ fun openFailureAdvice(failure: OpenFailure): String = when (failure) {
         "It has been moved, renamed, or its drive was unplugged since this list was made. " +
             "Go back and refresh."
 
-    is OpenFailure.AlreadyOpen ->
-        "Close that session first - the PC will not drop it by itself - then open this folder."
+    is OpenFailure.AlreadyOpen -> buildString {
+        // Almost always this phone's own doing: an earlier run left the folder open, and the PC
+        // holds it until someone says otherwise. Saying "the PC is ranking something" sends the
+        // owner looking for a window that is not there.
+        append("The PC still has ")
+        append(failure.openFolder?.let { "\"" + it.substringAfterLast('\\') + "\"" } ?: "a folder")
+        append(" open - probably left behind by this phone. Nothing is being ranked there and ")
+        append("nothing is lost; close it and this folder opens.")
+    }
 
     is OpenFailure.Locked ->
         "Something else is holding this folder (the Rank Master window on the PC, or another " +

@@ -90,6 +90,22 @@ class RankViewModel(
         where.launch { finish(client.session(), quiet = true) }
     }
 
+    /**
+     * Closes the session before leaving.
+     *
+     * Without this the PC keeps the folder open and locked after the phone walks away, and the next
+     * folder the owner picks is refused with "already ranking another folder" - which is exactly
+     * what happened the first time this app was used on a real library.
+     */
+    fun leave(then: () -> Unit) {
+        where.launch {
+            client.closeSession()
+            then()
+        }
+    }
+
+    fun view(side: Side?) = _state.update { it.copy(viewing = side, paneMenu = null) }
+
     fun openPaneMenu(side: Side) = _state.update { it.copy(paneMenu = side) }
     fun closePaneMenu() = _state.update { it.copy(paneMenu = null) }
     fun openOverflow() = _state.update { it.copy(overflowOpen = true) }
