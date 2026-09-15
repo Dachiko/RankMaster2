@@ -9,6 +9,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -52,10 +53,12 @@ fun RankRoute(
         when {
             state.viewing != null -> viewModel.view(null)
             state.paneMenu != null -> viewModel.closePaneMenu()
-            state.overflowOpen -> viewModel.closeOverflow()
             else -> viewModel.leave(onLeave)
         }
     }
+
+    val configuration = LocalConfiguration.current
+    val portrait = configuration.screenHeightDp >= configuration.screenWidthDp
 
     BoxWithConstraints(modifier.fillMaxSize()) {
         val panePx = with(LocalDensity.current) {
@@ -80,30 +83,28 @@ fun RankRoute(
             onDiscard = viewModel::discard,
             onSpecial = viewModel::special,
             onView = { side -> viewModel.view(side) },
-            onSkip = viewModel::skip,
-            onSave = viewModel::save,
             onCancel = viewModel::cancel,
-            onOpenOverflow = viewModel::openOverflow,
-            onCloseOverflow = viewModel::closeOverflow,
             onLeave = { viewModel.leave(onLeave) },
             onDismissNotice = viewModel::dismissNotice,
             onDismissProblem = viewModel::dismissProblem,
         )
 
-        state.viewing?.let { side ->
-            val pair = state.pair
-            if (pair == null) {
-                viewModel.view(null)
-            } else {
-                FullScreenViewer(
-                    left = pair.left,
-                    right = pair.right,
-                    showing = side,
-                    media = media,
-                    onShow = { viewModel.view(it) },
-                    onDismiss = { viewModel.view(null) },
-                )
-            }
+    }
+
+    state.viewing?.let { side ->
+        val pair = state.pair
+        if (pair == null) {
+            viewModel.view(null)
+        } else {
+            FullScreenViewer(
+                left = pair.left,
+                right = pair.right,
+                showing = side,
+                portrait = portrait,
+                media = media,
+                onShow = { viewModel.view(it) },
+                onDismiss = { viewModel.view(null) },
+            )
         }
     }
 }

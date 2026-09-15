@@ -1,7 +1,7 @@
 package com.rankmaster2.phone.ui.rank.full
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,13 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,70 +35,91 @@ import com.rankmaster2.phone.ui.rank.Side
 /**
  * One item of the pair, filling the screen, with no vote attached.
  *
- * Looking is not voting. This is where a photograph is actually examined, or a video watched, and
- * a tap here leaves rather than choosing. **Swipe sideways to see the other one** — comparing two
- * pictures properly means going back and forth between them at full size, and having to leave and
- * long-press the other one breaks exactly the comparison being made.
+ * Looking is not voting: a tap here leaves rather than choosing. Swiping moves to the other one,
+ * **along the axis the panes are laid out on** — portrait stacks them, so the top picture's partner
+ * is below it and the gesture is downward; landscape puts them side by side, so it is sideways. A
+ * gesture that disagrees with where the thing actually sits is a second thing to learn.
  *
- * Only one item plays at a time, and the panes behind this are stopped while it is open: two
- * players on one video is two hardware decoders on one file.
+ * Built on a `Pager` rather than a drag detector. The first attempt was hand-rolled with a
+ * quarter-screen threshold and no animation, so nothing followed the finger and nothing moved until
+ * the drag was already over — which is what "slow" meant. A pager follows the finger, takes a flick
+ * rather than a journey, and snaps.
+ *
+ * It fills the window rather than whatever box contained it, which is what left the pair showing
+ * through after a rotation.
  */
 @Composable
 fun FullScreenViewer(
     left: MediaRef,
     right: MediaRef,
     showing: Side,
+    portrait: Boolean,
     media: Rm2Media,
     onShow: (Side) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val ref = if (showing == Side.LEFT) left else right
-    var dragged by remember { mutableFloatStateOf(0f) }
+    val pages = listOf(left, right)
+    val state = rememberPagerState(initialPage = if (showing == Side.LEFT) 0 else 1) { pages.size }
+
+    // Tell the screen behind which one is showing, so it knows what "back" and the panes should do.
+    LaunchedEffect(state) {
+        snapshotFlow { state.settledPage }.collect { page ->
+            onShow(if (page == 0) Side.LEFT else Side.RIGHT)
+        }
+    }
+
+    val fling = PagerDefaults.flingBehavior(
+        state = state,
+        // Short enough not to be waited on, long enough to see which way it went.
+        snapAnimationSpec = tween(durationMillis = 180),
+    )
 
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .pointerInput(showing) {
-                detectTapGestures(onTap = { onDismiss() })
-            }
-            .pointerInput(showing) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        // A deliberate swipe, not a stray finger: a quarter of the screen.
-                        val threshold = size.width / 4f
-                        if (dragged <= -threshold) onShow(Side.RIGHT)
-                        if (dragged >= threshold) onShow(Side.LEFT)
-                        dragged = 0f
-                    },
-                    onDragCancel = { dragged = 0f },
-                    onHorizontalDrag = { _, amount -> dragged += amount },
-                )
-            },
-        contentAlignment = Alignment.Center,
+            .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
     ) {
-        MediaPane(ref = ref, media = media, playing = true)
+        val content: @Composable (Int) -> Unit = { page ->
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                // Only the settled page plays: two decoders on two 4K files is how this app died.
+                MediaPane(
+                    ref = pages[page],
+                    media = media,
+                    playing = state.settledPage == page,
+                )
+            }
+        }
 
-        // Which of the two is on screen, and that there is another. Two dots, no words.
+        if (portrait) {
+            VerticalPager(state = state, flingBehavior = fling, modifier = Modifier.fillMaxSize()) {
+                content(it)
+            }
+        } else {
+            HorizontalPager(state = state, flingBehavior = fling, modifier = Modifier.fillMaxSize()) {
+                content(it)
+            }
+        }
+
         Row(
             Modifier
                 .align(Alignment.BottomCenter)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(bottom = 28.dp),
+                .padding(bottom = 26.dp),
         ) {
-            Dot(filled = showing == Side.LEFT)
+            Dot(filled = state.currentPage == 0)
             Box(Modifier.size(width = 8.dp, height = 1.dp))
-            Dot(filled = showing == Side.RIGHT)
+            Dot(filled = state.currentPage == 1)
         }
 
         Text(
-            text = ref.id,
+            text = pages[state.currentPage].id,
             color = Color(0x80ECEEF2),
             fontSize = 11.sp,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(bottom = 10.dp),
+                .padding(bottom = 8.dp),
         )
     }
 }

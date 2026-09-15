@@ -8,8 +8,10 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.rankmaster2.phone.net.MediaRef
 import okhttp3.CacheControl
@@ -56,6 +58,36 @@ class Rm2VideoPlayers(
     private val dataSourceFactory = OkHttpDataSource.Factory(client)
         .setCacheControl(CacheControl.Builder().noStore().build())
 
+    /**
+     * How much of a file a player may hoard, for a file that is one Wi-Fi hop away.
+     *
+     * This exists because the defaults are written for a phone on mobile data and they killed this
+     * app twice. Media3 allows a muxed stream **137 MB** of source buffer and reads 50 seconds
+     * ahead; two panes is 275 MB of allowance against a 256 MB heap, before a single photograph.
+     *
+     * That allowance is only theoretical until something fills it - and a 4K AV1 clip on a phone
+     * with no hardware AV1 decoder fills it perfectly. The network delivers far faster than a
+     * software decoder consumes, so the buffer grows to its ceiling and stays there. Both crashes
+     * were that: one thrown by the player, one by the HTTP reader, the same wall from either side.
+     *
+     * Seconds and megabytes instead. The bytes are on a PC in the same room, served Range-capable:
+     * there is no outage to ride out, and a rebuffer costs a round trip on a LAN.
+     */
+    private fun lanLoadControl(): LoadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            /* minBufferMs = */ MIN_BUFFER_MS,
+            /* maxBufferMs = */ MAX_BUFFER_MS,
+            /* bufferForPlaybackMs = */ 500,
+            /* bufferForPlaybackAfterRebufferMs = */ 1_000,
+        )
+        // The hard ceiling, and the number that actually matters: 6 MB a player, so two panes cost
+        // about twelve between them rather than two hundred and seventy-five.
+        .setTargetBufferBytes(TARGET_BUFFER_BYTES)
+        // Size wins over duration: with a 4K file, 8 seconds is far more than 6 MB, and it is the
+        // megabytes that have to be obeyed.
+        .setPrioritizeTimeOverSizeThresholds(false)
+        .build()
+
     /** The URL this ref would play, or null if it is not a video (or has already gone). */
     fun videoUrl(ref: MediaRef): String? {
         if (ref.isMissing) return null
@@ -81,6 +113,7 @@ class Rm2VideoPlayers(
                 .setEnableDecoderFallback(true),
         )
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .setLoadControl(lanLoadControl())
             .build()
 
         player.volume = 0f            // A ranking screen that makes noise is a ranking screen
@@ -107,6 +140,20 @@ class Rm2VideoPlayers(
     }
 
     internal companion object {
+
+        /**
+         * The ceiling that matters, and the number both crashes came down to.
+         *
+         * 32 MB a player, 64 MB across two panes. Not the 6 MB a LAN strictly needs and not the
+         * 137 MB Media3 offers: the owner asked for room to spare, and with `largeHeap` the app has
+         * about 512 MB to spend rather than 256. A gigabyte was asked for and cannot exist - the
+         * buffer is inside the heap, so a gigabyte is four times everything the app is allowed.
+         */
+        const val TARGET_BUFFER_BYTES = 32 * 1024 * 1024
+
+        const val MIN_BUFFER_MS = 4_000
+        const val MAX_BUFFER_MS = 20_000
+
 
         /**
          * A playback failure, in the terms a pane can act on.

@@ -53,10 +53,10 @@ import kotlinx.coroutines.delay
  *
  * ## Where things sit, and why
  *
- * The two panes meet along a seam: horizontal across the middle in portrait, vertical in landscape.
- * The match strip sits *on* that seam — in portrait at the middle of the screen, in landscape at the
- * seam's top end — and the cancel notch sits at the seam's other end, rising out of the bottom edge.
- * So both overlays live on the one line that belongs to neither photograph.
+ * There is no menu and no bar. Skip went because the owner does not skip; save went because every
+ * action is already on disk before its response is sent, so there was never anything to save; close
+ * went because back does it. What is left floating is the match strip on the seam, the cancel notch
+ * on an edge, and a progress hairline along the bottom.
  *
  * ## The dead band
  *
@@ -74,11 +74,7 @@ fun RankScreen(
     onDiscard: (Side) -> Unit,
     onSpecial: (Side) -> Unit,
     onView: (Side) -> Unit,
-    onSkip: () -> Unit,
-    onSave: () -> Unit,
     onCancel: () -> Unit,
-    onOpenOverflow: () -> Unit,
-    onCloseOverflow: () -> Unit,
     onLeave: () -> Unit,
     onDismissNotice: () -> Unit,
     onDismissProblem: () -> Unit,
@@ -93,7 +89,7 @@ fun RankScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(Color.Black)) {
         when {
             snapshot == null -> Centred("Opening…")
-            state.exhausted -> Exhausted(onLeave = onLeave, onSave = onSave)
+            state.exhausted -> Exhausted(onLeave = onLeave)
             state.left != null && state.right != null ->
                 Pair(state, media, onVote) { side, at ->
                     pressedAt = at
@@ -103,29 +99,6 @@ fun RankScreen(
         }
 
         // -- the overlays, in the order they may cover one another ---------------------------------
-
-        OverflowDots(
-            onOpen = onOpenOverflow,
-            // Inside the safe area: a control under the status bar or a camera cutout is a control
-            // that cannot be pressed.
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(4.dp),
-        )
-
-        OverflowMenu(
-            open = state.overflowOpen,
-            state = state,
-            onDismiss = onCloseOverflow,
-            onSkip = onSkip,
-            onSave = onSave,
-            onLeave = onLeave,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 36.dp, end = 8.dp),
-        )
 
         state.paneMenu?.let { side ->
             PaneMenu(
@@ -141,24 +114,21 @@ fun RankScreen(
 
         if (state.canCancel) {
             val portrait = maxHeight >= maxWidth
-            if (portrait) {
-                // The right edge, where the thumb already is and where nothing else lives.
-                CancelNotchRight(
-                    onCancel = onCancel,
-                    enabled = !state.busy,
-                    modifier = Modifier.align(Alignment.CenterEnd).windowInsetsPadding(WindowInsets.safeDrawing),
-                )
-            } else {
-                // Bottom, but off to the right: dead centre belongs to Android's home gesture.
-                CancelNotchBottom(
-                    onCancel = onCancel,
-                    enabled = !state.busy,
-                    modifier = Modifier
+            CancelNotch(
+                onCancel = onCancel,
+                enabled = !state.busy,
+                edge = if (portrait) NotchEdge.RIGHT else NotchEdge.BOTTOM,
+                modifier = if (portrait) {
+                    // The right edge, where the thumb already is and where nothing else lives.
+                    Modifier.align(Alignment.CenterEnd).windowInsetsPadding(WindowInsets.safeDrawing)
+                } else {
+                    // Bottom, off to the right: dead centre belongs to Android's home gesture.
+                    Modifier
                         .align(Alignment.BottomEnd)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(end = 56.dp),
-                )
-            }
+                        .padding(end = 40.dp, bottom = 3.dp)
+                },
+            )
         }
 
         state.notice?.let { text ->
@@ -174,6 +144,11 @@ fun RankScreen(
                     .padding(bottom = 18.dp),
             )
         }
+
+        ProgressLine(
+            percent = state.snapshot?.progressPercent ?: 0,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
 
         state.problem?.let { problem ->
             ProblemPanel(problem = problem, onDismiss = onDismissProblem, onLeave = onLeave)
@@ -275,45 +250,6 @@ private fun Pane(ref: MediaRef, media: Rm2Media, playing: Boolean, modifier: Mod
     }
 }
 
-@Composable
-private fun OverflowMenu(
-    open: Boolean,
-    state: RankState,
-    onDismiss: () -> Unit,
-    onSkip: () -> Unit,
-    onSave: () -> Unit,
-    onLeave: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier) {
-        DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
-            val counts = state.snapshot?.counts
-            if (counts != null) {
-                // Progress lives here rather than on the pair: the desktop shows a percentage, but
-                // a number on the ranking surface is a number competing with the photographs.
-                DropdownMenuItem(
-                    enabled = false,
-                    text = {
-                        Text(
-                            "${state.snapshot?.progressPercent ?: 0}% — ${counts.unranked} never ranked " +
-                                "of ${counts.rankable}",
-                            fontSize = 13.sp,
-                        )
-                    },
-                    onClick = {},
-                )
-            }
-            DropdownMenuItem(
-                text = { Text("Skip this pair") },
-                enabled = state.actionable,
-                onClick = onSkip,
-            )
-            DropdownMenuItem(text = { Text("Save now") }, enabled = !state.busy, onClick = onSave)
-            DropdownMenuItem(text = { Text("Close this folder") }, onClick = onLeave)
-        }
-    }
-}
-
 /**
  * One photograph's own actions. Anchored to the pane that was pressed, so "which one?" is never a
  * question the owner has to answer twice.
@@ -374,7 +310,7 @@ private fun MenuLine(text: String, enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Exhausted(onLeave: () -> Unit, onSave: () -> Unit) {
+private fun Exhausted(onLeave: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
@@ -382,12 +318,11 @@ private fun Exhausted(onLeave: () -> Unit, onSave: () -> Unit) {
     ) {
         Text("Nothing left to rank here", color = Color(0xFFECEEF2), textAlign = TextAlign.Center)
         Text(
-            "Every pair in this folder has been seen.",
+            "Every pair in this folder has been seen. Everything is saved.",
             color = Color(0xFF9AA3B2),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
         )
-        TextButton(onClick = onSave) { Text("Save now", color = Color(0xFF2ECC71)) }
         TextButton(onClick = onLeave) { Text("Pick another folder", color = Color(0xFF2ECC71)) }
     }
 }

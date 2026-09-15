@@ -1,22 +1,32 @@
 package com.rankmaster2.phone.ui.rank
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,78 +87,77 @@ fun MatchStrip(cues: List<String>, modifier: Modifier = Modifier) {
 }
 
 /**
- * The cancel notch, on the bottom edge: a tab with the word in it, rising out of the screen.
+ * The cancel notch: a tab that the screen edge grows, with the word inside it.
  *
- * Pushed off-centre because the middle of the bottom edge belongs to Android's home gesture, and a
- * tab underneath it is a tab that cannot be pressed.
+ * The first two attempts at this were a filled rounded rectangle, which reads as a panel stuck onto
+ * the edge and — being 30% black — is invisible over a dark photograph and nearly invisible over a
+ * bright one. What was asked for, and what this draws, is the sketch: flat along the edge, up,
+ * **sloping inward** to a short flat top, and back down.
+ *
+ * The outline is the control; the word only names it, so the word sits below the outline's weight.
+ * Both are drawn twice — a dark halo under a light mark — which is what lets something this faint
+ * stay findable on a white photograph and a black one alike.
  */
 @Composable
-fun CancelNotchBottom(onCancel: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
+fun CancelNotch(
+    onCancel: () -> Unit,
+    enabled: Boolean,
+    edge: NotchEdge,
+    modifier: Modifier = Modifier,
+) {
+    val rotation = if (edge == NotchEdge.RIGHT) 90f else 0f
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-            .background(Color(0x4D000000))
+            .rotate(rotation)
+            .size(width = NotchBase, height = NotchHeight)
             .clickableWhen(enabled, onCancel)
-            .padding(horizontal = 20.dp, vertical = 7.dp),
+            .drawBehind { drawNotch(enabled) },
         contentAlignment = Alignment.Center,
     ) {
-        CancelWord(enabled)
-    }
-}
-
-/**
- * The same tab on the right edge, for portrait, where the thumb already is and where nothing else
- * lives. The word turns with the edge.
- */
-@Composable
-fun CancelNotchRight(onCancel: () -> Unit, enabled: Boolean, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp))
-            .background(Color(0x4D000000))
-            .clickableWhen(enabled, onCancel)
-            .padding(horizontal = 7.dp, vertical = 20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.rotate(90f)) { CancelWord(enabled) }
-    }
-}
-
-@Composable
-private fun CancelWord(enabled: Boolean) {
-    Text(
-        text = "cancel",
-        color = if (enabled) Color(0xB3ECEEF2) else Color(0x4DECEEF2),
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Medium,
-        maxLines = 1,
-    )
-}
-
-/**
- * The overflow: three dots, barely there, in a corner. Everything that is about the session rather
- * than about one photograph lives behind it.
- */
-@Composable
-fun OverflowDots(onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(CircleShape)
-            .clickableWhen(true, onOpen)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            Modifier.size(width = 4.dp, height = 18.dp).drawBehind {
-                val x = size.width / 2f
-                val gap = size.height / 3f
-                listOf(gap * 0.5f, gap * 1.5f, gap * 2.5f).forEach { y ->
-                    drawCircle(Halo, radius = 2.8f, center = Offset(x, y))
-                    drawCircle(Color(0xB3ECEEF2), radius = 1.9f, center = Offset(x, y))
-                }
-            }
+        Text(
+            text = "cancel",
+            color = if (enabled) Color(0x8CECEEF2) else Color(0x3DECEEF2),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Normal,
+            maxLines = 1,
+            modifier = Modifier.padding(bottom = 3.dp),
         )
     }
+}
+
+enum class NotchEdge { BOTTOM, RIGHT }
+
+/** ~110 dp along the edge, a top ~62% of that, ~26 dp tall. See CLIENT_PLAN.md § 3.6.2a. */
+private val NotchBase = 112.dp
+private val NotchHeight = 28.dp
+
+private fun DrawScope.drawNotch(enabled: Boolean) {
+    val w = size.width
+    val h = size.height
+    val inset = w * 0.19f          // how far each slope travels inward: top ≈ 62% of the base
+    val radius = 9.dp.toPx()
+
+    val path = Path().apply {
+        // Left foot, on the edge the tab grows out of.
+        moveTo(0f, h)
+        lineTo(inset - radius, h - (h - radius) * 0f)
+        // Up the left slope, shoulders eased rather than cut square.
+        quadraticBezierTo(inset, h * 0.55f, inset + radius * 0.4f, radius)
+        quadraticBezierTo(inset + radius * 0.9f, 0f, inset + radius * 1.6f, 0f)
+        lineTo(w - inset - radius * 1.6f, 0f)
+        quadraticBezierTo(w - inset - radius * 0.9f, 0f, w - inset - radius * 0.4f, radius)
+        quadraticBezierTo(w - inset, h * 0.55f, w - inset + radius, h)
+        lineTo(w, h)
+    }
+
+    val alpha = if (enabled) 1f else 0.45f
+
+    // A wash inside, barely there, so the word stays legible over a busy photograph.
+    drawPath(path, Color(0x1F000000).copy(alpha = 0.12f * alpha), style = Fill)
+    // Halo first, then the line: the edge survives either extreme behind it.
+    drawPath(path, Color(0x73000000), style = Stroke(width = 3.dp.toPx()))
+    drawPath(path, Color(0xFFECEEF2).copy(alpha = 0.40f * alpha), style = Stroke(width = 1.25.dp.toPx()))
 }
 
 /** A one-line word from the app, floating clear of both panes. Never covers a photograph's middle. */
@@ -162,4 +171,49 @@ fun Notice(text: String, modifier: Modifier = Modifier) {
     ) {
         Text(text, color = Color(0xE6ECEEF2), fontSize = 13.sp)
     }
+}
+
+/**
+ * Progress, as a hairline along the bottom that grows out of the centre towards both edges, running
+ * pale red at nothing done to pale green at all of it.
+ *
+ * A percentage invites reading, and reading is not this screen's job — the only question here is
+ * which of two pictures is better. A line that reaches the edges says the same thing from the corner
+ * of the eye, and says nothing at all when it is not being looked at.
+ *
+ * It grows from the centre rather than the left because it is not a loading bar: it is how far a
+ * folder has come, and the middle is where the eye already is.
+ *
+ * `progressPercent` is an overlay figure, not a measurement (SERVER_SPEC.md § 9.1) — it is a mean
+ * over rankable records and it moves **down** after a discard. So it animates, and it has to look
+ * unremarkable going backwards.
+ */
+@Composable
+fun ProgressLine(percent: Int, modifier: Modifier = Modifier) {
+    val fraction by animateFloatAsState(
+        targetValue = (percent.coerceIn(0, 100)) / 100f,
+        animationSpec = tween(durationMillis = 450),
+        label = "progress",
+    )
+
+    if (fraction <= 0f) return
+
+    // Pale red through to pale green, at the same weight throughout: the colour carries the
+    // meaning, never the brightness.
+    val colour = lerp(Color(0xFFD26B6B), Color(0xFF6BD28C), fraction).copy(alpha = 0.55f)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(2.5.dp)
+            .drawBehind {
+                val half = size.width * fraction / 2f
+                val centre = size.width / 2f
+                drawRect(
+                    color = colour,
+                    topLeft = Offset(centre - half, 0f),
+                    size = Size(half * 2f, size.height),
+                )
+            }
+    )
 }

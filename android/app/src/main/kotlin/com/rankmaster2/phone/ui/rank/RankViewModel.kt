@@ -98,10 +98,11 @@ class RankViewModel(
      * what happened the first time this app was used on a real library.
      */
     fun leave(then: () -> Unit) {
-        where.launch {
-            client.closeSession()
-            then()
-        }
+        // Navigate first. Waiting for the PC to answer makes back look broken on a slow network,
+        // and the close is housekeeping - if it fails, the next open closes the stale session
+        // anyway (§ 10.1 / browse).
+        then()
+        where.launch { client.closeSession() }
     }
 
     fun view(side: Side?) = _state.update { it.copy(viewing = side, paneMenu = null) }

@@ -238,8 +238,30 @@ class BrowseViewModel(
         scope.launch { attemptOpen(path) }
     }
 
-    private suspend fun attemptOpen(path: String) {
-        when (val result = client.openSession(path)) {
+    /**
+     * Opens a folder, and resolves a session left open elsewhere **without asking**.
+     *
+     * There is one user. He is either holding the phone or sitting at the PC, never both, so a
+     * folder still open is always this phone's own doing - a crash, or Android reclaiming the app
+     * while it was in the background. Neither is something he did, and neither is something he can
+     * act on: the old message sent him looking for a window that was not running.
+     *
+     * `423 folder_locked` is a different claim and a real one - something *other* than this server
+     * holds the folder - and it keeps its message, because that is the one case where the owner has
+     * to go and do something.
+     */
+    private suspend fun attemptOpen(path: String, alreadyRetried: Boolean = false) {
+        val first = client.openSession(path)
+        if (first is Rm2Result.Refused &&
+            first.code == ErrorCodes.SESSION_ALREADY_OPEN &&
+            !alreadyRetried
+        ) {
+            client.closeSession()
+            attemptOpen(path, alreadyRetried = true)
+            return
+        }
+
+        when (val result = first) {
             is Rm2Result.Ok -> {
                 val snapshot = result.value
                 // The server's own spelling of both, from the snapshot - so the remembered path is

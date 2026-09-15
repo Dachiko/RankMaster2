@@ -133,20 +133,31 @@ private fun VideoPane(
         return
     }
 
+    // Keyed on the ref *and on whether this pane should exist at all*: `playing = false` releases
+    // the player rather than pausing it. Pausing keeps the buffer - up to megabytes of a 4K file -
+    // and the whole reason a covered pane stops is to give that memory back.
     // Keyed on the ref: a new pair builds a new player and releases the old one in the same breath.
     // This is the release that stops two videos on screen becoming an OutOfMemory - and it is a
     // RememberObserver rather than a DisposableEffect so that a composition which is started and
     // then abandoned releases its decoder too, which is the case a DisposableEffect never sees.
-    val slot = remember(ref.id, url) {
-        VideoSlot(media.players.create(ref) { next ->
-            state = next
-            onState(next)
-        })
+    val slot = remember(ref.id, url, playing) {
+        if (!playing) {
+            VideoSlot(null)
+        } else {
+            VideoSlot(media.players.create(ref) { next ->
+                state = next
+                onState(next)
+            })
+        }
     }
     val video = slot.video
 
-    LaunchedEffect(video, playing) {
-        if (playing) video?.start() else video?.stop()
+    LaunchedEffect(video) { video?.start() }
+
+    if (!playing) {
+        // Stopped means gone, not paused. The pane stays black until it is in front again.
+        StatusPane(MediaPaneState.Loading, onState = {})
+        return
     }
 
     if (video == null) {

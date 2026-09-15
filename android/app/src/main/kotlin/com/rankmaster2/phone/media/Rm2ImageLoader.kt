@@ -62,7 +62,10 @@ object Rm2ImageLoader {
             .memoryCache {
                 MemoryCache.Builder(context)
                     // Two panes of a full-screen photograph, plus the pair behind them.
-                    .maxSizePercent(0.25)
+                    // 15%, not 25%. A quarter of the heap in decoded photographs is a luxury
+                    // when two video players are competing for the same 256 MB - and the disk
+                    // cache, not this, is what makes a photograph instant on second sight.
+                    .maxSizePercent(0.15)
                     .build()
             }
             .build()
