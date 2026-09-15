@@ -194,6 +194,22 @@ So:
   competing with playback for the same 256 MB.
 - `largeHeap` is not the fix. It would have hidden this and made it worse in a bigger folder.
 
+**The second crash, which § 3.4.1 first failed to record.** It landed on OkHttp's HTTP/2 reader
+thread allocating an 8208-byte okio `Segment` (`Segment.SIZE` is 8192; the rest is the header):
+
+```
+java.lang.OutOfMemoryError: Failed to allocate a 8208 byte allocation ... target footprint 268435456
+ at okio.Segment.<init> / SegmentPool.take / Buffer.writableSegment
+ at okhttp3.internal.http2.Http2Stream.receiveData
+ at okhttp3.internal.http2.Http2Connection$ReaderRunnable.data
+```
+
+That trace is the only pointer to a second budget nobody had counted: OkHttp raises its HTTP/2
+connection and per-stream flow-control windows to `OKHTTP_CLIENT_WINDOW_SIZE` = **16 MiB**, and the
+reader thread fills that receive buffer whether or not the player is reading. `targetBufferBytes`
+does not know it exists. The server speaks HTTP/2 only because Kestrel's default is
+`Http1AndHttp2` and nothing in `SERVER_SPEC.md` names a version.
+
 **And keep the mapping file.** Every published APK's R8 mapping is archived beside it; without the
 one from this build the trace above would have stayed `A.P.run(Unknown Source:470)` and there would
 have been nothing to fix.
