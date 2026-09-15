@@ -158,10 +158,31 @@ Two panes, and the phone is usually portrait:
   anchored where the thumb landed. Discard and special act on one side, and the press is what says
   which, so they are never a control that has to ask.
 - Full screen swipes between the two, because comparing a pair properly means going back and forth
-  between them at full size.
+  between them at full size. **Along the same axis the panes are laid out on** — see § 3.6.0.
 - A tap in a thin band along the seam does nothing: a wrong vote is expensive and a thumb on the
   border between two targets must not guess.
 - The match strip renders `cues` oldest-first, up to 10 (§ 9.1), faint, on the seam.
+
+### 3.6.0 The full-screen swipe follows the layout
+
+First use on a real screen, 2026-09-15: the swipe is horizontal in both orientations, it takes a
+long drag to trigger, and the picture changes without moving. All three are wrong, and they are one
+bug: the gesture was hand-rolled from a drag detector with a quarter-screen threshold and no
+animation, so nothing follows the finger and nothing says it worked.
+
+- **Same axis as the pair.** Portrait stacks the panes, so the top one's partner is *below* it and
+  the swipe is vertical — drag down from the top picture to reach the bottom one. Landscape puts
+  them side by side, so the swipe is horizontal. The gesture has to agree with where the thing
+  actually is, or it is a second thing to learn.
+- **It follows the finger.** The picture moves as it is dragged rather than waiting for the drag to
+  end and jumping. That is most of what "slow" meant: nothing moved until it was over.
+- **A flick is enough.** Velocity counts, not just distance — a short quick swipe switches, the way
+  every other Android surface behaves.
+- **Short, visible snap.** Around 180 ms: long enough to see which way it went, short enough not to
+  be waited on.
+
+Built on a `Pager` rather than a drag detector — it already does drag-follow, velocity and snap, and
+hand-rolling those three is how this went wrong the first time.
 
 ### 3.6.1 What is *not* on this screen
 
