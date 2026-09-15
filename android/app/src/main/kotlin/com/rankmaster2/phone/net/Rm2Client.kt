@@ -1,5 +1,9 @@
 package com.rankmaster2.phone.net
 
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+
 /**
  * Every call this app makes to the server, and the only way it is allowed to make one.
  *
@@ -62,7 +66,18 @@ interface Rm2Client {
 
     // -- bytes ---------------------------------------------------------------------------------
 
-    /** Resolves a `links.*` value against [baseUrl]. Links are used verbatim (§ 9.3). */
+    /**
+     * Turns a `links.*` value into a URL by **concatenation, never URL resolution**.
+     *
+     * This is not a style preference. `HttpUrl.resolve` and every other RFC 3986 resolver decodes
+     * and collapses `%2e%2e` into a `..` segment and then removes it, so a link the server built
+     * for one file would silently fetch another - arriving at a path where the server's own
+     * "outside the session folder" refusal no longer applies. A media id is a filename (§ 11.1), so
+     * what looks like a traversal in a link is a filename that must be asked for exactly as given.
+     *
+     * The server has already percent-encoded this string and already put `v=` on it (§ 9.3). Append
+     * it to the origin and change nothing.
+     */
     fun url(link: String): String
 }
 
@@ -85,7 +100,14 @@ sealed interface Rm2Result<out T> {
         val message: String,
         val session: Snapshot? = null,
         val requestId: String? = null,
-    ) : Rm2Result<Nothing>
+        /** § 5's per-code payload. `attemptsRemaining` on a refused pairing code lives here. */
+        val details: JsonObject? = null,
+    ) : Rm2Result<Nothing> {
+
+        /** One integer out of [details], or null. The shape is the code's, so read it by name. */
+        fun detailInt(name: String): Int? =
+            (details?.get(name) as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+    }
 
     /**
      * No answer: the network, the TLS handshake, a timeout. [pinMismatch] is the one that is never

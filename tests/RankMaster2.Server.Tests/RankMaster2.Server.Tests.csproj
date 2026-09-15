@@ -10,6 +10,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
     <PackageReference Include="xunit" Version="2.9.2" />
+    <!-- openapi.yaml is the published contract and is hand-edited. Nothing else in this repository
+         can tell whether it still parses; OpenApiContractTests can. -->
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

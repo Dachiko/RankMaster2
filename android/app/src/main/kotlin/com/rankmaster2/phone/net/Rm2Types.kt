@@ -2,6 +2,7 @@ package com.rankmaster2.phone.net
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * The wire types of SERVER_SPEC.md § 9, and nothing else.
@@ -158,6 +159,13 @@ data class ErrorBody(
     val code: String,
     val message: String,
     val requestId: String? = null,
+    /**
+     * § 5's per-code payload, left as raw JSON because its shape is the code's, not one type's:
+     * `attemptsRemaining` on a refused pairing code, `retryAfterSeconds` on a 503, `openFolder`
+     * when a session is already open, `recordsChanged`/`fileMoved` on a failed write. A screen that
+     * needs one reads it by name; nothing else has to know it exists.
+     */
+    val details: JsonObject? = null,
     @SerialName("session") val session: Snapshot? = null,
 )
 

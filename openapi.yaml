@@ -625,29 +625,49 @@ paths:
   /session/undo:
     post:
       tags: [actions]
-      operationId: undoLastMove
-      summary: Undo the last move (discard or special). One level, no stack.
+      operationId: undoLastAction
+      summary: Cancel the last action of any kind - vote, skip, discard or special. One level, no stack.
       description: |
-        **This is not vote undo.** Vote undo does not exist (`SPEC.md` § Non-goals) and this endpoint
-        must never be presented as undoing a vote.
-
-        **It takes no `pairToken`, deliberately.** The move being reversed belongs to an earlier pair
-        generation, so any token the client holds for it is already stale by construction; requiring
-        one would make undo permanently unusable. A `pairToken` in the body is ignored
+        **This cancels a vote too.** It is what a phone's cancel button calls: a mis-tap on a touch
+        screen is a real vote, and without this the only way back is to keep voting and hope
         (`SERVER_SPEC.md` § 10.10).
 
-        Two consequences the client must expect:
+        What comes back depends on what is being cancelled:
 
-        * **The current pair is replaced**, even though it was valid — `RankingSession.Restore`
-          clears `Current` and re-picks so the restored file can be paired immediately. `pairToken`
-          changes.
+        * **`vote`** — both records' `mu`, `sigma`, `matches`, `impressions` and `lastPlayed` are
+          restored exactly as they were, `sessionVotes` drops by one, the match cue is removed, and
+          **the pair that vote consumed is current again**. Nothing moves on disk. Restoration is by
+          snapshot, never by inverse arithmetic.
+        * **`skip`** — the same, minus the rating change.
+        * **`discard` / `special`** — the file is moved back out of `discarded/` or `special 1/`, the
+          record is restored, and a freshly picked pair follows.
+
+        `lastAction.undoneType` names which of the four it was.
+
+        **It takes no `pairToken`, deliberately.** The action being reversed belongs to an earlier
+        pair generation, so any token the client holds for it is already stale by construction;
+        requiring one would make cancel permanently unusable. A `pairToken` in the body is ignored.
+
+        Three consequences the client must expect:
+
+        * **The current pair is replaced.** For a cancelled vote or skip it is replaced by the pair
+          that action consumed — which is the point. For a cancelled move it is a freshly picked one.
+        * **`pairSeq` still advances and `pairToken` still changes**, even when the identical pair
+          comes back. That is what makes cancel safe: a vote still in flight when the cancel lands
+          arrives holding the old token, is answered `409 stale_pair_token`, and is never applied a
+          second time. Clients MUST NOT re-send it against the new token.
         * **The restored id may differ from the discarded id.** If the original name was taken in
           the meantime the file comes back as `name (2).ext` and the record's id changes with it.
           `lastAction.id` is the old id, `lastAction.restoredId` the new one; any cached URL for the
-          old id is dead.
+          old id is dead. Null for a cancelled vote or skip, which move no file.
 
-        A repeated undo answers `409 nothing_to_undo` — it can never undo two moves, because only
-        one move is ever recorded.
+        Cancelling a vote or skip writes the JSON and moves nothing, so it is all-or-nothing: a
+        failed write leaves the action applied, `pairSeq` unmoved and the client's token valid, and
+        answers `500 save_failed` with `recordsChanged: false`.
+
+        A repeated cancel answers `409 nothing_to_undo` — it can never reach back two actions,
+        because only one is ever recorded. `drop_missing` is not cancellable: the server dropped
+        that record because its file had vanished, and putting it back only wedges the same pair.
       requestBody:
         required: false
         content:
@@ -1078,7 +1098,6 @@ components:
                       side: null
                       id: null
                       restoredId: null
-          undoneType: null
                       undoneType: null
                       at: "2026-09-12T18:04:11.400Z"
                     lastSavedAt: "2026-09-12T18:04:11.398Z"
