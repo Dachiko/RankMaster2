@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "lastUpdated": 0,
+  "images": {
+    "alpha.jpg": {
+      "filename": "alpha.jpg",
+      "rating": {
+        "mu": 25,
+        "sigma": 8.333
+      },
+      "matches": 0,
+      "impressions": 0,
+      "lastPlayed": 0
+    },
+    "bravo.png": {
+      "filename": "bravo.png",
+      "rating": {
+        "mu": 31.41592653589793,
+        "sigma": 4.25
+      },
+      "matches": 12,
+      "impressions": 19,
+      "lastPlayed": 1700000000000
+    },
+    "charlie clip.mp4": {
+      "filename": "charlie clip.mp4",
+      "rating": {
+        "mu": 18.5,
+        "sigma": 6
+      },
+      "matches": 3,
+      "impressions": 5,
+      "lastPlayed": 1234567890123
+    },
+    "delta.JPG": {
+      "filename": "delta.JPG",
+      "rating": {
+        "mu": -0.5,
+        "sigma": 0.001
+      },
+      "matches": 999,
+      "impressions": 1000,
+      "lastPlayed": 1
+    },
+    "\u00C4rger am Flu\u00DF \u2014 \u0444\u043E\u0442\u043E \u21167.jpg": {
+      "filename": "\u00C4rger am Flu\u00DF \u2014 \u0444\u043E\u0442\u043E \u21167.jpg",
+      "rating": {
+        "mu": 25,
+        "sigma": 8.333
+      },
+      "matches": 1,
+      "impressions": 2,
+      "lastPlayed": 42
+    }
+  }
+}

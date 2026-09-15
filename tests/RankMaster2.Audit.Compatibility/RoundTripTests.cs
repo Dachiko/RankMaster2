@@ -1,0 +1,132 @@
+using RankMaster2.Audit.Compatibility.Support;
+using RankMaster2.Catalog;
+using RankMaster2.Server.Tests.Harness;
+using Xunit;
+
+namespace RankMaster2.Audit.Compatibility;
+
+/// <summary>
+/// The whole audit in one sentence: a file the server wrote must load back through
+/// <c>JsonCatalog.Scan</c> with every rating, match count, impression count and timestamp intact.
+/// <c>Scan</c> is what the desktop app calls, so these tests are the desktop app opening the
+/// folder after the phone has been ranking in it.
+/// </summary>
+public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
+{
+    [Fact]
+    public async Task Every_field_the_server_wrote_loads_back_unchanged()
+    {
+        using var folder = Scratch.New("roundtrip");
+        folder.Stills(8);
+
+        var client = await ClientAsync();
+        var snapshot = await OpenAsync(folder.Path);
+
+        var voted = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < 12 && snapshot.IsRanking; i++)
+        {
+            var token = snapshot.RequireToken("a ranking session has a pairToken");
+            voted.Add(snapshot.Left.Id);
+            voted.Add(snapshot.Right.Id);
+            snapshot = (await client.VoteAsync(token, i % 2 == 0 ? "left" : "right"))
+                .ShouldBeSnapshot(200, "POST /session/vote applies and saves (SERVER_SPEC.md § 10.6)");
+        }
+
+        await CloseAsync();
+
+        // The file on disk, read the way the desktop app reads it.
+        var loaded = new JsonCatalog().Scan(folder.Path).ToDictionary(r => r.Filename, StringComparer.Ordinal);
+        var raw = Db.Rows(folder.Path);
+
+        Db.RequireV1Schema(folder.Path, "the file the server wrote is v1");
+        Assert.Equal(8, loaded.Count);
+
+        foreach (var (id, record) in loaded)
+        {
+            var row = raw[id];
+            Assert.Equal(row.Mu, record.Rating.Mu);
+            Assert.Equal(row.Sigma, record.Rating.Sigma);
+            Assert.Equal(row.Matches, record.Matches);
+            Assert.Equal(row.Impressions, record.Impressions);
+            Assert.Equal(row.LastPlayed, record.LastPlayed);
+        }
+
+        foreach (var id in voted)
+        {
+            var record = loaded[id];
+            Assert.True(record.Matches > 0,
+                $"'{id}' was voted on but came back with matches = 0. SERVER_SPEC.md § 10.6 sets " +
+                "matches + 1 on both records inside the same call that saves.");
+            Assert.True(record.Impressions > 0, $"'{id}' was voted on but came back with impressions = 0.");
+            Assert.True(record.LastPlayed > 0, $"'{id}' was voted on but came back with lastPlayed = 0.");
+            Assert.True(record.Rating.Sigma < RankMaster2.Ranking.RankingConstants.InitialSigma,
+                $"'{id}' was voted on but its sigma is still the initial {record.Rating.Sigma:R}; " +
+                "the rating did not move.");
+        }
+    }
+
+    /// <summary>
+    /// Reopening is the desktop app's Resume. Nothing may drift on the way through.
+    /// </summary>
+    [Fact]
+    public async Task Reopening_and_saving_again_changes_nothing_but_the_timestamp()
+    {
+        using var folder = Scratch.New("resume");
+        folder.Stills(6);
+
+        var client = await ClientAsync();
+        var snapshot = await OpenAsync(folder.Path);
+        for (var i = 0; i < 6 && snapshot.IsRanking; i++)
+        {
+            snapshot = (await client.VoteAsync(snapshot.RequireToken("ranking"), "left"))
+                .ShouldBeSnapshot(200, "vote");
+        }
+        await CloseAsync();
+
+        var before = Db.Rows(folder.Path);
+
+        await OpenAsync(folder.Path);
+        (await client.SaveAsync()).ShouldBeSnapshot(200, "POST /session/save is idempotent (SERVER_SPEC.md § 10.5)");
+        await CloseAsync();
+
+        var after = Db.Rows(folder.Path);
+
+        Assert.Equal(before.Keys.Order(StringComparer.Ordinal), after.Keys.Order(StringComparer.Ordinal));
+        foreach (var (key, row) in before)
+        {
+            Assert.True(row == after[key],
+                $"Reopening the folder and saving changed '{key}'.\n  before: {row}\n  after:  {after[key]}");
+        }
+    }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.7: skip moves impressions and nothing else. The desktop app's
+    /// leaderboard is built from `matches`, so a skip that bumped it would silently reorder a
+    /// library.
+    /// </summary>
+    [Fact]
+    public async Task Skip_moves_impressions_and_leaves_the_rating_alone()
+    {
+        using var folder = Scratch.New("skip");
+        folder.Stills(4);
+
+        var client = await ClientAsync();
+        var snapshot = await OpenAsync(folder.Path);
+        var left = snapshot.Left.Id;
+        var right = snapshot.Right.Id;
+
+        (await client.SkipAsync(snapshot.RequireToken("ranking")))
+            .ShouldBeSnapshot(200, "POST /session/skip (SERVER_SPEC.md § 10.7)");
+        await CloseAsync();
+
+        var rows = Db.Rows(folder.Path);
+        foreach (var id in new[] { left, right })
+        {
+            Assert.Equal(1, rows[id].Impressions);
+            Assert.Equal(0, rows[id].Matches);
+            Assert.Equal(0, rows[id].LastPlayed);
+            Assert.Equal(RankMaster2.Ranking.RankingConstants.InitialMu, rows[id].Mu);
+            Assert.Equal(RankMaster2.Ranking.RankingConstants.InitialSigma, rows[id].Sigma);
+        }
+    }
+}

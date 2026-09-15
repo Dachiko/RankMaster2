@@ -377,11 +377,17 @@ public sealed class SessionRegistry : IDisposable
     // POST /session/vote — § 10.6
     // ---------------------------------------------------------------------------------------
 
-    public Task<SessionOutcome> VoteAsync(JsonElement? body, CancellationToken cancellation) =>
+    public Task<SessionOutcome> VoteAsync(JsonElement? body, BodyError? bodyError, CancellationToken cancellation) =>
         WithLockAsync(cancellation, () =>
         {
             if (_open is not { } open)
                 return NoSession();
+
+            // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
+            // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
+            // client that branches on the code retries the body forever against a closed session.
+            if (bodyError is not null)
+                return BodyFail(bodyError, open);
 
             // All three are read before any is reported, so `out` stays definitely assigned; the
             // first failure in body order is the one that answers.
@@ -424,11 +430,17 @@ public sealed class SessionRegistry : IDisposable
     // POST /session/skip — § 10.7. Same failure semantics as vote.
     // ---------------------------------------------------------------------------------------
 
-    public Task<SessionOutcome> SkipAsync(JsonElement? body, CancellationToken cancellation) =>
+    public Task<SessionOutcome> SkipAsync(JsonElement? body, BodyError? bodyError, CancellationToken cancellation) =>
         WithLockAsync(cancellation, () =>
         {
             if (_open is not { } open)
                 return NoSession();
+
+            // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
+            // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
+            // client that branches on the code retries the body forever against a closed session.
+            if (bodyError is not null)
+                return BodyFail(bodyError, open);
 
             var tokenError = SessionBody.RequiredString(body, "pairToken", out var token);
             var idError = SessionBody.OptionalClientRequestId(body, out var clientRequestId);
@@ -462,11 +474,17 @@ public sealed class SessionRegistry : IDisposable
     // POST /session/discard, POST /session/special — § 10.8, § 10.9
     // ---------------------------------------------------------------------------------------
 
-    public Task<SessionOutcome> MoveAsync(JsonElement? body, bool special, CancellationToken cancellation) =>
+    public Task<SessionOutcome> MoveAsync(JsonElement? body, BodyError? bodyError, bool special, CancellationToken cancellation) =>
         WithLockAsync(cancellation, () =>
         {
             if (_open is not { } open)
                 return NoSession();
+
+            // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
+            // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
+            // client that branches on the code retries the body forever against a closed session.
+            if (bodyError is not null)
+                return BodyFail(bodyError, open);
 
             var tokenError = SessionBody.RequiredString(body, "pairToken", out var token);
             var sideError = SessionBody.RequiredSide(body, "side", out var side);
@@ -557,11 +575,17 @@ public sealed class SessionRegistry : IDisposable
     // POST /session/undo — § 10.10. Takes no pairToken; one level, no stack; not vote undo.
     // ---------------------------------------------------------------------------------------
 
-    public Task<SessionOutcome> UndoAsync(JsonElement? body, CancellationToken cancellation) =>
+    public Task<SessionOutcome> UndoAsync(JsonElement? body, BodyError? bodyError, CancellationToken cancellation) =>
         WithLockAsync(cancellation, () =>
         {
             if (_open is not { } open)
                 return NoSession();
+
+            // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
+            // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
+            // client that branches on the code retries the body forever against a closed session.
+            if (bodyError is not null)
+                return BodyFail(bodyError, open);
 
             var error = SessionBody.OptionalClientRequestId(body, out var clientRequestId);
             if (error is not null)
@@ -596,9 +620,11 @@ public sealed class SessionRegistry : IDisposable
             catch (Exception)
             {
                 // The move back runs before Restore, and Restore does not save and cannot roll
-                // back. Whether the file made it back is the only thing that separates "nothing
-                // changed" from "committed" here.
-                if (File.Exists(move.DestPath))
+                // back, so whether the record came back is what separates "nothing changed" from
+                // "committed" (§ 8.3, the two undo rows). The records are the only honest witness:
+                // an empty discarded/ also leaves DestPath missing, and reading that as "the file
+                // made it home" reported a committed restore for a file nobody will ever see again.
+                if (open.Session.Records.Select(r => r.Id).ToHashSet().SetEquals(before))
                 {
                     return SessionOutcome.Fail(
                         ErrorCodes.MoveFailed,
@@ -607,7 +633,7 @@ public sealed class SessionRegistry : IDisposable
                         Materialise(open));
                 }
 
-                // The file is back and the record is restored; it was the save that threw.
+                // The record is restored, so the move back ran; it was the save that threw.
                 // LibraryActions clears LastMove only after that save, so clear it here: the move
                 // has been reversed, and leaving it recorded would offer an undo that can only fail.
                 open.Actions.ClearLastMove();

@@ -67,7 +67,7 @@ internal static class SessionResults
 /// A parse failure carried as data rather than an exception, so the endpoints can answer § 5.2
 /// codes without a catch around every field read.
 /// </summary>
-internal sealed record BodyError(string Code, string Message, object? Details);
+public sealed record BodyError(string Code, string Message, object? Details);
 
 /// <summary>
 /// Reads a <c>/session*</c> JSON body under the § 2 and § 15 transport rules: JSON content type

@@ -115,6 +115,13 @@ public sealed class MediaResolver(IMediaSessionAccessor sessions)
         if (!Path.GetFileName(fullPath).Equals(canonicalId, comparison))
             return new MediaResolveResult(MediaResolution.OutsideSession, null, canonicalId, "renamed-by-resolution");
 
+        // 5b. Follow the link. Path.GetFullPath is string work — it collapses separators and `..`
+        //     and knows nothing about symlinks — so everything above passes for a link named
+        //     holiday.mp4 that points at a private key. The containment check is only a containment
+        //     check once it is made against the file the OS will actually open.
+        if (!ResolvesInsideFolder(fullPath, folder, comparison))
+            return new MediaResolveResult(MediaResolution.OutsideSession, null, canonicalId, "symlink-outside-folder");
+
         // 6. The file does not exist → 404 media_file_missing.
         var info = new FileInfo(fullPath);
         if (!info.Exists)
@@ -128,5 +135,58 @@ public sealed class MediaResolver(IMediaSessionAccessor sessions)
             File.GetLastWriteTimeUtc(fullPath));
 
         return new MediaResolveResult(MediaResolution.Ok, resolved, canonicalId, null);
+    }
+
+    /// <summary>
+    /// True when <paramref name="fullPath"/> is not a link, or is one whose final target still sits
+    /// directly in the session folder. A link to a sibling inside the folder is fine — it reaches
+    /// nothing the caller could not already ask for by name.
+    /// <para/>
+    /// The folder itself may legitimately be reached through a link (someone opens
+    /// <c>~/photos</c> that points at <c>/mnt/library</c>), so the comparison is made against the
+    /// folder's own final target as well as the folder as given.
+    /// </summary>
+    private static bool ResolvesInsideFolder(string fullPath, string folder, StringComparison comparison)
+    {
+        // Nothing to follow: either the file is gone or the link dangles, and both are step 6's
+        // answer (404 media_file_missing), not a containment failure. File.Exists is false for a
+        // broken link too, so no unresolvable path reaches the resolve below.
+        if (!File.Exists(fullPath))
+            return true;
+
+        string? target;
+        try
+        {
+            target = File.ResolveLinkTarget(fullPath, returnFinalTarget: true)?.FullName;
+        }
+        catch (IOException)
+        {
+            // A looping link. Nothing that cannot be resolved may be served.
+            return false;
+        }
+
+        if (target is null)
+            return true;
+
+        var parent = Path.GetDirectoryName(Path.GetFullPath(target));
+        if (parent is null)
+            return false;
+
+        parent = Path.TrimEndingDirectorySeparator(parent);
+        if (parent.Equals(folder, comparison))
+            return true;
+
+        string? realFolder;
+        try
+        {
+            realFolder = new DirectoryInfo(folder).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+
+        return realFolder is not null &&
+               parent.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(realFolder)), comparison);
     }
 }

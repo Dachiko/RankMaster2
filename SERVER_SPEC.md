@@ -900,6 +900,14 @@ ships ready-made `links` (§ 9.3) and clients SHOULD use them verbatim.
    result's directory is exactly the session folder. Any mismatch → `403 media_outside_session`.
    This check MUST be performed even though step 4 already passed; it is the backstop against a
    record id that somehow carries a separator.
+5b. **Follow the link.** `Path.GetFullPath` is string canonicalisation: it collapses separators and
+   `..` and does not resolve symlinks, so a link inside the session folder named `holiday.mp4`
+   passes step 5 while pointing anywhere on the disk. The server MUST resolve the final link target
+   and verify *that* path's directory is the session folder — comparing against the folder's own
+   final target too, since the folder may itself legitimately be reached through a link. A link to a
+   sibling inside the folder is allowed; it reaches nothing the caller could not ask for by name.
+   Anything else → `403 media_outside_session`. A link that dangles or loops is not a containment
+   failure: it falls through to step 6.
 6. The file does not exist → `404 media_file_missing`.
 
 Subfolders are never reachable: `discarded/`, `special 1/` and `rankmaster_backup_*` hold files that

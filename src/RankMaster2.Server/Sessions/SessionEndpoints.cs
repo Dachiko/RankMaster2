@@ -54,37 +54,31 @@ public static class SessionEndpoints
         // § 10.6.
         group.MapPost("/vote", async (HttpContext http, CancellationToken cancellation) =>
         {
+            // The parse failure travels with the body instead of answering here: § 8.4 puts the
+            // no-session check ahead of it, and only the registry, holding the lock, knows.
             var (body, bodyError) = await SessionBody.ReadAsync(http, required: true);
-            if (bodyError is not null)
-                return Fail(http, bodyError);
-            return Respond(http, await registry.VoteAsync(body, cancellation));
+            return Respond(http, await registry.VoteAsync(body, bodyError, cancellation));
         });
 
         // § 10.7.
         group.MapPost("/skip", async (HttpContext http, CancellationToken cancellation) =>
         {
             var (body, bodyError) = await SessionBody.ReadAsync(http, required: true);
-            if (bodyError is not null)
-                return Fail(http, bodyError);
-            return Respond(http, await registry.SkipAsync(body, cancellation));
+            return Respond(http, await registry.SkipAsync(body, bodyError, cancellation));
         });
 
         // § 10.8.
         group.MapPost("/discard", async (HttpContext http, CancellationToken cancellation) =>
         {
             var (body, bodyError) = await SessionBody.ReadAsync(http, required: true);
-            if (bodyError is not null)
-                return Fail(http, bodyError);
-            return Respond(http, await registry.MoveAsync(body, special: false, cancellation));
+            return Respond(http, await registry.MoveAsync(body, bodyError, special: false, cancellation));
         });
 
         // § 10.9. Identical to discard but for the destination and lastAction.type.
         group.MapPost("/special", async (HttpContext http, CancellationToken cancellation) =>
         {
             var (body, bodyError) = await SessionBody.ReadAsync(http, required: true);
-            if (bodyError is not null)
-                return Fail(http, bodyError);
-            return Respond(http, await registry.MoveAsync(body, special: true, cancellation));
+            return Respond(http, await registry.MoveAsync(body, bodyError, special: true, cancellation));
         });
 
         // § 10.10. No pairToken, deliberately: the move being reversed belongs to an earlier pair
@@ -93,9 +87,7 @@ public static class SessionEndpoints
         group.MapPost("/undo", async (HttpContext http, CancellationToken cancellation) =>
         {
             var (body, bodyError) = await SessionBody.ReadAsync(http, required: false);
-            if (bodyError is not null)
-                return Fail(http, bodyError);
-            return Respond(http, await registry.UndoAsync(body, cancellation));
+            return Respond(http, await registry.UndoAsync(body, bodyError, cancellation));
         });
 
         return endpoints;
