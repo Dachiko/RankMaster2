@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         hideFromTheAppSwitcher()
         enableEdgeToEdge()
-        setContent { Rm2Theme { Skeleton() } }
+        setContent { Rm2Theme { Rm2App(this) } }
     }
 
     /**
