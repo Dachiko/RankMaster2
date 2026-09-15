@@ -55,3 +55,46 @@ width and height swapped, or a draw that is genuinely vertical rather than a rot
 **Probably right answer:** draw the path in the orientation it will be used in, rather than drawing
 one and rotating it. Two short paths are easier to get right than one path plus a transform, and
 this is the third attempt at this shape.
+
+---
+
+## 3. Back leaves the app while browsing folders
+
+**Seen:** walking down into folders, back does not come up a level — it leaves the app.
+
+**Read:** not a subtle one. The back gesture was handled on the ranking screen and never on the
+browser. Nothing intercepts it there, so Android does the default thing and finishes the activity.
+
+**Fix:** a back handler on the browse screen, with the same shape as the ranking screen's — up a
+level if there is a parent, and only at the drive list does back mean leave. The view model already
+has `up()` and already knows whether it is at a root, because § 10.15's `parent` tells it; nothing
+new has to be worked out, it just has to be wired to the gesture.
+
+Five lines. It can be pulled out of the batch and shipped on its own if the browsing is in the way.
+
+---
+
+## 4. A vote is too easy to cast by accident near the screen edge
+
+**Asked for:** a margin around the border — about 10% — where a tap does not vote.
+
+**Why it is right:** a wrong vote is the one mistake on this screen that costs something, and the
+edge of the screen is exactly where a hand rests while holding a phone. The seam already has a dead
+band for the same reason; this is the same argument applied to the outside.
+
+**The shape of it:**
+
+- A margin down each side, and across the top and bottom, where a tap does nothing. 10% of the
+  screen's width on the left and right, 10% of its height top and bottom, so it stays proportional
+  in either orientation.
+- It leaves the middle ~80% of each pane live, which is where the picture being judged actually is.
+- It stacks with the seam band already there, so each pane's live area is bounded by the outside on
+  three sides and the seam on the fourth.
+
+**A distinction worth keeping:** the margin should kill *taps*, not long presses. An accidental vote
+is a tap; nobody long-presses by accident, and the pane menu is the one thing a person might
+deliberately reach for in a corner. So: no votes near the edge, but the menu still opens anywhere.
+
+**Open:** 10% is the owner's guess and mine is no better. It should be a single number in one place,
+easy to move after a session with it — and worth re-checking in landscape, where the thumbs sit on
+the left and right edges rather than the bottom.
