@@ -16,7 +16,16 @@ public static class Rm2Host
 {
     public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configure = null)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        // The content root is where appsettings.json is looked for, and it defaults to the working
+        // directory. For a server started from a shortcut, a scheduled task or the Startup folder,
+        // that is not where the exe lives - so a config file placed beside the exe was read when
+        // you double-clicked it and silently ignored when Windows launched it, and the only symptom
+        // was a server still on loopback that no phone could reach.
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            Args = args,
+            ContentRootPath = AppContext.BaseDirectory,
+        });
 
         // The one seam between the session and media layers, and the only wiring neither of them
         // could do from inside its own folder. Media asks "is a session open, and is this id one of

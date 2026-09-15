@@ -91,5 +91,9 @@ Opens the same `rankmaster_db.json` as Rank Master 1 (`version: 1`). You do not 
 | File | Role |
 |---|---|
 | [SPEC.md](SPEC.md) | Product, ranking, JSON, modules, prefetch. Update it when behavior changes. |
+| [SERVER_RUNNING.md](SERVER_RUNNING.md) | **How to build, configure, run and troubleshoot the server.** Start here to deploy it. |
+| [SERVER_SPEC.md](SERVER_SPEC.md) | The server's API contract. The four client surfaces code against this. |
+| [SERVER_PLAN.md](SERVER_PLAN.md) | Why the server is built the way it is. |
+| [CLIENT_PLAN.md](CLIENT_PLAN.md) | The Android client: stack, screens, phases, acceptance gate. |
 | [Directory.Build.props](Directory.Build.props) | App version. Bump on every shipped change. |
 | This README | How to build and what the app is. |
