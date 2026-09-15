@@ -1,6 +1,8 @@
 package com.rankmaster2.phone
 
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,8 +22,34 @@ import androidx.compose.ui.graphics.Color
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hideFromTheAppSwitcher()
         enableEdgeToEdge()
         setContent { Rm2Theme { Skeleton() } }
+    }
+
+    /**
+     * The app switcher must show black, not the pair of photographs that happened to be on screen.
+     *
+     * Android keeps that thumbnail after the app is left, so without this a glance at someone's
+     * recent apps is a glance at whatever they were ranking. Which is the whole library, eventually.
+     *
+     * Two ways to do it, and they are not equivalent:
+     *
+     *  - `setRecentsScreenshotEnabled(false)` (Android 13+) blanks the switcher and nothing else.
+     *    Screenshots still work, which matters while this app is being built: a screenshot is how
+     *    a layout problem gets reported.
+     *  - `FLAG_SECURE` also blanks it, but blocks screenshots and screen recording entirely, and
+     *    blocks mirroring to an external display.
+     *
+     * So: the narrow API where it exists, and the blunt one only below Android 13, where nothing
+     * else will do it. The target device is Android 14 and takes the first path.
+     */
+    private fun hideFromTheAppSwitcher() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(false)
+        } else {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 }
 

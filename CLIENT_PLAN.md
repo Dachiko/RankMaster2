@@ -132,7 +132,22 @@ except AVI comfortably, and AVI is the fallback case:
   pane shows the player, not a thumbnail.
 - A video folder ranks with the same gestures; only the pane content differs.
 
-### 3.5 Layout
+### 3.5 Nothing leaks into the app switcher
+
+Leaving the app must leave black behind, not the pair that was on screen. Android keeps that
+thumbnail after you go, so without this a glance at someone's recent apps is a glance at whatever
+they were ranking — and over a session, at the library.
+
+`setRecentsScreenshotEnabled(false)` (Android 13+) blanks the switcher and does nothing else.
+`FLAG_SECURE` blanks it too but also blocks screenshots, screen recording and mirroring — which
+during development would block the owner from sending a screenshot of a layout problem, the only
+way this app gets looked at on a real screen. So: the narrow API where it exists, `FLAG_SECURE`
+only below Android 13 where nothing else will do it. The target device is Android 14.
+
+**If full screenshot blocking is ever wanted**, it is one line — but it is a deliberate trade, not
+a default, and it costs the ability to report a bug with a picture.
+
+### 3.6 Layout
 
 Two panes, and the phone is usually portrait:
 
@@ -146,7 +161,7 @@ Two panes, and the phone is usually portrait:
   button — a bar button would have to ask "which one?" every time.
 - The match strip renders `cues` oldest-first, up to 10 (§ 9.1), exactly as the desktop does.
 
-### 3.6 What the client must never do
+### 3.7 What the client must never do
 
 Collected in one place because each of these is a way to corrupt a ranking that the server cannot
 defend against:
