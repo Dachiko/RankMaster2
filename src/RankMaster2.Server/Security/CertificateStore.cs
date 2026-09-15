@@ -85,8 +85,11 @@ public sealed class CertificateStore
 
         request.CertificateExtensions.Add(
             new X509BasicConstraintsExtension(certificateAuthority: false, hasPathLengthConstraint: false, pathLengthConstraint: 0, critical: true));
+        // DigitalSignature only. This is an ECDSA P-256 key; KeyEncipherment is an RSA
+        // key-transport bit. Windows Schannel (Kestrel on Windows) aborts the handshake
+        // with EOF if that bit is set on an ECC cert.
         request.CertificateExtensions.Add(
-            new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, critical: true));
+            new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
         request.CertificateExtensions.Add(
             new X509EnhancedKeyUsageExtension(new OidCollection { new("1.3.6.1.5.5.7.3.1") }, critical: false));
         request.CertificateExtensions.Add(
