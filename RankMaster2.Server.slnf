@@ -8,6 +8,7 @@
       "src\\RankMaster2.Actions\\RankMaster2.Actions.csproj",
       "src\\RankMaster2.Server\\RankMaster2.Server.csproj",
       "src\\rm2ctl\\rm2ctl.csproj",
+      "src\\RankMaster2.Tray\\RankMaster2.Tray.csproj",
       "tests\\RankMaster2.Ranking.Tests\\RankMaster2.Ranking.Tests.csproj",
       "tests\\RankMaster2.Catalog.Tests\\RankMaster2.Catalog.Tests.csproj",
       "tests\\RankMaster2.Server.Tests\\RankMaster2.Server.Tests.csproj",

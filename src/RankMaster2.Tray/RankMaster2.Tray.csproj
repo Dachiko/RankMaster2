@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Lets this project compile and publish from the Linux box the rest of the server is
+         developed on. It does not make it runnable there - it is Windows software - but a
+         compiler that never sees the code is how the frozen WPF app rotted. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RankMaster2.Tray</AssemblyName>
+    <RootNamespace>RankMaster2.Tray</RootNamespace>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RankMaster2.Server\RankMaster2.Server.csproj" />
+    <!-- Hosting the server in this process means this process is also an ASP.NET Core app. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The same encoder rm2ctl renders its QR with, at the same version. PngByteQRCode is
+         managed and draws no platform surface of its own. -->
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
+
+</Project>
