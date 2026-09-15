@@ -163,6 +163,41 @@ Two panes, and the phone is usually portrait:
   border between two targets must not guess.
 - The match strip renders `cues` oldest-first, up to 10 (§ 9.1), faint, on the seam.
 
+### 3.4.1 Video memory: three players is one too many
+
+The app died with an `OutOfMemoryError` while watching a video full screen — 256 MB of heap gone,
+the failing allocation 16 bytes. Deobfuscated through the build's R8 mapping, the last frame is
+`ExoPlayerImpl.handlePlaybackInfo`, which is not the culprit but the moment the heap ran out.
+
+What fills it, in a **video** folder:
+
+| | |
+|---|---|
+| Pane one | a player, buffering |
+| Pane two | a player, buffering |
+| Full screen | **a third player**, on a file one of the panes is already playing |
+| Coil | a memory cache sized at 25% of the heap — 64 MB of it |
+
+Pausing a player does not give its buffers back; only releasing does. And the default load control
+buffers ~50 seconds ahead, which is a sensible figure for a phone on mobile data and a silly one for
+a file on the other side of the room over a LAN, served Range-capable by a server on the same
+network.
+
+So:
+
+- **Release the pane players while the viewer is open**, do not merely stop them. One player alive
+  at a time is the rule; anything else is two decoders and two buffers on one file.
+- **Shrink the buffer.** Seconds, not a minute, and a target buffer size in low single-digit
+  megabytes. The bytes are a Wi-Fi hop away.
+- **Give Coil less**, and drop its memory cache when the app goes to the background. The disk cache
+  is what makes a photograph appear instantly on second sight; the memory cache is a luxury that was
+  competing with playback for the same 256 MB.
+- `largeHeap` is not the fix. It would have hidden this and made it worse in a bigger folder.
+
+**And keep the mapping file.** Every published APK's R8 mapping is archived beside it; without the
+one from this build the trace above would have stayed `A.P.run(Unknown Source:470)` and there would
+have been nothing to fix.
+
 ### 3.6.0 The full-screen swipe follows the layout
 
 First use on a real screen, 2026-09-15: the swipe is horizontal in both orientations, it takes a
