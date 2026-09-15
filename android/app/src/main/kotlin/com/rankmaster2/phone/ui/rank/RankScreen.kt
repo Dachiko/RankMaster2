@@ -232,7 +232,7 @@ private fun Pair(
                     detectTapGestures(
                         // A tap votes, and only away from the seam and away from the outside edge.
                         onTap = { at ->
-                            votableSideAt(at, portrait, widthPx, heightPx, deadBandPx)
+                            votableSideAt(at, portrait, widthPx, heightPx)
                                 ?.let { if (actionable) vote(it) }
                         },
                         // A long press is not an accident, so it reaches every corner: the pane
@@ -248,50 +248,62 @@ private fun Pair(
 }
 
 /**
- * How much of each edge is deaf to a vote: 10% of the screen's width down each side, 10% of its
- * height across the top and bottom.
+ * The share of the screen on which a tap casts a vote: **half**.
  *
- * A wrong vote is the one mistake on this screen that costs something, and the edge of the screen
- * is exactly where a hand rests while holding a phone. The seam already has a dead band for that
- * reason; this is the same argument applied to the outside. It is proportional rather than a fixed
- * number of dp so that it stays the same share of the glass in either orientation - in landscape
- * the thumbs are on the left and right edges rather than the bottom.
+ * The owner kept voting by accident. A wrong vote is the one mistake this screen can make that
+ * costs anything - it moves a rating nobody asked to move, and cancel costs a round trip and his
+ * attention - so the target is deliberately much smaller than the picture it belongs to. The rest
+ * of each pane still *shows* the photograph; it just does not answer a tap.
  *
- * One number, in one place, because it is a guess: the owner's, and no better than anyone's. Moving
- * it after a session with it should be moving this line and nothing else.
+ * Expressed as the share of the glass, because that is how it was asked for and how it will be
+ * adjusted. One number, one place: if half is still too much, this line moves and nothing else.
  */
-internal const val EdgeMarginFraction = 0.10f
+internal const val VotingShareOfScreen = 0.50f
 
 /**
- * Which pane a touch may **vote** for: [sideAt], minus a margin around the outside.
+ * The live box sits inside each pane, so this is also the share of *each pane* that votes - two
+ * panes, each half live, is half the screen. Equal on both axes, hence the square root.
+ */
+private fun liveFractionPerAxis(share: Float): Float =
+    kotlin.math.sqrt(share.coerceIn(0.01f, 1f))
+
+/**
+ * Which pane a touch may **vote** for: inside that pane's live box, or nothing.
  *
  * Kept separate from [sideAt] rather than folded into it, because the two questions genuinely
  * differ. "Which pane is this?" is what a long press asks, and it has an answer everywhere on the
- * glass. "May this cast a vote?" is what a tap asks, and near an edge the honest answer is no.
+ * glass. "May this cast a vote?" is what a tap asks, and outside the live box the answer is no.
+ *
+ * This subsumes the old seam band and the old edge margin: the live box is centred in the pane, so
+ * it is already clear of the seam on one side and of the outside on the other three. One rule
+ * instead of two that had to be kept consistent with each other.
  */
 internal fun votableSideAt(
     at: Offset,
     portrait: Boolean,
     width: Float,
     height: Float,
-    deadBand: Float,
-    edgeFraction: Float = EdgeMarginFraction,
+    share: Float = VotingShareOfScreen,
 ): Side? {
-    if (inEdgeMargin(at, width, height, edgeFraction)) return null
-    return sideAt(at, portrait, width, height, deadBand)
-}
+    val side = sideAt(at, portrait, width, height, deadBand = 0f) ?: return null
 
-/**
- * True inside the margin around the outside of the screen, where a tap does nothing.
- *
- * All four edges, always - not just the two the thumbs are nearest in this orientation. The picture
- * being judged is in the middle ~80% of a pane, which is what stays live.
- */
-internal fun inEdgeMargin(at: Offset, width: Float, height: Float, fraction: Float): Boolean {
-    if (fraction <= 0f) return false
-    val side = width * fraction
-    val cap = height * fraction
-    return at.x < side || at.x > width - side || at.y < cap || at.y > height - cap
+    // The pane this touch is in, in screen coordinates.
+    val paneWidth = if (portrait) width else width / 2f
+    val paneHeight = if (portrait) height / 2f else height
+    val originX = if (portrait || side == Side.LEFT) 0f else width / 2f
+    val originY = if (!portrait || side == Side.LEFT) 0f else height / 2f
+
+    val live = liveFractionPerAxis(share)
+    val marginX = paneWidth * (1f - live) / 2f
+    val marginY = paneHeight * (1f - live) / 2f
+
+    val x = at.x - originX
+    val y = at.y - originY
+
+    val inside = x >= marginX && x <= paneWidth - marginX &&
+        y >= marginY && y <= paneHeight - marginY
+
+    return if (inside) side else null
 }
 
 /**
