@@ -86,6 +86,19 @@ without being told has been lied to by the interface.
 `SERVER_SPEC.md` § 1.1, which forbids a rename endpoint in unusually strong terms; the contract
 changes first, then the implementation. Planned separately as part F.
 
+**Rename does not copy the library** (2026-09-16). `FileOps.BackupLibrary` copies every file in the
+folder byte for byte before renaming anything — gigabytes on a library of 4K video, and a temporary
+doubling of the space it occupies. The renames themselves are directory-entry moves and are nearly
+instant, so the copy was the whole cost of the operation and it bought an undo that a record of the
+renames provides for nothing.
+
+Out, by the owner's decision. What replaces it is part F's problem: a durable journal written before
+the first move, and an answer for the database, which a map of filenames does not protect.
+
+`SPEC.md` § Rename by rank steps 2 and 6 specify the copy; that text now describes only the frozen
+desktop app and part F says what the spec becomes. The `rankmaster_backup_*` scan exclusion stays —
+folders from past renames are still on the owner's disk.
+
 **Rename shows progress and can be cancelled** (2026-09-16). That makes it the first long-running
 operation in a contract where every endpoint is synchronous, and it puts one hard question at the
 centre of part F: what cancel means when three thousand files have already been renamed. Rolling
