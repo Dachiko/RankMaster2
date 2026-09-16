@@ -37,6 +37,9 @@ user_history.txt
 # Test corpus: real media, fetched and derived by tests/corpus/build-corpus.sh
 tests/corpus/media/
 
+# D-video.md § 6.2: 4K AV1 and other generated video fixtures, built by pc/tests/make-video-fixtures.sh
+pc/tests/fixtures/
+
 # Android client
 android/.gradle/
 android/build/

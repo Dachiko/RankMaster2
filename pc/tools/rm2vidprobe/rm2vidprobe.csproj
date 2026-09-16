@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    D-video.md § 6.4: the Windows-side proof, built here, run by the owner. Published win-x64 from
+    Linux like every other binary in this project. Compiles Video/'s plain-C# classes directly
+    (FrameStore, PaneFit, VideoLog, VideoOptions, FailureMapper, Backend/*) plus its own tiny
+    ProbeCallbacks/ProbeSurface — no Avalonia, no VideoSurface (which would need a real UI-thread
+    bitmap factory), no server, no UI.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RankMaster2.Pc.VidProbe</RootNamespace>
+    <AssemblyName>rm2vidprobe</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The plain-C# half of Video/ only: FrameStore/PaneFit/VideoLog/VideoOptions/FailureMapper and
+         Backend/ (LibVlcBackend is exactly what this tool exists to exercise). VideoSurface.cs and
+         VideoEngine.cs are intentionally excluded — VideoSurface owns an Avalonia WriteableBitmap and
+         this tool has no Avalonia platform to back one; ProbeCallbacks.cs below is its FrameStore-only
+         replacement, and Program.cs drives IPlayerBackend directly instead of through VideoEngine's
+         worker-thread queue (this tool is already single-threaded and sequential by design). -->
+    <Compile Include="../../src/RankMaster2.Pc/Video/IVideoSurface.cs" Link="Video/IVideoSurface.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/FrameStore.cs" Link="Video/FrameStore.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/PaneFit.cs" Link="Video/PaneFit.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/VideoLog.cs" Link="Video/VideoLog.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/VideoOptions.cs" Link="Video/VideoOptions.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/FailureMapper.cs" Link="Video/FailureMapper.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/Backend/IPlayerBackend.cs" Link="Video/Backend/IPlayerBackend.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/Backend/LibVlcBackend.cs" Link="Video/Backend/LibVlcBackend.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/Backend/LibVlcOptions.cs" Link="Video/Backend/LibVlcOptions.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- IVideoSurface.cs (the seam file) carries the plain VideoFailure/VideoFailureKind/VideoStats
+         types FailureMapper returns alongside the Avalonia-typed IVideoSurface interfaces this tool
+         never implements; Avalonia is referenced so the whole file compiles, not because this
+         console app touches a window or a bitmap factory. -->
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/RankMaster2.Core/RankMaster2.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    TEMPORARY SCAFFOLD, WRITTEN BY THE INTEGRATOR — part A owns the client's project files and had
+    not been built when part D landed. Part D delivered no project file at all, so its 75 tests
+    could not be run outside its own worktree; this exists so they can be, and so the video code is
+    compiled by anything that builds this repository.
+
+    Part A folds this in: either delete it and let pc/src/RankMaster2.Pc/RankMaster2.Pc.csproj glob
+    Video/*.cs (carrying the two package references below), or keep it as a referenced sub-project.
+    Either gives the same assembly shape. See PC_CLIENT_PARTS.md and pc/plans/D-video.md § 4.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RankMaster2.Pc.Video</AssemblyName>
+    <RootNamespace>RankMaster2.Pc.Video</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <PackageReference Include="Avalonia" Version="11.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/RankMaster2.Core/RankMaster2.Core.csproj" />
+  </ItemGroup>
+</Project>
