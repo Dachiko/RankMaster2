@@ -66,6 +66,24 @@ behaviour, and the phone already settled what the two-pane surface should and sh
 
 ---
 
+## Settled by the owner, 2026-09-16
+
+**`Ctrl+Z` undoes whatever the server allows.** Not the old app's move-only undo: the server's
+one-level cancel of the last action of any kind — vote, skip, discard or special
+(`SERVER_SPEC.md` § 10.10).
+
+This is a deliberate deviation from `SPEC.md` § Keys, which describes the frozen desktop app and
+predates the server having a wider undo. The reasoning is the same as it was for the phone: a mis-hit
+key is a real vote, and the only way back used to be to keep voting and hope. There is now a way
+back, and it should be under the key the owner's fingers already reach for.
+
+The consequence part E must carry: the key now does something *more* than it used to, so what it just
+undid has to be said out loud. The server names it — `lastAction.undoneType` is exactly `vote`,
+`skip`, `discard` or `special` — and a person who presses undo expecting one thing and gets another
+without being told has been lied to by the interface.
+
+---
+
 ## The seams, frozen before anyone starts
 
 Named here so that five plans agree about where they meet. I write these as real types before
