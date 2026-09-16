@@ -99,6 +99,21 @@ the first move, and an answer for the database, which a map of filenames does no
 desktop app and part F says what the spec becomes. The `rankmaster_backup_*` scan exclusion stays —
 folders from past renames are still on the owner's disk.
 
+**The ratings are the asset; the filenames are cosmetic** (2026-09-16, the owner). A rename moves
+directory entries and never touches a byte of a photograph, so after any crash every image is on
+disk under some name. `rankmaster_db.json` is the only irreplaceable thing in the folder — it holds
+hours of pairwise judgement that nothing can reconstruct.
+
+So the failure to design against is not a messy folder. It is **a rating that loses its file**: the
+database keys by filename, `JsonCatalog.Save` merges against what is on disk, and a database left
+naming files that have been renamed can be quietly emptied by the next ordinary save. Silent, total,
+and indistinguishable from never having ranked at all. `SPEC.md` already forbids the neighbouring
+case; this is the same fear one step along.
+
+A half-renamed folder is therefore an acceptable resting state, and recovery's job is to reunite
+ratings with files rather than to tidy names. The test that matters is not "does rename work" but
+"kill it at each step, and does every rating still find its file".
+
 **Rename shows progress and can be cancelled** (2026-09-16). That makes it the first long-running
 operation in a contract where every endpoint is synchronous, and it puts one hard question at the
 centre of part F: what cancel means when three thousand files have already been renamed. Rolling
