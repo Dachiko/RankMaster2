@@ -78,7 +78,7 @@ entirely this part's; T2 is mostly parts B, C and E, and this part supplies the 
 | Globalization | **`InvariantGlobalization=true`** | no ICU load (`icu.dll` is several MB and its load is on the critical path); the app formats nothing culture-specific |
 | Plugin set | **one checked-in manifest, `pc/libvlc/plugins.keep.txt`**: 27 plugin DLLs (27.0 MB) in Phase A0, of which four are marked provisional and are struck by the harness if VLC never uses them (expected final: 23 files, 22.5 MB); `libvlc.dll` + `libvlccore.dll`; nothing else from the package | § 4.2 — my list and part D's § 5.1 list merged; the one file both parts point at. What the app needs is the five containers, the four codecs, software decode, RV32 frames through `vmem`, no audio, no subtitles |
 | The index (`plugins.dat`) | **built on the owner's PC by `RankMaster2.exe --build-vlc-cache`**, run by the install script after the files are in place; validated at every wake by a stamp; rebuilt by the app if missing or stale | § 4.3. The generator is `libvlc_new --reset-plugins-cache`, which our exe can do; building after extraction makes the mtime/size validation exact |
-| `--no-plugins-scan` | **not used** | it skips VLC's per-file `stat` validation, which with 24 files costs about nothing, and a stale cache with no validation is a silent wrong-module bug |
+| `--no-plugins-scan` | **not used** | it skips VLC's per-file `stat` validation, which with two dozen files costs about nothing, and a stale cache with no validation is a silent wrong-module bug |
 | When the engine wakes | **when a folder is opened that the probe says would rank as video** — on a thread-pool thread, started the instant Open/Resume is requested, before the server answers; never at process start; never speculatively on the start screen | § 3. The wake overlaps the `POST /session` round trip; a stills folder never pays; T1 stays a pure number |
 | Full screen | Avalonia `WindowState.FullScreen`, `SystemDecorations.None`, `CanResize=false`, `Background=Black`, primary screen | `SPEC.md` § Screens: borderless, over the taskbar. Primary screen because the app is launched from the taskbar and driven by keys; § 13 asks the owner |
 | DPI | `app.manifest` declares `PerMonitorV2`; Avalonia scales | the manifest is the reliable route; the runtime call fails once a window exists |
@@ -203,15 +203,18 @@ Main(args)
      .StartWithClassicDesktopLifetime(args)                   mark "avalonia_built" at App.Initialize
 App.Initialize:        Styles.Add(new SimpleTheme()); RequestedThemeVariant = Dark
 App.OnFrameworkInitializationCompleted:
-  lastFolder = LastFolderStore.Load()                         one 1 KB read, synchronous (< 1 ms warm; avoids a Resume-button flicker)
-  services   = Composition.Build(lastFolder)                  constructs B/C/D/E objects — constructors only; no I/O, no network, no native load
+  services   = Composition.Build()                            constructs B's link (wrapped), C's still source, D's VideoEngine (free constructor,
+                                                              D § 4.2), E's UiRoot(link, stills, surfaceFactory, AppInfo.Version) — constructors only;
+                                                              no network, no native load. The one permitted read is E's StartModel reading
+                                                              last-folder.txt (1 KB) so Resume is on the first frame without a flicker
   shell      = new MainWindow { Content = services.UiRoot }   black, FullScreen, primary screen
+  services.UiRoot.QuitRequested += (_, _) => AppLifetime.QuitNow()
   desktop.MainWindow = shell
 shell.Opened:          mark "window_opened"
                        TopLevel.GetTopLevel(shell).RequestAnimationFrame(_ => {
                            StartupClock.Mark("first_frame");                    ← T1 ends here (in-app)
                            StartupClock.AssertNoVideoEngine();                  LibVLCSharp assembly must not be loaded (§ 8 test 2)
-                           Task.Run(services.Link.ConnectAsync)                 part B: /ping, start tray, pair — never before this line
+                           Task.Run(() => services.Link.ConnectAsync())          part B § 5.2.2: credential or enrol, start the tray if needed — never before this line
                        })
 ```
 
@@ -219,7 +222,7 @@ Rules that make T1 a pure number:
 
 - Nothing native but Avalonia's own (`av_libglesv2`, `libSkiaSharp`, `libHarfBuzzSharp`) loads before
   `first_frame`. `LibVLCSharp.dll` must not even be *loaded* — `Composition` holds part D's engine
-  behind `VideoEngineGate`, which touches no D type until `WakeAsync`. If part D's surface factory
+  behind `VideoEngineGate`, which touches no D type until `WarmUpAsync`. If part D's surface factory
   type references LibVLCSharp types in its signature, the JIT will load the assembly when
   `Composition.Build` is compiled; the § 8 test catches that and the fix is on D's side (a factory
   interface without LibVLCSharp types in its shape).
@@ -236,20 +239,31 @@ the link it holds is `WakingSessionLink`, part A's decorator around part B's rea
 ```
 WakingSessionLink.OpenAsync(folder, ct):
   StartupClock.Mark("open_requested")
-  video = probe.ContainsVideo(folder)                         IMediaProbe, C/D → A; synchronous, an extension pass over top-level names (≈ ms)
-  StartupClock.Mark(video ? "probe_video" : "probe_still")
-  if (video) _ = gate.WakeAsync(ct)                            fire-and-forget on the thread pool; never awaited here
-  snapshot = await inner.OpenAsync(folder, ct)                 part B: DELETE then POST, the § 13.3 rules
-  if (snapshot.Policy == "video" && !gate.IsAwake) _ = gate.WakeAsync(ct)   the probe was wrong (false negative); wake now, late but correct
-  StartupClock.Mark("snapshot")
-  return snapshot
+  open  = inner.OpenAsync(folder, ct)                          part B: connect if needed, DELETE then POST (B § 5.3) — started first, not awaited yet
+  _     = Task.Run(async () => {                               the probe, concurrently, off the UI thread (C § 2.2 says it costs ~100 ms on 20k names)
+            try {
+              needs = await probe.<the frozen question>(folder, ct)     C's FolderMedia.NeedsVideoEngine, or D's Classify(folder) == Videos — § 7.4
+              StartupClock.Mark(needs ? "probe_video" : "probe_still")
+              if (needs) await gate.WarmUpAsync(ct)
+            } catch (IOException / UnauthorizedAccessException) { StartupClock.Mark("probe_failed") }   an unreadable folder decides nothing; the server will
+          })
+  result = await open
+  if (result is OpenResult.Opened o) {
+    StartupClock.Mark("snapshot")
+    if (o.Snapshot.Policy == "video") _ = gate.WarmUpAsync(ct)  authoritative; idempotent; catches a probe false negative, late but correct
+  }
+  return result
 ```
 
 Every other `ISessionLink` member is a one-line delegate. The decorator is the whole of part A's
 control over "when": the engine wakes on the first open of a video folder, overlapping the server
-round trip, and a stills folder never wakes it. A false *positive* from the probe (a mixed folder the
-server ranks as `still`) wakes the engine needlessly; that costs a background thread some work and
-nothing on screen. A false *negative* is caught by the snapshot.
+round trip **and** the probe's own enumeration, and a stills folder never wakes it. A false
+*positive* from the probe (a mixed folder the server ranks as `still`) wakes the engine needlessly;
+that costs a background thread some work and nothing on screen. A false *negative* is caught by the
+snapshot. Part D's plan (§ 4.2) has E call `VideoEngine.WarmUpAsync()` when it sees a video snapshot;
+that call stays and is harmless — `WarmUpAsync` is idempotent — but by then the gate has usually
+already made it, a round trip earlier. D's sentence "part A calls nothing in `Video/` at startup" is
+honoured: nothing before the first frame, and nothing at all for a stills folder.
 
 `panes_painted` is marked by part E after the frame in which both panes have pixels has been
 rendered (`RequestAnimationFrame`, not source assignment) — that is the only T2 end point that means
@@ -260,21 +274,24 @@ what the owner sees. `first_video_frame` is marked by part D. Both use `StartupC
 ```
 VideoEngineGate (App/VideoEngineGate.cs)
   IsAwake: bool
-  WakeAsync(ct): Task — idempotent; the first caller starts the work, every caller awaits the same Task
+  WarmUpAsync(ct): Task — idempotent; the first caller starts the work, every caller awaits the same Task
     StartupClock.Mark("vlc_wake_begin")
     if (!LibVlcIndex.IsCurrent())  LibVlcIndex.Build()        § 4.3: missing or stale index → build it now, once, before the engine loads (logs "vlc_index_rebuilt")
-    await engine.WakeAsync(ct)                                  part D (§ 7.1 proposal); or, until accepted, the first IVideoSurface creation
+    await videoEngine.WarmUpAsync()                             part D's VideoEngine (its § 4.2): Core.Initialize + new LibVLC on D's worker thread
     StartupClock.Mark("vlc_wake_end")
 ```
 
-If the index cannot be built (plugin directory not writable — not the case in `C:\Utils`), the gate
-logs `vlc_index_unwritable` and wakes the engine anyway; VLC then scans 24 files, which is slow only
-relative to the cached path and is still 13× fewer files than today.
+The gate exists so that the index check runs *before* D's `WarmUpAsync` and so that A, not D or E,
+is the one place that decides to make the call early. If the index cannot be built (plugin directory
+not writable — not the case in `C:\Utils`), the gate logs `vlc_index_unwritable` and warms the
+engine anyway; VLC then scans the manifest's ~two dozen files, which is slow only relative to the
+cached path and is still a dozen times fewer files than today.
 
 ### 3.4 Esc
 
-`MainWindow` handles `KeyDown` for `Key.Escape` with tunnelling priority so it runs before any
-control in part E's tree:
+Part E owns the key (its `UiRoot` tunnels every key on the `TopLevel`, stops a running select cue,
+and knows when the folder dialog owns Esc); it raises `UiRoot.QuitRequested` and touches nothing
+else (E § 2.2). `MainWindow` handles no keys. `Composition` subscribes the event to:
 
 ```
 AppLifetime.PrepareQuitAsync():
@@ -344,7 +361,8 @@ Written exactly like this; the comments stay in the file.
                       ExcludeAssets="all" GeneratePathProperty="true" />
     <PackageReference Include="SkiaSharp" Version="3.119.0" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.0" />
+    <!-- NoDependencies: the Linux native without a fontconfig dependency — runs Avalonia and part C's decoder in tests here (C § 4). -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -385,8 +403,10 @@ Notes for the executor:
   `.targets` from being imported, so nothing else copies VLC files.
 - The RID is never set in the csproj: `dotnet build` and `dotnet test` on Linux run RID-less; the
   publish script passes `-r win-x64 --self-contained`.
-- `SkiaSharp.NativeAssets.Linux` is for tests on this box (Avalonia's renderer); it is not copied
-  into a win-x64 publish.
+- `SkiaSharp.NativeAssets.Linux.NoDependencies` is for tests on this box (Avalonia's renderer and
+  part C's decoder); it is not copied into a win-x64 publish.
+- Part D's request for "the `win-x86` drop the old `.csproj` has" is met by construction: the copy
+  target copies from `build/x64/` only, so nothing from `x86` can arrive.
 - `pc/Directory.Build.props`:
 
   ```xml
@@ -412,15 +432,33 @@ frames to `vmem` callbacks; no audio, no subtitles, no window. The file is the l
 relative path per line, `#` comments allowed, and it is the **only** place the set is defined —
 the csproj copies it, `publish.sh` verifies it, the harness validates it, the kit ships it.
 
+**Two lists became one.** Part D's plan § 5.1 arrived with its own 27-file list, argued from the
+decoder's side. This manifest is the merge, and the differences are resolved here, not left open:
+
+| Entry | D | A | Resolution |
+|---|---|---|---|
+| `libidummy`, `libtdummy` | in | out | **in** — D's options name `--intf=dummy`, and the vout asks for a text renderer lazily; 88 KB, and the part that owns the options gets its modules |
+| `libvpx` | in, expecting to drop it | out | **in, provisional** — D wanted the owner's PC to settle whether avcodec's ffvp9 takes `vp9.webm`; the harness settles it here first (§ 5.3), and the line is struck if VLC uses `avcodec` for it |
+| `libscale` (video_filter) | in | out | **in, provisional** — D says the vout's resize hook; the harness plays 4K into a 1920-wide `vmem` and will show `using video filter module "scale"` or not |
+| `libi420_rgb_mmx` | out | in | **out** — on x64 the SSE2 variant always wins the score; D is right |
+| `librv32`, `libconsole_logger` | out | in | **in, provisional** — the harness shows whether `rv32` is ever chosen as a converter and whether libvlccore loads a logger at `libvlc_new`; struck if unused |
+| `libdeinterlace` | out (an "add-back candidate") | in | **in** — the corpus is progressive so no harness can show it, and the owner's older camera footage may not be; VLC inserts it by itself for flagged content and shows combing without it. 162 KB of insurance the pruning owner chooses to carry |
+| `libpacketizer_hevc` | in ("HEVC `.mov` from phones") | out | **out** — `SPEC.md` § Non-goals lists HEVC; a file the spec excludes shows part D's "will not play" state, which is the correct answer. Flagged to the coordinator (§ 13); one line to add back |
+| `libaom` | out | out | agreed |
+
 The file is written exactly like this — a line is either a comment starting with `#` or one bare
-relative path; nothing trails a path. Sizes are KB in `VideoLAN.LibVLC.Windows 3.0.21`, measured.
+relative path; nothing trails a path. A line under a `# provisional` comment is struck by the
+executor when § 5.3's harness report shows the module unused in both runs (for `libvpx`: unused and
+`vp9.webm` decoded by `avcodec`). Sizes are KB in `VideoLAN.LibVLC.Windows 3.0.21`, measured.
 
 ```
 # Rank Master 2 PC client — the libvlc 3.0.21 plugins this app needs.
-# Rules and reasons: pc/plans/A-startup-and-shell.md § 4.2. Total 23,182 KB in 24 files.
+# Rules and reasons: pc/plans/A-startup-and-shell.md § 4.2 (merged with D-video.md § 5.1).
+# 27 files, 27,632 KB as first written; 23 files, 23,076 KB once the four provisional lines are settled.
 #
-# access — local files only (filesystem 72 KB)
+# access — local files only (filesystem 72); idummy 43 is what D's "--intf=dummy" names
 plugins/access/libfilesystem_plugin.dll
+plugins/access/libidummy_plugin.dll
 #
 # demux — the five containers; mov is mp4, webm is mkv (mp4 323, mkv 1708, avi 135)
 plugins/demux/libmp4_plugin.dll
@@ -436,31 +474,38 @@ plugins/packetizer/libpacketizer_copy_plugin.dll
 # codec — avcodec decodes H.264, MPEG-4 part 2 and VP9; dav1d decodes AV1 and outscores avcodec's AV1 (16868, 1846)
 plugins/codec/libavcodec_plugin.dll
 plugins/codec/libdav1d_plugin.dll
+# provisional — VP8/VP9 via libvpx (4404); struck if the harness shows vp9.webm decoded by avcodec
+plugins/codec/libvpx_plugin.dll
 #
 # video output — the frame-callback sink, and the dummy VLC falls back to (45, 44)
 plugins/video_output/libvmem_plugin.dll
 plugins/video_output/libvdummy_plugin.dll
 #
-# video chroma — I420, 8- and 10-bit, to RV32 at pane size (993, 60, 83, 146, 42, 70)
+# video chroma — I420, 8- and 10-bit, to RV32 at pane size (993, 60, 146, 70)
 plugins/video_chroma/libswscale_plugin.dll
 plugins/video_chroma/libi420_rgb_plugin.dll
-plugins/video_chroma/libi420_rgb_mmx_plugin.dll
 plugins/video_chroma/libi420_rgb_sse2_plugin.dll
-plugins/video_chroma/librv32_plugin.dll
 plugins/video_chroma/libchain_plugin.dll
+# provisional — RV32 converter (42); struck if no harness run shows it chosen
+plugins/video_chroma/librv32_plugin.dll
 #
-# video filter — VLC inserts this itself for interlaced content; without it combing is shown (162)
+# video filter — deinterlace: VLC inserts it itself for interlaced content, combing without it (162)
 plugins/video_filter/libdeinterlace_plugin.dll
+# provisional — D's "vout resize hook" (45); struck if the 4K-into-1920 harness run never uses it
+plugins/video_filter/libscale_plugin.dll
 #
 # stream filter — the read-ahead VLC 3 puts in front of a file access (46, 45, 47)
 plugins/stream_filter/libcache_read_plugin.dll
 plugins/stream_filter/libcache_block_plugin.dll
 plugins/stream_filter/libprefetch_plugin.dll
 #
-# audio output — so "--aout=dummy" resolves if part D keeps it; unused under --no-audio (41)
+# audio output — D's "--aout=dummy" names it; nothing is decoded under D's per-media ":no-audio" (41)
 plugins/audio_output/libadummy_plugin.dll
 #
-# logger — libvlccore asks for a "logger" module at libvlc_new; the only one in the package (65)
+# text renderer — the vout asks for one lazily; the dummy answers (43)
+plugins/text_renderer/libtdummy_plugin.dll
+#
+# provisional — libvlccore may ask for a "logger" module at libvlc_new (65); struck if the harness log never shows it loaded
 plugins/logger/libconsole_logger_plugin.dll
 ```
 
@@ -468,27 +513,30 @@ What goes, by directory, with the measured size it takes with it:
 
 | Dropped | KB | Why it is not needed |
 |---|---|---|
-| `codec/` minus avcodec, dav1d | 21,094 | `libass` 3.0 MB, `vpx` 4.4 MB, `aom` 2.0 MB, `x26410b`, `schroedinger`, `zvbi`, every audio codec, every subtitle codec, every hardware decoder. `vpx` and `aom` are lower-scoring fallbacks for codecs avcodec and dav1d already decode — the harness confirms which module VLC actually picks (§ 5.3) |
-| `access/` minus filesystem | 14,676 | network, discs, capture, `srt` 3.6 MB, `dcp` 2.4 MB, `bluray` 2.1 MB |
+| `codec/` minus avcodec, dav1d (and provisionally vpx) | 16,690 | `libass` 3.0 MB, `aom` 2.0 MB, `x26410b`, `schroedinger`, `zvbi`, every audio codec, every subtitle codec, every hardware decoder. `aom` is a lower-scoring, 4× slower (D § 4.3) second AV1 decoder; `vpx` stays only until the harness shows avcodec taking VP9 (§ 5.3) |
+| `access/` minus filesystem, idummy | 14,633 | network, discs, capture, `srt` 3.6 MB, `dcp` 2.4 MB, `bluray` 2.1 MB |
 | `demux/` minus mp4, mkv, avi | 7,238 | `adaptive` 2.4 MB (DASH/HLS), `gme`, `mod`, `ts`, playlists, raw ES, subtitles |
 | `access_output/` + `stream_out/` + `mux/` | 9,224 | streaming and transcoding output; this app produces nothing |
 | `misc/` | 3,504 | `gnutls` 2.1 MB, `xml` 1.1 MB, addons, fingerprinter |
 | `video_output/` minus vmem, vdummy | 3,275 | `d3d11`, `d3d9`, `directdraw`, `wingdi`, `gl*`, `wgl`, `caca`, `drawable`, `winhibit`, `yuv`, `flaschen` — the panes are bitmaps, not VLC windows. If part D takes the HWND fallback of `PC_CLIENT_PLAN.md` § 6.2 it adds `libdirect3d11_plugin.dll`, `libdirect3d9_plugin.dll`, `libdrawable_plugin.dll`, `d3d11/`, `d3d9/` to this manifest — five lines |
-| `text_renderer/`, `spu/`, `video_splitter/`, `visualization/` | 6,148 | subtitles, OSD, mosaics, visualisers |
-| `video_filter/` minus deinterlace | 2,262 | effects |
-| `video_chroma/` minus the six kept | 878 | YUY2/NV12/P010/grey paths serve outputs this app never requests |
+| `text_renderer/` minus tdummy, `spu/`, `video_splitter/`, `visualization/` | 6,105 | subtitles (`freetype` 2.7 MB), OSD, mosaics, visualisers |
+| `video_filter/` minus deinterlace (and provisionally scale) | 2,217 | effects |
+| `video_chroma/` minus the five kept | 961 | the MMX variant (SSE2 always outscores it on x64), YUY2/NV12/P010/grey paths for outputs this app never requests |
 | `audio_filter/`, `audio_mixer/`, `audio_output/` minus adummy | 2,663 | no audio decoding under `--no-audio` |
 | `packetizer/` minus the four kept | 627 | HEVC (a `SPEC.md` non-goal), VC-1, Dirac, audio packetizers |
-| `stream_filter/` minus the three kept, `stream_extractor/`, `keystore/`, `meta_engine/`, `services_discovery/`, `lua/` | 4,124 | archives, tags, credentials, metadata, discovery, Lua |
+| `stream_filter/` minus the three kept, `stream_extractor/`, `keystore/`, `meta_engine/`, `services_discovery/`, `lua/`, `logger/` if provisional falls | 4,124 (+65) | archives, tags, credentials, metadata (`libfolder` scans for cover art on every parse — D § 5.1), discovery, Lua |
 | `libvlc.lib`, `libvlccore.lib`, `vlc.lib`, `vlccore.lib`, `hrtfs\`, `lua\` | 849 + dirs | import libraries and data for features not shipped |
 
-Result: **24 plugins, 22.6 MB + libvlccore 2.7 MB + libvlc 0.2 MB ≈ 25.5 MB** against ~100 MB, and
-24 files to `stat` at wake instead of 320 to `LoadLibrary`.
+Result: **27 plugins, 27.0 MB (23 plugins, 22.5 MB once the provisional lines are settled) +
+libvlccore 2.7 MB + libvlc 0.2 MB** against ~100 MB, and two dozen files to `stat` at wake instead
+of 320 to `LoadLibrary`.
 
 **The rule for changing the list**, so nobody argues from taste: a plugin is added when the harness
 (§ 5.3) shows VLC using it on a corpus file with the full set, or when a part's plan names a VLC
 option that needs it (with the module name written next to the line). A plugin is never removed
-below this list without the harness passing on the reduced set.
+below this list without the harness passing on the reduced set. Part D's § 5.1 calls its list "the
+contract"; from here on **this file is**, and D's list is its first input — the coordinator is asked
+to record that (§ 13).
 
 ### 4.3 The index — `plugins.dat`
 
@@ -531,7 +579,7 @@ same file system, the values match exactly.
 
 **The stamp — `plugins.stamp`.** Written by the builder: SHA-256 over the sorted lines
 `<relative path>|<size>|<mtime UTC ticks>` of every `*.dll` under `plugins\`, as hex, plus the
-libvlc version string on a second line. `LibVlcIndex.IsCurrent()` recomputes it (24 `stat`s, well
+libvlc version string on a second line. `LibVlcIndex.IsCurrent()` recomputes it (one `stat` per manifest file, well
 under a millisecond) and compares; it is false if `plugins.dat` or the stamp is missing. This is
 how the gate (§ 3.3) self-heals a publish that forgot the install step or a hand-copied folder,
 without parsing VLC's log.
@@ -557,7 +605,7 @@ Bash, run from the repository root by the agent; no `git` commands inside it (th
    - RankMaster2.exe, RankMaster2.dll, RankMaster2.pdb exist
    - av_libglesv2.dll, libSkiaSharp.dll, libHarfBuzzSharp.dll exist
    - libvlc/win-x64/libvlc.dll and libvlccore.dll exist
-   - `find libvlc/win-x64/plugins -name '*.dll' | wc -l` == number of non-comment lines in pc/libvlc/plugins.keep.txt (24), and every manifest path exists
+   - `find libvlc/win-x64/plugins -name '*.dll' | wc -l` == number of non-comment lines in pc/libvlc/plugins.keep.txt, and every manifest path exists
    - no *.lib, no lua/, no hrtfs/, no plugins.dat (it is built on the PC, never shipped), no *.xml docs, no createdump.exe
    - RankMaster2.dll is really R2R: `rm2probe is-r2r <dll>` opens it with System.Reflection.PortableExecutable.PEReader
      and reports whether the CLI header's ManagedNativeHeader directory is non-empty (that is the definition of an
@@ -619,7 +667,7 @@ old-r2r:        dotnet publish src/RankMaster2.App -c Release -r win-x64 --self-
 empty-wpf:      dotnet publish pc/kit/EmptyWpf      -c Release -r win-x64 --self-contained -p:EnableWindowsTargeting=true -p:PublishReadyToRun=true -o pc/dist/kit/empty-wpf
 empty-avalonia: dotnet publish pc/kit/EmptyAvalonia -c Release -r win-x64 --self-contained -p:PublishReadyToRun=true -o pc/dist/kit/empty-avalonia
 rm2probe:       dotnet publish pc/tools/rm2probe    -c Release -r win-x64 --self-contained -p:PublishReadyToRun=true -o pc/dist/kit/rm2probe
-                then copy the pruned libvlc set (libvlc.dll, libvlccore.dll, the 24 manifest plugins) to pc/dist/kit/libvlc-pruned/win-x64/
+                then copy the pruned libvlc set (libvlc.dll, libvlccore.dll, the manifest plugins) to pc/dist/kit/libvlc-pruned/win-x64/
                 (reuse the csproj target: publish RankMaster2.Pc once and copy its libvlc\ folder, so the kit's set IS the manifest)
 scripts:        Measure-Startup.ps1, Measure.cmd → pc/dist/kit/
 ```
@@ -747,7 +795,7 @@ corpus source (`ffmpeg -i _source.webm -t 2 -vf scale=3840:2160 -c:v libsvtav1 -
 and a 10-bit variant (`-pix_fmt yuv420p10le`), and plays both: they exercise dav1d at size, the
 10-bit → RV32 conversion, and swscale's scaling path. The report lists modules used per file.
 
-What the harness proves: the 24 names are sufficient for these containers and codecs on VLC 3.0.x.
+What the harness proves: the manifest's names are sufficient for these containers and codecs on VLC 3.0.x.
 What it cannot prove: that the Windows build of a plugin behaves like the Linux one, or that the
 owner's real files contain nothing outside the corpus. The second is covered on his PC by
 `rm2probe play` over his actual video folder (§ 6.4), and by the app itself: a "no suitable
@@ -865,7 +913,7 @@ media folders.
 |---|---|---|
 | `vlc-init <libvlcDir> [--runs 3]` | spawns `rm2probe vlc-init <dir> --once` per run; `--once` times `Core.Initialize` and `new LibVLC("--quiet")` separately, subscribes to `LibVLC.Log`, counts `plug-ins loaded: N modules` and notes whether `loading plugins cache file` appeared | `init=<ms> new=<ms> plugins=<N> cache=<hit|none|stale(k)>` per run |
 | `vlc-cache <libvlcDir>` | the § 4.3 build, on a *copy* if `--copy-to <dir>` is given (the kit uses this against the owner's shipped `libvlc\` so his install is never modified) | `plugins.dat <bytes> bytes in <ms> ms` |
-| `play <file or dir> [--libvlc <dir>] [--seconds 3] [--min-frames 10] [--report <file>]` | `vmem` callbacks at RV32 1920×1080, `--no-audio --no-spu --no-osd --avcodec-hw=none --verbose=2`; per file: ms to first frame, frames in `--seconds`, every `using <capability> module "<name>"` log line deduplicated | one line per file plus the module list; exit 1 if any file has fewer than `--min-frames` |
+| `play <file or dir> [--libvlc <dir>] [--seconds 3] [--min-frames 10] [--report <file>]` | `vmem` callbacks at RV32 1920×1080, part D's § 5.2 engine and per-media options plus `--verbose=2`; per file: ms to first frame, frames in `--seconds`, every `using <capability> module "<name>"` log line deduplicated. This is the **harness's** player (§ 5.3): a sixty-line loop whose only job is the module-usage evidence. Playback proof on the owner's PC is part D's `rm2vidprobe` (D § 6.4), which the kit ships beside this tool from D's Phase 2 on | one line per file plus the module list; exit 1 if any file has fewer than `--min-frames` |
 | `scan <folder>` | `JsonCatalog.Scan` ×3 (read-only), file count, `rankmaster_db.json` size, drive type of the folder | `files=<n> json=<KB> scan=<ms,ms,ms>` |
 | `decode <file or folder> [--width 2160]` | SkiaSharp decode-at-size of the given still or of the largest still in the folder, ×3 | `<file> <MP> decode@2160=<ms,ms,ms>` |
 | `is-r2r <dll>` | `PEReader`: is the CLI header's `ManagedNativeHeader` directory non-empty | `<dll> r2r=yes|no`; exit 1 on `no`. Used by `publish.sh` (§ 4.4) |
@@ -876,8 +924,8 @@ In the kit, `Measure-Startup.ps1` runs after the launches:
 rm2probe vlc-init  <kit>\old-r2r\libvlc\win-x64                 (the owner's 320-plugin set, no cache)
 rm2probe vlc-cache <kit>\old-r2r\libvlc\win-x64                 (builds it there — his real folder untouched)
 rm2probe vlc-init  <kit>\old-r2r\libvlc\win-x64                 (320 plugins, cached)
-rm2probe vlc-init  <kit>\libvlc-pruned\win-x64                  (24 plugins, no cache)
-rm2probe vlc-cache <kit>\libvlc-pruned\win-x64 ; rm2probe vlc-init <kit>\libvlc-pruned\win-x64   (24, cached — the design's promise)
+rm2probe vlc-init  <kit>\libvlc-pruned\win-x64                  (the manifest set, no cache)
+rm2probe vlc-cache <kit>\libvlc-pruned\win-x64 ; rm2probe vlc-init <kit>\libvlc-pruned\win-x64   (the manifest set, cached — the design's promise)
 rm2probe scan   <last-folder.txt>                               (his real folder, read-only)
 rm2probe decode <last-folder.txt>                               (largest still there)
 rm2probe play   <last-folder.txt> --libvlc <kit>\libvlc-pruned\win-x64 --seconds 3   if the folder is video; else "skipped: stills folder"
@@ -952,8 +1000,8 @@ pc 2.0.0           ---       ---       ---    (from Phase A3)
 
 vlc-init  320 plugins, no cache : init=12 new=2210 / 2180 / 2230   cache=none
 vlc-init  320 plugins, cached   : init=11 new=310  / 290  / 300    cache=hit
-vlc-init   24 plugins, no cache : init=12 new=380  / 370  / 390    cache=none
-vlc-init   24 plugins, cached   : init=11 new=95   / 90   / 92     cache=hit
+vlc-init   27 plugins, no cache : init=12 new=380  / 370  / 390    cache=none
+vlc-init   27 plugins, cached   : init=11 new=95   / 90   / 92     cache=hit
 scan   D:\Photos\2025-08  files=18,420  json=4,102 KB  scan=141/98/96 ms   NTFS SSD
 decode D:\Photos\2025-08\DSC_4471.jpg 45.7 MP  decode@2160=212/208/210 ms
 play   skipped: stills folder
@@ -974,7 +1022,7 @@ For part A, on the owner's PC, from the report block:
 | 2 | `pc` **T1_ext fresh** | ≤ warm median + 300 ms | § 10.1 "no slower on the first launch after a publish"; 300 ms is the file-cache allowance (§ 5.4) |
 | 3 | `pc` **T1_ext / shipped T1_ext** | ≤ 0.5 | the improvement is a ratio the owner can feel, not an absolute alone |
 | 4 | `T1_app − T1_ext` on `pc` | within 100 ms | the two clocks agree; the window does not appear before its content |
-| 5 | `vlc-init 24 plugins, cached`, `new=` | **≤ 250 ms** warm | the engine's wake once index and prune are in place; from the probe, and matched by `T_wake` in `startup.log` on a video folder |
+| 5 | `vlc-init` on the pruned set, cached, `new=` | **≤ 250 ms** warm | the engine's wake once index and prune are in place (D § 4.2 estimates 20–80 ms; 250 is the ceiling, not the hope); from the probe, and matched by `T_wake` in `startup.log` on a video folder |
 | 6 | `startup.log` on a stills folder | no `vlc_wake_begin`, no `vlc_loaded_early` | the engine never woke |
 | 7 | `startup.log` on a video folder | exactly one `vlc_wake_begin`, before `snapshot` | woke once, overlapped with the server |
 | 8 | `install.ps1` step 6 | exit 0, `plugins.dat` present, `plugins.stamp` present | the index exists before the first launch |
@@ -987,55 +1035,81 @@ so the owners of those parts have their number.
 
 ## 7. Seams
 
-### 7.1 Consumed as frozen
+The four sibling plans (`B-server-link.md`, `C-stills.md`, `D-video.md`, `E-ranking-surface.md`)
+were read before this section was final; where they already name something A needs, A uses their
+name and asks for nothing new.
 
-- `ISessionLink` (B → A, E): wrapped by `WakingSessionLink`, whose `OpenAsync` is § 3.2 and whose
-  `CloseAsync` is used by Esc with a 500 ms cancellation. Every other member delegates. Part E
-  receives the wrapper and is none the wiser.
-- `Snapshot` (B → everyone): read for `policy` only.
-- `IMediaProbe` (C, D → A): `bool ContainsVideo(string folder)` as consumed; contract wording § 7.4.
-- `IStillSource`, `IVideoSurface`: constructed in `Composition`, handed to part E, never called by A.
+### 7.1 Consumed as the other plans define them
+
+- **`ISessionLink`** (B § 3): `ConnectAsync(ct) → ConnectResult`, `OpenAsync(folder, ct) →
+  OpenResult` (`Opened(snapshot, …)` or a refusal), `CloseAsync(ct)` ("pass a short token on Esc …
+  and do not wait for more" — B wrote the 500 ms rule into the contract), `State`, `LastFailure`,
+  `IsBusy`. Wrapped by `WakingSessionLink` (§ 3.2); every other member delegates. Part E receives
+  the wrapper and is none the wiser. B's `LinkOptions.ServerExecutable` default
+  `{app dir}\..\tray\RankMaster2.Tray.exe` is satisfied by the § 2 layout.
+- **`Snapshot.Policy`** (B § 3, a string, `"still" | "video"`): read for the late warm-up only.
+- **`IMediaProbe`** (C § 2.2 *and* D § 3.2 — two shapes, § 7.4): A asks one question, "will a
+  session here ever play a frame", and consumes whichever member the coordinator freezes: C's
+  `(await ProbeAsync(folder, ct)).NeedsVideoEngine` or D's `Classify(folder) == FolderPolicy.Videos`.
+- **`VideoEngine.WarmUpAsync()`** (D § 4.2): already in D's design, idempotent, runs on D's worker
+  thread. This is the "wake" handle A needed; no `IVideoEngine` is proposed. A registers
+  `VideoEngine` as the singleton with the free constructor D asks for (D § 9) and calls
+  `WarmUpAsync` from the gate only.
+- **`UiRoot`** (E § 2.1–2.2): E's public control, constructed by A with the link, the still
+  source, D's surface factory and `AppInfo.Version`; hosted as `MainWindow.Content`; raises
+  `QuitRequested`. E's key handlers tunnel on the `TopLevel`; A's window handles no keys.
+- **`LastFolderStore`** (E § 2.1): E's, in `Ui/Surface/`. A dropped its copy; nothing in `App/`
+  reads the last folder.
+- **`IStillSource`**, **`IVideoSurface`**: constructed in `Composition`, handed to `UiRoot`, never
+  called by A.
 
 ### 7.2 Additions this part asks for
 
-Each with what A does if it is refused, so nothing blocks.
+Only two remain, each with what A does if it is refused, so nothing blocks.
 
 | Proposed | Direction | Shape | Why | If refused |
 |---|---|---|---|---|
-| **`IVideoEngine`** | D → A | `bool IsAwake { get; }`, `Task WakeAsync(CancellationToken)`, `ValueTask DisposeAsync()` | § 3.2's overlap needs a handle to say "wake now" *before* the first surface is created; `IVideoSurface` has no such member | the gate wakes the engine by creating and releasing one `IVideoSurface` the moment the probe says video — same effect, uglier; or D's engine is lazy on first create and the overlap is lost |
-| **`LibVlcLayout`** | A → D | `static string NativeDir`, `PluginsDir`, `IndexPath`, `StampPath` — `NativeDir = Path.Combine(AppContext.BaseDirectory, "libvlc", "win-x64")` | one rule for where libvlc lives, owned by the part that lays the folder out; D passes `NativeDir` to `Core.Initialize` | D writes the same rule itself; this plan states it verbatim so the two copies cannot differ |
-| **`StartupClock.Mark(string)`** | A → everyone | static, write-only, never throws | T2 and `first_video_frame` are other parts' instants on A's clock | E and D write their own timestamps to the same file — worse, and the report would need to merge them |
-| **Part E's root** | E → A | one public factory, e.g. `Ui.Root.Create(ISessionLink link, IStillSource stills, <D's surface factory>, string? lastFolder) : Control` | the shell is a window with `Content`; something has to give it the content. The frozen table has no E → A seam at all | A hosts whatever public `Control`-returning entry point E's plan names; the signature above is the request |
+| **`LibVlcLayout`** | A → D | `static string NativeDir`, `PluginsDir`, `IndexPath`, `StampPath`; `NativeDir = Path.Combine(AppContext.BaseDirectory, "libvlc", "win-x64")`, with the old `VlcRuntime.cs` `ProcessPath` fallback | D § 4.2 resolves the directory itself "exactly as `VlcRuntime.cs` does"; that is the same rule twice in two folders, and the index builder must agree with the engine to the byte | both keep the rule; this plan and D's state it identically, and § 8 test 6 uses the same path on both sides |
+| **`StartupClock.Mark(string)`** | A → D, E | static, write-only, never throws | `panes_painted` (E) and `first_video_frame` (D) are the ends of T2 and of the video path, on A's clock; neither sibling plan has a clock of its own | E and D write their own timestamps to the same file — worse, and the report would have to merge them |
 
 ### 7.3 Boundaries this part declares (not seam changes; constraints the other plans must know)
 
-- **Esc is A's.** The shell window handles it with tunnelling priority; part E's key handling must
-  not consume `Key.Escape`. (`SPEC.md` § Keys: Esc during the select cue must not vote — the shell
-  quitting first guarantees that.)
-- **The theme is `Avalonia.Themes.Simple`, Dark, and the font is Inter.** Part E templates its
-  controls to `SPEC.md` § Compare UI explicitly, as the old app's `App.xaml` did, and draws icons as
-  `Path` geometry.
-- **Compiled bindings only** (`x:DataType`), in every view of every part — the project enforces it.
-- **Part D's `LibVLC` options must include `--no-audio --no-spu --no-osd --no-sub-autodetect-file
-  --avcodec-hw=none`**, because the shipped plugin set (§ 4.2) has no audio pipeline, no subtitle
-  pipeline and no hardware decoders. `--aout=dummy` may stay (its module is shipped). `--plugin-path`
-  must not be passed (obsolete since VLC 2.0; ignored). `--reset-plugins-cache` is A's alone.
+- **The theme is `Avalonia.Themes.Simple`, Dark, and the font is Inter.** E's `Theme.axaml` is a
+  palette (E § 4.3) and E templates its controls to `SPEC.md` § Compare UI explicitly, so the base
+  theme's look never reaches the screen; Simple is chosen for what it costs before the first frame.
+  Icons as `StreamGeometry` (E already does this, `Icons.axaml`).
+- **Compiled bindings only** (`x:DataType`), in every view of every part — the project enforces it
+  (`AvaloniaUseCompiledBindingsByDefault`, `IsAotCompatible`).
+- **Part D's engine options** (D § 5.2) are accepted as written, with two notes for D: `--plugin-path=`
+  is `add_obsolete_string` since VLC 2.0 and is ignored — drop it, the default directory is the same
+  folder (§ 0); and `--reset-plugins-cache` is A's alone (`--build-vlc-cache` mode) and must never be
+  in the engine's list. Per-media `:no-audio` (D's) is what lets the manifest carry no audio pipeline;
+  if D ever removes it, `audio_format`, `trivial_channel_mixer`, `simple_channel_mixer`,
+  `ugly_resampler`, `float_mixer` and `scaletempo` (~300 KB) go into the manifest first.
 - **Any VLC module a part needs beyond the manifest is added to `pc/libvlc/plugins.keep.txt` with
   the option that needs it named in a comment**, then `prune-check.sh` is run. A part must not ship
   a DLL by any other route.
-- **No part's constructor does I/O, network, or native loads.** `Composition.Build` runs before the
-  first frame; work starts after it (§ 3.1).
+- **No part's constructor does I/O, network, or native loads**, except E's `StartModel` reading
+  `last-folder.txt` (1 KB, synchronous) so Resume is on the first frame. `Composition.Build` runs
+  before the first frame; work starts after it (§ 3.1). D's constructor "stores options and creates
+  nothing" (D § 4.2) — exactly right.
 - **Part D's public types that A constructs must not have LibVLCSharp types in their signatures**,
-  or the assembly loads when `Composition.Build` is JIT-compiled and § 8 test 2 fails.
+  or the assembly loads when `Composition.Build` is JIT-compiled and § 8 test 2 fails. D's
+  `VideoEngine` / `IVideoSurface` as sketched carry Avalonia `Bitmap`, not LibVLCSharp types — good.
+- **A's `CrashLog` appends D's `DiagnosticsDump()`** to the crash file (D § 9 asks for it).
 
-### 7.4 One wording request on a frozen seam
+### 7.4 The probe: two shapes, one question, and a wording
 
-`IMediaProbe`'s sentence is "does this folder contain video". Part A needs "**would this folder rank
-as video** under `SPEC.md` § Media policy" — `MediaExtensions.RankPolicy` over top-level names, so a
-mixed folder answers *no* and the engine stays asleep for it. The method name can stay; the contract
-comment should say which. A tolerates false positives (a needless wake) but a probe that answers
-"contains ≥ 1 video" would wake the engine for every mixed folder, which is most photo folders with
-one clip in them.
+C § 2.2 defines `Task<FolderMedia> ProbeAsync(folder, ct)` with `FolderMedia.NeedsVideoEngine =
+Policy == Video && Videos >= 2` (and throws `IOException` for an unreadable folder, returns `(0,0)`
+for a missing one). D § 3.2 defines `FolderPolicy Classify(folder)` (never throws; `Empty` for
+missing or unreadable) and `bool NeedsVideoEngine(string snapshotPolicy)`. Both compute
+`MediaExtensions.RankPolicy` over top-level names; both answer A's question correctly, and both say
+*no* for a mixed folder — which is the wording A needs and which `PC_CLIENT_PARTS.md`'s "does this
+folder contain video" does not quite say. A's requests to the coordinator: freeze one of the two
+(A has no preference beyond "async, off the UI thread", which both allow via `Task.Run`), and write
+"would rank as video under `SPEC.md` § Media policy; a mixed folder is *no*" into its summary. A
+catches C's exceptions and treats them as "decides nothing" (§ 3.2).
 
 ---
 
@@ -1049,18 +1123,19 @@ running on this box under `dotnet test pc/RankMaster2.Pc.sln`. Fakes for B/C/D/E
 |---|---|---|
 | 1 | `Shell_IsFullScreenBlackBorderless` | `WindowState.FullScreen`, `SystemDecorations.None`, `CanResize=false`, `Background` is black, `Content` is the fake root |
 | 2 | `FirstFrame_LoadsNoVideoEngine` | after the headless first render, `AppDomain.CurrentDomain.GetAssemblies()` has no `LibVLCSharp`; `startup.log` has `first_frame` and no `vlc_wake_begin` |
-| 3 | `StillsFolder_NeverWakesEngine` | fake probe → false, fake link → `policy: still`; open, vote ×10, close: fake `IVideoEngine.WakeAsync` never called |
-| 4 | `VideoFolder_WakesOnce_BeforeSnapshot` | fake probe → true, fake link delays 200 ms; `WakeAsync` called once, its start precedes the link's return; a second open does not call it again |
-| 5 | `ProbeWrong_SnapshotVideo_WakesLate` | fake probe → false, snapshot `policy: video` → `WakeAsync` called exactly once, after `snapshot` |
+| 3 | `StillsFolder_NeverWakesEngine` | fake probe → still, fake link → `policy: still`; open, vote ×10, close: the fake engine's `WarmUpAsync` never called |
+| 4 | `VideoFolder_WakesOnce_BeforeSnapshot` | fake probe → video (after 50 ms), fake link delays 200 ms; `WarmUpAsync` called once, its start precedes the link's return; a second open does not call it again |
+| 5 | `ProbeWrong_SnapshotVideo_WakesLate` | fake probe → still, snapshot `policy: video` → `WarmUpAsync` called exactly once, after `snapshot` |
+| 5a | `ProbeThrows_DecidesNothing` | fake probe throws `IOException`; snapshot `policy: still` → never called; `policy: video` → called once |
 | 6 | `Gate_RebuildsIndexWhenStale` | temp plugin dir with fake `.dll` files; stamp written; one file's size changed → `IsCurrent()` false; builder stub invoked once; stamp equal afterwards |
 | 7 | `Stamp_IsOrderIndependent_AndPathRelative` | two directories with the same files in different creation order and different absolute paths yield the same stamp |
 | 8 | `BuildVlcCache_ExitCodes` | missing `libvlc.dll` → 2; the success path is covered by the docker harness (Linux libvlc writes `plugins.dat` too) and by `install.ps1` on the PC |
 | 9 | `StartupLog_Format_RoundTrips` | a written line parses back to the same marks; the file is capped at 200 lines |
-| 10 | `LastFolderStore_Behaviour` | the old class's contract (missing file → null, non-existent folder → null) |
-| 11 | `Manifest_MatchesPackage` | every non-comment line of `plugins.keep.txt` exists under the restored package's `build/x64/`; no duplicates; count is 24. The test project carries the same `VideoLAN.LibVLC.Windows` reference (`ExcludeAssets="all" GeneratePathProperty="true"`) and exposes the folder to code as `<AssemblyMetadata Include="LibVlcPackageDir" Value="$(PkgVideoLAN_LibVLC_Windows)" />` |
+| 10 | `QuitRequested_RunsPrepareQuit` | a fake `UiRoot` raising the event → `PrepareQuitAsync` called once; `CloseAsync` observed with a cancelled token within 600 ms |
+| 11 | `Manifest_MatchesPackage` | every non-comment line of `plugins.keep.txt` exists under the restored package's `build/x64/`; no duplicates; the count equals the number of non-comment lines. The test project carries the same `VideoLAN.LibVLC.Windows` reference (`ExcludeAssets="all" GeneratePathProperty="true"`) and exposes the folder to code as `<AssemblyMetadata Include="LibVlcPackageDir" Value="$(PkgVideoLAN_LibVLC_Windows)" />` |
 | 12 | `Esc_PrepareQuit_CapsAt500ms` | fake link whose `CloseAsync` never completes: `PrepareQuitAsync` returns within 600 ms |
 | 13 | `Composition_ConstructorsDoNoIO` | fakes record any call; `Composition.Build` makes none |
-| 14 | `publish.sh` shape check | bash, in the script itself (§ 4.4 step 5): 24 plugins, no `.lib`/`lua`/`hrtfs`/`plugins.dat`, R2R larger than IL |
+| 14 | `publish.sh` shape check | bash, in the script itself (§ 4.4 step 5): the manifest's plugin count, no `.lib`/`lua`/`hrtfs`/`plugins.dat`, R2R larger than IL |
 | 15 | `prune-check.sh` | docker (§ 5.3): every corpus file plays through the pruned twins; used-module diff is empty |
 
 ---
@@ -1119,7 +1194,8 @@ Part A is finished when, on the owner's PC, from a block he pasted after running
 4. A stills folder's log line has no `vlc_wake_begin`; a video folder's has exactly one, before
    `snapshot` (#6, #7).
 5. `install.ps1` reported exit 0 and `plugins.dat` present on the last install (#8), and the shipped
-   folder holds exactly 24 plugins and no `.lib`, `lua\`, or `hrtfs\`.
+   folder holds exactly the manifest's plugins — the provisional lines settled — and no `.lib`,
+   `lua\`, or `hrtfs\`.
 6. `prune-check.sh` passes on this box against the manifest that was shipped: every corpus file plays,
    the used-module diff is empty.
 7. Every test in § 8 passes on this box; `App/` builds with zero trim/AOT analyzer warnings.
@@ -1138,7 +1214,7 @@ Point 1 is why this part exists. Point 5 is the one that keeps it true after the
 |---|---|
 | Defender makes the first launch after install slow despite the folder layout | measured as fresh-vs-warm on every install; the § 4.7 single-file switch has a numeric trigger |
 | LibVLCSharp does not pass `--reset-plugins-cache` through, or the cache is not written on Windows | the pass-through is proven here by the harness against Linux libvlc (§ 5.3); `install.ps1` asserts `plugins.dat` after step 6 on the first install for the Windows build; fallback is a five-line `DllImport("libvlc") libvlc_new` call in `LibVlcIndex` that bypasses LibVLCSharp's constructor |
-| The 24-plugin set misses a module the owner's real files need | harness on the corpus plus the 4K/10-bit AV1 clips here; `rm2probe play` over his real folder in the kit; a VLC "no suitable module" is a visible pane state in part D, never a skip; the manifest is one line to extend |
+| The pruned set misses a module the owner's real files need | harness on the corpus plus the 4K/10-bit AV1 clips here; `rm2probe play` over his real folder in the kit; a VLC "no suitable module" is a visible pane state in part D, never a skip; the manifest is one line to extend |
 | Avalonia is slower than WPF on his machine, or does not cover the taskbar | the `PC_CLIENT_PLAN.md` § 4 gate is measured by the kit before the client exists; WPF fallback keeps everything under `App/` except the window class |
 | `MainWindowHandle` fires on an empty window and flatters T1 | `T1_app` beside it; disagreement > 100 ms is a defect to fix (§ 6.8 #4) |
 | Part D's types drag LibVLCSharp into the first frame | test 2 catches it on every build; § 7.3 names the rule |
@@ -1167,7 +1243,7 @@ Point 1 is why this part exists. Point 5 is the one that keeps it true after the
 - Every millisecond in § 6.8. T1 of anything on his hardware; Defender's share; the cold number.
 - That libvlc 3.0.21's Windows build writes `plugins.dat` via LibVLCSharp exactly as the source
   says (§ 5.2) — the first install proves it.
-- That the 24 Windows DLLs behave like their Linux twins, and that his library has nothing outside
+- That the manifest's Windows DLLs behave like their Linux twins, and that his library has nothing outside
   the corpus's containers and codecs.
 - Avalonia on Windows 11: FullScreen over the taskbar, per-monitor DPI, first-frame colour, ANGLE
   device creation time.
@@ -1190,11 +1266,27 @@ Point 1 is why this part exists. Point 5 is the one that keeps it true after the
 
 **Coordinator:**
 
-1. The four seam additions of § 7.2 and the wording of § 7.4.
-2. The boundaries of § 7.3 to be copied into parts D and E's plans (Esc, theme, compiled bindings,
-   the `LibVLC` options, the manifest rule).
-3. Version `2.0.0` for the `pc/` tree.
-4. Whether `pc/RankMaster2.Pc.sln` is enough or `RankMaster2.Server.slnf` (a shared file) should
+1. The two additions of § 7.2 (`LibVlcLayout`, `StartupClock.Mark`).
+2. **The probe**: C § 2.2 and D § 3.2 define `IMediaProbe` differently; freeze one, with the
+   "would rank as video; a mixed folder is *no*" wording (§ 7.4). A works with either.
+3. **The plugin manifest is `pc/libvlc/plugins.keep.txt`**, merged from A and D (§ 4.2); D § 5.1's
+   sentence "this list is the contract" should point at the file. One real disagreement to rule on:
+   `libpacketizer_hevc` — D ships it for phone `.mov` files, A leaves it out because `SPEC.md`
+   § Non-goals lists HEVC. A's default stands until ruled otherwise; it is one line either way.
+4. The boundaries of § 7.3 to be copied into D and E's plans: theme, compiled bindings, the two
+   notes on D's options (`--plugin-path` is dead; `--reset-plugins-cache` is A's), the manifest rule,
+   `DiagnosticsDump()` in the crash file.
+5. `LastFolderStore` is E's (E § 2.1); A has withdrawn its copy. `UiRoot.QuitRequested` is the
+   Esc contract (E § 2.2); A's window handles no keys.
+6. `rm2probe play` (A, the harness's module-usage player) and `rm2vidprobe` (D § 6.4, the owner's
+   playback proof) overlap in the act of playing a file and nowhere else; both are kept, both go in
+   the kit, and A's is the one `prune-check.sh` drives so the manifest can be validated before D's
+   tool exists.
+7. Version `2.0.0` for the `pc/` tree.
+8. B and C each specify their own test project (`RankMaster2.Pc.Link.Tests`, `RankMaster2.Pc.Stills.Tests`);
+   A writes those two `.csproj` files as their plans specify and lists them in `pc/RankMaster2.Pc.sln`,
+   or the coordinator lets B and C own them — either is fine, it must just be said.
+9. Whether `pc/RankMaster2.Pc.sln` is enough or `RankMaster2.Server.slnf` (a shared file) should
    also list the `pc/` projects so the build-everything command covers them.
-5. After Phase A0's block: whether `old-r2r-cache` versus `shipped` says a repackaged 1.1.5 was the
-   whole answer (`PC_CLIENT_PLAN.md` § 9 Phase 0) — that call is above this part.
+10. After Phase A0's block: whether `old-r2r-cache` versus `shipped` says a repackaged 1.1.5 was the
+    whole answer (`PC_CLIENT_PLAN.md` § 9 Phase 0) — that call is above this part.

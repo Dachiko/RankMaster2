@@ -1,28 +1,27 @@
 # Part F — rename by rank, on the server
 
-**Status: plan, nothing built.** Reverses a pinned product decision. Adds one endpoint,
-`POST /api/v1/session/rename`, and the spec, `openapi.yaml`, tests and `rm2ctl` changes that go
-with it. Owns edits in `src/RankMaster2.Server/Sessions/`, `SERVER_SPEC.md`, `SERVER_PLAN.md`,
-`openapi.yaml`, `tests/RankMaster2.Server.Tests/`, the two affected audit suites, and `src/rm2ctl/`.
-It writes **no** new ranking or file-operation code: the behaviour already exists in
-`RankMaster2.Actions.LibraryActions.RenameByRank`, unchanged since the desktop app.
+**Status: plan, nothing built.** Reverses a pinned product decision and adds the first long-running
+operation in the contract. Owner decisions: rename by rank survives into the new world and lives
+**on the server** (2026-09-16); and rename **must show a progress bar and offer a cancel button**
+(2026-09-16, later the same day). The second decision settles the sync-versus-polled question in the
+brief: a single synchronous request that returns only when finished can neither report progress nor
+be stopped, so it is off the table. Rename is a **started / observed / cancellable** operation.
 
-**The owner decided this on 2026-09-16:** rename by rank survives into the new world, and it lives
-**on the server**, not in a client. That reverses `SERVER_SPEC.md` § 1.1, which today forbids the
-endpoint in the strongest terms the document contains. The project's rule is **spec first**: the
-contract changes and is reviewed (Phase 1), and only then is anything implemented (Phase 2). This
-plan covers both, in that order, and a weak executor should not re-decide anything below.
+Owns edits in `src/RankMaster2.Server/Sessions/`, additive overloads in `src/RankMaster2.Actions/`
+and `src/RankMaster2.Catalog/`, `SERVER_SPEC.md`, `SERVER_PLAN.md`, `openapi.yaml`,
+`tests/RankMaster2.Server.Tests/`, the two affected audit suites, `tests/RankMaster2.Catalog.Tests`,
+and `src/rm2ctl/`.
 
-Read in this order before touching a file: `SPEC.md` § Rename by rank, § File actions, § Persistence;
-`SERVER_SPEC.md` § 1.1, § 7 (all, especially § 7.4), § 8, § 9, § 10.1, § 10.8, § 10.10, § 11, § 12.2,
-§ 12.5, § 13, § 14; `src/RankMaster2.Actions/LibraryActions.cs` (`RenameByRank` and its
+**The project's rule is spec first.** The contract changes and is reviewed (Phase 1), then it is
+implemented (Phase 2+). A weak executor should not re-decide anything below.
+
+Read in this order: `SPEC.md` § Rename by rank, § File actions, § Persistence; `SERVER_SPEC.md`
+§ 1.1, § 6, § 7 (all, especially § 7.4), § 8, § 9, § 10.1, § 10.8, § 10.10, § 11, § 12.2, § 12.5,
+§ 13, § 14, § 16; `src/RankMaster2.Actions/LibraryActions.cs` (`RenameByRank` and its
 restore-on-failure path); `src/RankMaster2.Ranking/RankingSession.cs` (`ReplaceAll`, and what it
-clears); `src/RankMaster2.Server/Sessions/SessionRegistry.cs` (`MoveAsync` and `WithLockAsync` are
-the shape a new action follows) and `SessionEndpoints.cs`; `src/RankMaster2.Catalog/FileOps.cs`
-(`BackupLibrary`, `RestoreLibrary`, `RenameByConservativeScore`).
-
-Where this plan and `SERVER_SPEC.md` disagree once Phase 1 has landed, the spec wins and this plan
-is stale.
+clears); `src/RankMaster2.Server/Sessions/SessionRegistry.cs` (`MoveAsync`, `WithLockAsync`,
+`CurrentForMedia` — the last is how a read runs without the session lock); `SessionEndpoints.cs`;
+`src/RankMaster2.Catalog/FileOps.cs` (`BackupLibrary`, `RestoreLibrary`, `RenameByConservativeScore`).
 
 ---
 
@@ -30,208 +29,183 @@ is stale.
 
 | Question | Decision | Why |
 |---|---|---|
-| Where does the behaviour come from | **`LibraryActions.RenameByRank`, called verbatim.** No second implementation | `SPEC.md` § Rename by rank does not change; the code already scans, saves, releases, backs up, two-phase renames, remaps ids, saves and `ReplaceAll`s the session, with restore-on-failure. It is already wired into every open session as `OpenSession.Actions` |
-| Route | **`POST /api/v1/session/rename`** | It is a session-scoped mutation. Appended to `SERVER_SPEC.md` as **§ 10.16** so no existing section renumbers (a weak executor must not have to renumber a 1314-line document) |
-| Sync or async | **Synchronous, holding the session lock for the whole operation, with a documented time ceiling.** Not a started-and-polled operation | § 2.2 |
-| What happens to the open session | **In-place transition via `RankingSession.ReplaceAll`.** Same `sessionId`, same `sessionSecret`, same folder, same lock; `pairSeq` **+1**; a brand-new pair whose every id is new | § 2.1 |
-| Who may call it | **Any paired device.** Availability is a server question; the endpoint is open to any bearer token | § 2.4 |
-| `pairToken` in the body | **None. Ignored if sent** — exactly like `undo` (§ 10.10). Rename is not pair-scoped | § 2.4 |
-| `features.rename` in `/ping` | **`true`.** A client reads it to decide whether to offer the option | § 2.6 |
-| New error code | **`rename_failed` (500).** `details: { restored: bool, backup: string\|null }` | § 2.3 |
-| Backup accumulation | **Kept, one `rankmaster_backup_<ts>/` per successful or failed rename**, exactly as the desktop app leaves them. Not pruned | matches `SPEC.md`; `JsonCatalog.Scan` never descends into a subfolder, so backups never re-enter a session |
+| Behaviour source | **`LibraryActions.RenameByRank`, extended, not reimplemented** — a new overload threads progress + cancellation through the same scan / backup / two-phase rename / remap / save / restore-on-failure | `SPEC.md` § Rename by rank does not change; progress and cancel are observability and an interruption point, not new behaviour. The desktop's parameterless `RenameByRank()` is left exactly as it is |
+| Shape on the wire | **A small operation resource, three routes**: `POST /session/rename` starts (returns `202`), `GET /session/rename` observes, `POST /session/rename/cancel` stops. Not a `SessionSnapshot` while it runs | § 2.5. The first long-running operation in the contract; kept as close to § 10 as the requirement allows — `/session` keeps its one snapshot shape, the operation is a separate resource |
+| What cancel does | **Rolls the library all the way back to the original filenames** — cancel is the restore-from-backup path, the same one a failure takes | § 2.1. There is no consistent place to "stop where it is": mid-two-phase-rename the folder is a mix of original, temp and numeric names and the JSON is untouched — the forbidden disagreement. Rollback is the only consistent terminus |
+| Who owns the run | **The server, not the request.** The op runs to a consistent terminus even if the client disconnects; a disconnect is not a cancel; cancel is explicit | § 2.4 |
+| Progress unit | **Files, with named phases**: `backing_up`, `renaming` (of `2 × N` moves), then `saving` (a short labelled phase, not on the file bar), and `restoring` on cancel/failure | § 2.3. A bar that sits at 100 % while a database writes is a bar that lies; the `saving` phase is why it does not |
+| What runs it to the end | **On success it holds the session lock only briefly, at the start and at the final apply**; the long file work runs off the lock, observed lock-free like `CurrentForMedia` | § 2.5 |
+| Concurrency | **Nothing else mutates the session while a rename runs**: a mutating `/session*` call gets `409 rename_in_progress`. Reads and the status poll are unaffected | § 2.5 |
+| `features.rename` in `/ping` | **`true`** | § 2.6 |
+| New error codes | **`rename_in_progress` (409), `rename_failed` (500), `no_rename_operation` (404)** | § 3, § 2.1 |
+| Who may offer it | **PC client: yes. Phone: no** (a recommendation to the client authors; the endpoint itself is open to any token) | § 2.6 |
 
 ### 1.1 Deliberately absent
 
-- **No progress reporting, no cancellation.** The operation is atomic to the client: one request,
-  one final answer. A client that gives up waiting does not stop the rename (§ 2.2).
-- **No `rename 2`, no options.** No target pattern, no width, no "dry run". `μ − 3σ` descending,
-  then filename for ties, to `000001.ext` — fixed by `SPEC.md`, not a knob.
-- **No `undo` of a rename.** `ReplaceAll` clears the engine's one-level undo and this plan clears
-  the move-undo too (§ 2.1); the backup folder is the only way back, exactly as on the desktop.
-  `undoAvailable` is `false` in the snapshot rename returns.
-- **No change to `RankMaster2.Ranking`, `RankMaster2.Catalog` or `RankMaster2.Actions`.** If any of
-  them turns out to need a change, `SPEC.md` changes first — the same rule the rest of the server
-  lives by.
-- **No client work.** Whether the phone or the PC client shows a rename button lives in
-  `PC_CLIENT_PLAN.md` § 6.6 and `pc/plans/E-ranking-surface.md` § E6. This part makes the endpoint
-  exist and say so through `/ping`; the offering is theirs.
+- **No "stop cleanly where it is."** Cancel restores originals; there is no half-renamed terminus
+  (§ 2.1).
+- **No undo of a completed rename.** The backup folder is the only way back, exactly as on the
+  desktop; `undoAvailable` is `false` in the post-rename snapshot.
+- **No `rename 2`, no options, no pattern, no dry run.** `μ − 3σ` descending, then filename, to
+  `000001.ext` — fixed by `SPEC.md`.
+- **No action journal, so no auto-recovery from a mid-rename server kill.** Same scope line as
+  § 13.4 / § 16.1: the backup on disk is the manual recovery (§ 2.4).
+- **No change to ranking behaviour.** The overloads added to `Actions`/`Catalog` are additive and
+  behaviour-preserving for the desktop; if anything about the *result* of a rename would change,
+  `SPEC.md` changes first — it does not here.
+- **No client UI in this part.** Whether and how a client draws the bar and the cancel button lives
+  in `PC_CLIENT_PLAN.md` § 6.6 and `pc/plans/E-ranking-surface.md` § E6.
 
 ---
 
 ## 2. The hard problems, and their answers
 
-### 2.1 Every id changes at once
+### 2.1 What "cancel" means with three thousand files already renamed
 
-`RenameByRank` renames every file to `000001.ext …` and rewrites `rankmaster_db.json` so every key
-and `filename` is the new name; ratings stay with the same bytes (`SPEC.md` § Rename by rank). An id
-is a filename (§ 11.1), so **after the call every `pairToken`, every `links.*` URL, every ETag and
-every id any client is holding refers to a file that no longer exists.**
+This is the whole problem, and it has exactly one safe answer: **cancel rolls the library back to its
+original filenames.** The owner must be told this *before* he presses it — the button reads "Cancel
+and restore original names," not a bare "Cancel," and the contract states plainly that cancel is a
+rollback so the client can say so.
 
-The mechanism is `RankingSession.ReplaceAll(remapped)`, which `RenameByRank` already calls on the
-live session when its folder matches. Read what it clears: `_undo` (the engine's one-level undo),
-`_records` (replaced), `_warm`, `_recent`, `_recentOrder`, `_cues`; then `Current = Pick()` and
-`FillWarm()`. It does **not** touch `SessionVotes`.
+Why "stop cleanly where it is" is rejected: `FileOps.RenameByConservativeScore` is two-phase — every
+file is first moved to a temp name `__rm2_<guid>.ext`, then from the temp name to `000001.ext …` —
+and `rankmaster_db.json` is **not** rewritten until every move has completed. At any moment mid-run
+the folder holds a mix of original names, meaningless temp GUIDs, and final numeric names, while the
+JSON still lists the original names. That *is* the disagreement between files and database the brief
+says must remain impossible. There is no coherent point to stop at.
 
-**What the server does to the open session, precisely:**
+`RenameByRank` already backs the library up before touching a file and, on any exception, runs
+`RestoreLibrary` (copy the backup's files back, delete every top-level file not in the backup — the
+JSON included, since `BackupLibrary` copies it too). Cancel reuses that path exactly: the
+cancellation token, checked between file moves, throws `OperationCanceledException` at the next
+check, which triggers the same restore a failure would. **Cancel and failure share one
+implementation and one guarantee:** the terminus is the original, fully-consistent library.
 
-1. Call `open.Actions.RenameByRank()` inside the session lock.
-2. On success, `RenameByRank` has already `ReplaceAll`'d the session with the remapped records, so
-   `Current` is a freshly picked pair of **new** ids, `warmPairs` are new, `cues` is empty, and the
-   engine undo is gone.
-3. The registry then, exactly as every other successful action does: clears the move-undo
-   (`open.Actions.ClearLastMove()` — see below), does `open.PairSeq++`, sets
-   `open.LastSavedAt`, and sets `open.LastAction` to a **rename** record.
-4. Materialise and return the snapshot, inside the lock.
+The one outcome that must remain impossible — files and JSON disagreeing with no way back — cannot
+occur while the restore succeeds, and if the restore itself throws (the double fault) the backup
+folder is intact and its path is handed to the caller. That is the "way back."
 
-**Why `ClearLastMove()` is required.** `ReplaceAll` clears the engine's undo but not
-`LibraryActions.LastMove`. A discard done just before the rename would leave `LastMove` pointing at
-`discarded/DSC_0123.jpg`; after rename the folder holds `000001.jpg …` and a later `undo` would try
-to move `DSC_0123.jpg` back and `Restore` a record whose id predates the renumber — a genuine
-inconsistency. Clearing it makes `undoAvailable` honestly `false` after a rename, matching the
-engine undo that `ReplaceAll` already dropped.
+### 2.2 Cancel is not instant either
 
-**What the snapshot says afterwards:** same `sessionId`; `state` `ranking` (or `exhausted` if the
-folder somehow left fewer than two eligible files, which a rename cannot cause — it renames, it does
-not remove); `pairSeq` one higher; a new non-null `pairToken`; `pair` and `warmPairs` carrying the
-new numeric ids and their fresh `links`/`mediaVersion`; `cues` empty; `undoAvailable` false;
-`sessionVotes` unchanged (rename is not a vote); `counts` unchanged in every number (the same files,
-renamed); `lastAction.type == "rename"`.
+Rolling back thousands of files is itself thousands of file moves. So cancel has its **own** phase
+with its own progress. The operation's state becomes `cancelling` and its phase becomes `restoring`,
+carrying `done`/`total` counted in files put back. Between pressing cancel and it being over the
+owner sees "Restoring original names… 1,240 of 3,000," a live bar, not a frozen screen. The cancel
+button is one-shot: once pressed it disables, and a second `POST /session/rename/cancel` is
+idempotent — it returns `200` with the operation already `cancelling`/`cancelled`, never a second
+rollback and never an error.
 
-**Why keep the same `sessionId` rather than mint a new one.** A `sessionId` change is the contract's
-signal for "everything you cached is void" (§ 9.1), and a rename does void everything — that is the
-argument for minting one. It is rejected because the session object, folder, lock and secret are all
-genuinely unchanged: it is the same session, one generation further on, and the brief's own pointer
-to `ReplaceAll` is the in-place mechanism. Every consequence a client needs is already carried by
-existing machinery, with **no new invariant**:
+### 2.3 What progress is measured in
 
-- **A client mid-vote** sent its vote with the pre-rename `pairToken`. If it arrives while the rename
-  holds the lock, it waits up to 5 s and gets `503 session_busy` (§ 2.5). If it arrives after, the
-  token is validated inside the lock against the new current token (§ 8.4 step 4), fails, and the
-  client gets `409 stale_pair_token` carrying the **complete post-rename snapshot** in
-  `error.session` (§ 8.5). Its `lastAction` disambiguation reads `type == "rename"`,
-  `pairToken == null`, so "neither the id nor the token matches → the request never landed, the pair
-  moved on for another reason → continue from the snapshot, do not replay." Exactly the behaviour
-  § 8.5's table already prescribes. **No double vote is possible.**
-- **A client holding cached bytes** finds every URL it cached now answers `404` (the old ids are no
-  longer records → `unknown_media_id`, or mid-move → `media_file_missing`). § 11.3 already tells
-  clients to treat a media `404` as "this id is gone, refresh from the snapshot," never as a
-  transport error. The new numeric ids never collide with an original filename, so no stale bytes
-  are served **within** this rename. The one residual — a numeric id reused across a *second* rename
-  landing on a same-size, same-mtime file — is precisely the `(name, size, mtime)` fingerprint limit
-  already recorded in § 12.5, and § 3 adds one sentence noting rename as the case that reuses a name.
+Files, in named phases, so the bar never lies. The pre-rename scan fixes `N` = the media file count.
 
-### 2.2 It is slow and destructive — synchronous, with a ceiling
+| Phase | `done` / `total` | On the bar? |
+|---|---|---|
+| `backing_up` | files copied into `rankmaster_backup_<ts>/` of the backup's file count (≈ `N`) | yes |
+| `renaming` | moves completed of `2 × N` (both passes counted, so the bar advances continuously through the temp pass and the final pass) | yes |
+| `saving` | `RemapIds` + the final `JsonCatalog.Save` — one write | **no**: shown as a labelled "Saving database…" step, not a file bar. This is the fix for a bar stuck at 100 % while the JSON writes |
+| `restoring` | files restored of the backup's file count | yes (its own bar, § 2.2) |
 
-`RenameByRank` copies the whole top-level library into `rankmaster_backup_<ts>/`, then performs two
-file moves per media file (to a temp name, then to `000001.ext`), then rewrites the JSON. On a large
-library this is thousands of moves plus a full-size backup copy and can run for many seconds to
-minutes — longer than a default HTTP client timeout.
+The backup copy and the file renames are **inside** the bar; the final database write is **outside**
+it and labelled. The client shows the phase label plus the bar; `saving` and `restoring` carry
+labels of their own.
 
-**Decision: synchronous, holding the session lock, with a documented ceiling and a client that sets
-a long timeout for this one call.** Rejected: a started-and-polled `202 + operationId` resource.
+### 2.4 Who may cancel, and what happens if nobody is watching
 
-Justification against the shape of the API:
+The operation is owned by the **server**, not by the HTTP request that started it. It runs to a
+consistent terminus — fully renamed, or fully restored — regardless of who is listening.
 
-- **Every endpoint in § 10 is synchronous, and § 13.1 is absolute:** when a 2xx leaves the server the
-  change is already durable. Synchronous rename honours this trivially — the `200` is sent only
-  after `RenameByRank` returns, and it returns only after the second `JsonCatalog.Save` has fsynced
-  and `File.Replace`d. A polled operation would have to invent a second notion of "done" and a second
-  durability story; § 13.1 gives us one already.
-- **A started-and-polled operation is a new resource shape** ("every `/session*` 2xx is a
-  `SessionSnapshot`" — § 9 — would gain an exception) and a background worker that holds the session
-  lock off the request thread. For one user on a LAN with a native client (no browser, no proxy, no
-  CORS — § 2), that is cost with no buyer.
-- **The transport has no intermediary that imposes a timeout** the server cannot see. The native
-  client owns its own timeout and raises it for `POST /session/rename`. `rm2ctl` does the same.
+- **A client disconnect is not a cancel.** An accidental Wi-Fi drop must not silently undo the
+  owner's rename. If the starting client dies mid-run, the rename continues to completion (fully
+  renamed). If the owner had already pressed cancel, the rollback continues to completion (fully
+  restored). Either way the folder ends consistent.
+- **Cancel is an explicit act**, a separate request against the running operation, available to any
+  paired device (same token gate). It is honoured at the next between-files checkpoint.
+- **What must never happen is the operation halting mid-flight because nobody is listening.** That
+  is why the run is detached from the request and why cancel is explicit rather than implied by a
+  disconnect.
+- **A server process kill mid-run** is the one unrecoverable case, and it is already scoped: session
+  state does not survive a restart (§ 13.4), there is no action journal (§ 16.1, extended here), and
+  the backup folder on disk is the manual recovery. The plan records this; it does not solve it.
 
-**Consequences that must be spelled out in the spec:**
+### 2.5 The shape on the wire — the first long-running operation
 
-- The operation runs on the request thread, inside the session lock, start to finish.
-- **Aborting the HTTP request does not abort the rename.** `RenameByRank` is a synchronous library
-  call and is not handed the request's `CancellationToken`; a client that disconnects leaves it
-  running to its own completion or restore. This is deliberate — a half-run rename must never be
-  left half-run because a phone's Wi-Fi blinked.
-- Therefore rename is **not** in § 13.3's "safe to retry blindly" set. A client that times out
-  MUST resolve, not guess: `GET /session`, and compare `lastAction` — if `lastAction.type == "rename"`
-  and `lastAction.clientRequestId` equals the id it sent, the rename landed; the ids in the snapshot
-  will already be sequential. A blind re-`POST /session/rename` is safe from a data standpoint (it
-  re-sorts identically and produces the same names) but does a second full backup-and-rename for
-  nothing, so the client should resolve first. `clientRequestId` is therefore STRONGLY RECOMMENDED,
-  the same as for vote (§ 10.6).
-- **Known gap (added to § 16):** there is no progress and no ceiling the server enforces; a
-  pathologically large library can exceed any client's patience. This is the same class as § 16.5
-  (slow `browse`) and is recorded, not solved.
+Kept as close to § 10 as the requirement allows. `/session` keeps its single `SessionSnapshot`
+shape; the rename is a **separate, small resource** with three routes.
 
-### 2.3 Safety — exactly what a partial failure leaves behind
+```
+POST   /session/rename          start        -> 202 Accepted + RenameOperation (running)
+GET    /session/rename           observe      -> 200 RenameOperation (poll for the bar)
+POST   /session/rename/cancel    cancel       -> 200 RenameOperation (cancelling / terminal)
+```
 
-`RenameByRank` backs the library up **before** it touches a file, rewrites the JSON to the new ids
-**only after** every file has physically been renamed, and on any exception runs `RestoreLibrary`
-(copy the backup's files back over the folder, delete every top-level file not in the backup — which
-includes the JSON, since `BackupLibrary` copies `rankmaster_db.json` too). The ordering is the whole
-safety argument: the JSON on disk is never rewritten to new ids unless the files already carry them,
-and if a move fails midway the catch restores files **and** JSON together to the pre-rename state.
+`RenameOperation` (the only new wire object):
 
-The server maps the three outcomes to exactly these answers:
+| Field | Type | Meaning |
+|---|---|---|
+| `operationId` | string | opaque, per run; new on every start |
+| `state` | enum | `running` \| `cancelling` \| `succeeded` \| `cancelled` \| `failed` |
+| `phase` | enum | `backing_up` \| `renaming` \| `saving` \| `restoring` \| `done` |
+| `done` | integer | units completed in the current phase |
+| `total` | integer | units in the current phase |
+| `startedAt` | string | RFC 3339 UTC |
+| `updatedAt` | string | RFC 3339 UTC, moves as the phase advances |
+| `error` | object \| null | on `failed`: `{ code: "rename_failed", restored: bool, backup: string\|null }`; else `null` |
 
-| Outcome | Folder on disk | The open session | HTTP |
-|---|---|---|---|
-| **Success** | fully renamed; JSON matches | `ReplaceAll`'d to the renamed records; `pairSeq` +1; new pair | `200` + snapshot, `lastAction.type: "rename"` |
-| **Rename threw, restore succeeded** | back to pre-rename; files and JSON agree | **unchanged** — `RenameByRank` did not `ReplaceAll` on the failure path, and the restored disk still matches the in-memory records; `pairSeq` **not** advanced | `500 rename_failed`, `details: { restored: true, backup: "<path>" }`, `error.session` = the unchanged snapshot |
-| **Rename threw and restore also threw** (the double fault) | inconsistent; the backup folder is intact | the server **closes the session** (releases the lock) so nothing acts on a folder it can no longer trust | `500 rename_failed`, `details: { restored: false, backup: "<path>" }`; `error.session` omitted (no session is open after the close) |
+Lifecycle:
 
-**The outcome the brief says must be impossible** — a folder whose files and whose
-`rankmaster_db.json` disagree with no way back — cannot occur, because the backup is taken first and
-its path is named in `details.backup` on every failure. In the double-fault the folder *is* left
-inconsistent, but the way back exists: it is the backup, and the response hands the caller its path.
-The message on that path MUST name the backup and MUST NOT leak a stack trace or a path outside the
-session folder (§ 4). `RenameByRank`'s own double-fault exception already carries the backup path;
-the server surfaces it into `details.backup` and a generic message, and logs the rest by
-`requestId`.
+- **`POST /session/rename`** — under the session lock: `404 no_session` if closed; `409
+  rename_in_progress` if one is already running; otherwise record `N`, create the operation
+  (`running`, `backing_up`, `0/N`) and a cancellation source, mark the session rename-in-progress,
+  **start the run on a server task, release the lock, and return `202 Accepted`** with the operation
+  and `Location: /api/v1/session/rename`. The `202` is an acknowledgement, **not** a completion.
+- **`GET /session/rename`** — reads the operation **without taking the session lock** (the same
+  lock-free discipline `CurrentForMedia` uses), so the poll never blocks behind the run. `404
+  no_session` if closed; `404 no_rename_operation` if a session is open but no rename has run.
+- **`POST /session/rename/cancel`** — signals the cancellation source; returns `200` with the
+  operation. Idempotent (§ 2.2). `404 no_session` / `404 no_rename_operation` as above. Cancelling
+  after the run has already succeeded returns the `succeeded` operation unchanged (too late — the
+  rename is done; the owner's recourse is the backup).
+- **On `succeeded`** the client fetches the new session with `GET /session`: the session was
+  `ReplaceAll`'d, `pairSeq` advanced, `lastAction.type == "rename"`. On `cancelled` or `failed` the
+  session is unchanged and the client simply resumes.
 
-`recordsChanged`/`fileMoved` are not used here; `rename_failed`'s `details` is `restored` +
-`backup`, which is what a client actually needs.
+**This is the first exception to two standing conventions, made deliberately and named as such in the
+spec:** "every endpoint is synchronous" (§ 10) and "a 2xx means the change is durable" (§ 13.1). A
+`202` claims no durable change; durability is asserted only when `GET /session/rename` reports
+`succeeded`, by which point both saves have fsynced and `ReplaceAll` has run. Until then the folder
+is explicitly mid-flight. Everything else about the operation stays inside convention: one error
+envelope (§ 4), stable codes (§ 5), the session's own shape untouched.
 
-### 2.4 Who may call it
+**Locking, precisely.** The run cannot hold the `SemaphoreSlim` for minutes, or the status poll and
+every read would block on it. So: the start takes the lock briefly to create the operation and set
+the flag; the long file work runs off the lock on the server task; the status GET is lock-free; and
+the **final apply** (`RankingSession.ReplaceAll(remapped)`, `ClearLastMove()`, `PairSeq++`, set
+`lastAction`, clear the flag) re-takes the lock briefly, because it mutates the session and must be
+serialised. Because the flag is set, any mutating `/session*` call that takes the lock while the run
+is off it returns `409 rename_in_progress`; a media `GET` (lock-free) sees files mid-move and answers
+`404 media_file_missing`, and afterwards `404 unknown_media_id` for the old ids (§ 11.3) — never
+corruption, because a `GET` never mutates.
 
-**Any paired device.** The endpoint sits behind the same bearer-token gate as every other
-`/session*` route (§ 3). There is one user and pairing is the trust boundary; a second guard would
-protect nothing this one does not. The endpoint takes **no** `pairToken` — it acts on the whole
-folder, not on a pair — and MUST ignore one if a client sends it, exactly as `undo` does (§ 10.10).
+### 2.6 `/ping`, and who offers it
 
-Availability is a server question and this plan answers it: the endpoint exists and is open to any
-token. **The offering is a client question and this plan does not answer it.** My recommendation to
-the client authors, recorded for them and not binding here: the phone *should* offer it, behind the
-one confirmation `SPEC.md` allows in the whole program ("the only confirmation in the program is
-rename's"), because it is destructive and unundoable; and it should read `features.rename` from
-`/ping` first so it degrades on a server that has not shipped this.
+`features.rename` becomes **`true`** and stays a fixed capability (§ 14). A client reads it to decide
+whether to show the option; a server predating this part answers `false` and the client hides it.
 
-### 2.5 Concurrency — the existing lock, unchanged
+**Availability is a server question and this plan answers it:** the endpoint exists and is open to
+any paired token, because there is one user and pairing is the trust boundary. **The offering is a
+client question, and here the recommendation is PC yes, phone no** — a firmer "no" than the sync
+design would have needed, and argued as the owner asked:
 
-Rename acquires the session semaphore through the same `WithLockAsync` every action uses and holds
-it for the entire operation. Nothing needs to change in the locking code.
+- Rename is a deliberate library-maintenance operation, run on the machine where the library lives.
+- It is long, destructive, and unundoable except by the backup.
+- The owner just asked for a bar he can watch and a button he can press. **A phone is the worst place
+  to provide either:** start a rename and walk out of Wi-Fi range and you can neither watch the bar
+  nor cancel — and because the run is server-owned (§ 2.4), it completes without you. The PC client,
+  sitting in front of the library, is where watch-and-cancel actually works.
 
-- **It will not run while another action is in flight:** it must acquire the gate, and the gate is
-  held by whatever is running.
-- **Nothing acts while it runs:** any concurrent `/session*` mutation or snapshot read waits on the
-  gate and, at 5 s, gets `503 session_busy` with `Retry-After: 1` (§ 7.3) — for the whole duration
-  of a long rename, that is what a client asking "at the wrong moment" receives, and it is already
-  specified. Media `GET`s do not take the gate (they read the lock-free `CurrentForMedia` view), so
-  during the rename they see files mid-move and answer `404 media_file_missing`, and afterwards
-  `404 unknown_media_id` for the old ids — never corruption, because a `GET` never mutates (§ 11.3).
-- The server does not hold decoded-file handles across requests (the still cache stores encoded
-  bytes, not open streams), so there are no handles for `NoOpMediaPipeline.ReleaseAll` to release;
-  a transient reader that a media `GET` opens mid-move on Windows is absorbed by
-  `FileOps.MoveWithRetry` (20 × 50 ms). On Linux, where this is developed and verified, a move over
-  an open handle is a non-issue.
-
-### 2.6 What `/ping` says
-
-`features.rename` becomes **`true`** and stays a fixed capability (not configurable — § 14 still
-governs). A client reads it to decide whether to show the rename option; a server that predates this
-part answers `false` and the client hides the option. The `openapi.yaml` `PingFeatures.rename`
-`const: false` becomes `const: true`, and every fixture and test that asserts `false` flips to
-`true` (§ 5). The sentence "there is no build in which rename-by-rank exists" is deleted from the
-test and the spec — it pins a rule the owner has reversed.
+So the PC client offers rename (E6), behind the one confirmation `SPEC.md` allows in the whole
+program; the phone does not. The server exposes it either way.
 
 ---
 
@@ -239,328 +213,307 @@ test and the spec — it pins a rule the owner has reversed.
 
 Phase 1 makes these edits and nothing else. Wording is normative; keep the house voice.
 
-**§ 1.1 — replace the first bullet.** Delete the "Rename by rank. There is no rename endpoint …"
-bullet in full. It does not move to a new list; it is gone, because the thing it forbade now exists.
-Add, in its place:
+**§ 1.1 — replace the first bullet in full.** Delete "Rename by rank. There is no rename endpoint …".
+Add in its place:
 
-> - **Rename by rank lives at `POST /session/rename` (§ 10.16)** and nowhere else. There is no other
->   rename route, no flag, no config key, no debug build and no `GET`. A request to any *other* path
->   containing `rename` MUST fall through to the normal `404 not_found`.
+> - **Rename by rank is a long-running operation at `/session/rename` (§ 10.16)** — `POST` to start,
+>   `GET` to observe, `POST /session/rename/cancel` to stop — and nowhere else. There is no other
+>   rename route, no flag, no config key, no debug build. A request to any *other* path containing
+>   `rename` MUST fall through to the normal `404 not_found`.
 
-**§ 10.16 — new subsection, appended after § 10.15.** (Appended, not inserted, so §§ 11–16 do not
-renumber.) Full text:
+**§ 10.16 — new subsection, appended after § 10.15** (appended, not inserted, so §§ 11–16 keep their
+numbers). Its content is § 2 of this plan written as normative spec, and MUST cover, in order:
 
-> ### 10.16 `POST /session/rename`
->
-> Rename every file in the open folder by rank and rewrite `rankmaster_db.json` to match — the
-> server side of `SPEC.md` § Rename by rank. Authenticated like every `/session*` route. Takes **no**
-> `pairToken`: it acts on the whole folder, not on a pair, so no pair generation owns it; a
-> `pairToken` in the body MUST be ignored, exactly as for `undo` (§ 10.10).
->
-> ```json
-> { "clientRequestId": "1f0c…" }
-> ```
->
-> | Field | Type | Required |
-> |---|---|---|
-> | `clientRequestId` | string, ≤64 chars | no, but STRONGLY RECOMMENDED — this call is not safe to retry blindly (§ 13.3), and `lastAction.clientRequestId` is how a client confirms it landed |
->
-> The body is optional; an absent body is a bare rename.
->
-> **What it does**, inside the session lock, calling `LibraryActions.RenameByRank` (`SPEC.md`
-> § Rename by rank) verbatim: copy the whole top-level library and its JSON into
-> `<folder>/rankmaster_backup_<yyyyMMdd_HHmmss>/`; two-phase rename every media file to
-> `000001.ext`, `000002.ext`, … by `μ − 3σ` descending, then filename for ties; rewrite the JSON so
-> every key and `filename` is the new name, ratings unchanged; then `RankingSession.ReplaceAll` the
-> open session with the renamed records.
->
-> **Because an id is a filename (§ 11), a successful rename changes every id at once.** Every
-> `pairToken`, every `links.*` URL and every ETag a client holds now points at a file that no longer
-> exists. The session stays the same session — same `sessionId`, same folder, same lock — one
-> generation further on:
->
-> - `pairSeq` is incremented by exactly 1.
-> - A new pair is picked from the renamed records; `pair`, `pairToken` and `warmPairs` all carry the
->   new numeric ids.
-> - `cues` is emptied and the engine's one-level undo is cleared (`ReplaceAll`); the move-undo is
->   cleared too, so `undoAvailable` is `false`.
-> - `sessionVotes`, `counts` and `progress` are unchanged in value (the same files, renamed).
-> - `lastAction` is a `rename` record (`type: "rename"`, `pairToken: null`, the `clientRequestId`
->   echoed, every other field `null`). This is the one case `lastAction.type` is `rename`.
->
-> A client MUST treat a rename as it treats any advance whose token went stale: an in-flight action
-> arriving afterwards is answered `409 stale_pair_token` with the complete post-rename snapshot
-> (§ 8.5) and MUST NOT be replayed; every cached media URL now answers `404` and MUST be refreshed
-> from the snapshot (§ 11.3), never retried.
->
-> | Outcome | Status | State |
-> |---|---|---|
-> | renamed, JSON rewritten, session replaced | `200` | `pairSeq` +1; a new pair of numeric ids; `lastAction.type: "rename"` |
-> | the rename threw and the library was restored from the backup | `500 rename_failed`, `details: { restored: true, backup }` | **nothing changed**: files and JSON are back to before, the session is untouched, `pairSeq` did not move, the client's token is still valid |
-> | the rename threw and the restore also threw | `500 rename_failed`, `details: { restored: false, backup }` | the folder is inconsistent and the backup at `backup` is the way back; the server closes the session and releases the lock, so no session is open and `error.session` is omitted |
->
-> **Safety.** The backup is taken before any file is touched, and the JSON is rewritten to the new
-> ids only after every file has been renamed, so the JSON on disk never disagrees with the files
-> except during the restore itself — and the restore puts both back together. `details.backup` names
-> the backup folder on both failure rows; `error.message` MUST name it too and MUST NOT leak a stack
-> trace or a path outside the folder (§ 4).
->
-> **It is synchronous and can be slow.** Thousands of file moves plus a full-library backup copy may
-> outlast a default client timeout; a client MUST set a longer timeout for this one call. The server
-> runs it on the request thread inside the lock (§ 13.1: the `200` is sent only once both saves have
-> fsynced). **Disconnecting the request does not abort the rename** — it runs to completion or to
-> restore — so rename is not in § 13.3's blind-retry set; a client that loses the connection MUST
-> resolve with `GET /session` and `lastAction`, never by voting or by assuming.
->
-> **Concurrency.** It holds the session semaphore for its whole duration; any other `/session*` call
-> waits and, at 5 s, gets `503 session_busy` (§ 7.3). Media `GET`s do not take the lock and answer
-> `404 media_file_missing`/`unknown_media_id` for ids caught by the rename (§ 11.3); they never
-> mutate.
+1. **Purpose and behaviour.** The server side of `SPEC.md` § Rename by rank: back the top-level
+   library and its JSON up into `<folder>/rankmaster_backup_<yyyyMMdd_HHmmss>/`; two-phase rename
+   every media file to `000001.ext …` by `μ − 3σ` descending, then filename for ties; rewrite the
+   JSON so every key and `filename` is the new name, ratings unchanged; then `ReplaceAll` the open
+   session with the renamed records. Authenticated like every `/session*` route. Takes no
+   `pairToken`; one in the body MUST be ignored (as `undo`, § 10.10).
+2. **It is a started / observed / cancelled operation, not a single request** — with the three routes
+   and the `RenameOperation` shape of § 2.5, verbatim including the phase and state enums and the
+   `error` object.
+3. **Start** (`POST /session/rename`): body `{ clientRequestId?: string ≤64 }`, optional; `404
+   no_session`; `409 rename_in_progress` if one already runs; otherwise `202 Accepted` +
+   `RenameOperation` (`running`), `Location: /api/v1/session/rename`. The `202` is an
+   acknowledgement, not a completion (see § 13.1).
+4. **Observe** (`GET /session/rename`): `200` + the current `RenameOperation`, read without the
+   session lock; `404 no_session`; `404 no_rename_operation` when a session is open but none has run.
+5. **Cancel** (`POST /session/rename/cancel`): **cancel rolls the library back to the original
+   filenames** — it is the restore path, and the client MUST tell the owner so before he presses it.
+   `200` + the `RenameOperation` (now `cancelling`, phase `restoring`); idempotent; a cancel after
+   success returns the `succeeded` operation unchanged.
+6. **Progress** is measured as § 2.3: `backing_up` and `renaming` (`2 × N` moves) on the bar,
+   `saving` a short labelled step off the bar, `restoring` its own bar on cancel/failure.
+7. **On success, the effect on the session** is identical to any advance whose token went stale, and
+   is described exactly as the old § 10.16 draft did: same `sessionId`, same folder, same lock;
+   `pairSeq` +1; a freshly picked pair whose every id is new; `cues` emptied, engine undo cleared,
+   move-undo cleared so `undoAvailable` is `false`; `sessionVotes`, `counts`, `progress` unchanged in
+   value; `lastAction` a `rename` record (`type:"rename"`, `pairToken:null`, `clientRequestId`
+   echoed, every other field null). A client fetches it with `GET /session`. An in-flight action
+   arriving after success is answered `409 stale_pair_token` with the new snapshot (§ 8.5) and MUST
+   NOT be replayed; every cached media URL now `404`s and MUST be refreshed from the snapshot
+   (§ 11.3).
+8. **The three termini** (`succeeded`, `cancelled`, `failed`) and their disk/session state:
 
-**§ 7.2 — add one transition row** (after the `undo` row):
+   | Terminus | Folder | Session | `RenameOperation` |
+   |---|---|---|---|
+   | `succeeded` | fully renamed; JSON matches | `ReplaceAll`'d; `pairSeq` +1; `lastAction` rename | `state: succeeded`, `phase: done`, `error: null` |
+   | `cancelled` | restored to originals | **unchanged**; `pairSeq` unmoved; token still valid | `state: cancelled`, `error: null` |
+   | `failed`, restore ok | restored to originals | **unchanged** | `state: failed`, `error: { code:"rename_failed", restored:true, backup }` |
+   | `failed`, restore threw (double fault) | inconsistent; backup intact at `backup` | the server closes the session and releases the lock | `state: failed`, `error: { code:"rename_failed", restored:false, backup }` |
 
-> | ranking\|exhausted | `POST /session/rename` ok | ranking (or exhausted) | +1 | files renamed, JSON rewritten, `ReplaceAll`; every id is new |
-> | ranking\|exhausted | `POST /session/rename` failed, restored | unchanged | — | library restored from backup; nothing changed |
+9. **Ownership and disconnect** (§ 2.4): the run is the server's, not the request's; it reaches a
+   consistent terminus regardless of who watches; a disconnect is not a cancel; cancel is explicit; a
+   process kill mid-run leaves the folder mid-flight with the backup for manual recovery (§ 16).
+10. **Concurrency** (§ 2.5): while a rename runs, a mutating `/session*` call gets `409
+    rename_in_progress`; reads and the status poll are unaffected; media `GET`s answer `404` for ids
+    caught by the rename.
 
-**§ 8.3 — add rows to the `pairSeq` table** and one caveat sentence:
+**§ 6 — status codes.** Add a `202` row: "`POST /session/rename` accepted a rename to run in the
+background (§ 10.16). It is not a completion; durability is asserted by the operation reaching
+`succeeded`." Note `409` now also covers `rename_in_progress` and `404` also covers
+`no_rename_operation`; `500` also covers `rename_failed`.
 
-> | rename succeeds | files renamed, JSON rewritten, session replaced | **+1** | stale — and every id is new |
-> | rename fails, library restored | nothing changed | unchanged | still valid |
->
-> After the table, extend the "resets to 0 only when a new session opens" note: a rename does **not**
-> reset `pairSeq` and does **not** change `sessionId` — it is the same session advanced one
-> generation, even though every id changed.
+**§ 7.2 — transition rows.** Add: rename started (session unchanged, a run begins);
+rename succeeded (`+1`, `ReplaceAll`, every id new); rename cancelled or failed-restored (unchanged).
 
-**§ 9.4 — extend the `type` enum** to `vote | skip | discard | special | undo | drop_missing |
-rename`, and add: "`rename` — a `POST /session/rename` (§ 10.16) succeeded; `pairToken`, `winner`,
-`side`, `id`, `restoredId` and `undoneType` are all `null`. It is the one `lastAction` that can be
-present at `pairSeq` values reached by a rename rather than by opening the session."
+**§ 8.3 — `pairSeq` table.** Add: "rename succeeds → +1 → stale, every id new"; "rename cancelled or
+failed → unchanged → still valid". Extend the reset note: a rename does not reset `pairSeq` and does
+not change `sessionId`.
 
-**§ 12.5 — one sentence on the known limit** (append to the "Known limit" paragraph):
+**§ 9.4 — `type` enum.** Extend to include `rename` (`pairToken`/`winner`/`side`/`id`/`restoredId`/
+`undoneType` all null); note it can appear at a `pairSeq` reached by a rename.
 
-> A rename (§ 10.16) reassigns filenames to `000001.ext …`, so a numeric id can, across two renames,
-> land on a different file of the same size and mtime and reuse an ETag. This is the same
-> `(name, size, mtime)` limit; within a single rename it cannot bite, because the new numeric ids
-> never match a client's pre-rename cache keys.
+**§ 12.5 — known limit.** Add the sentence that a rename reassigns names to `000001.ext …`, so across
+two renames a numeric id can reuse an ETag — the same `(name, size, mtime)` limit; within one rename
+it cannot bite, the new numeric ids never matching a client's pre-rename cache keys.
 
-**§ 13.2 — add a per-endpoint ordering row:**
+**§ 13.1 — the invariant gets its first, named exception.** Add: "The one exception is
+`POST /session/rename` (§ 10.16), which returns `202` before the change is durable, because the owner
+requires a progress bar and a cancel button and a synchronous request can provide neither. Durability
+for a rename is asserted only when its operation reaches `succeeded`; until then the folder is
+explicitly mid-flight, and a `202` claims nothing durable."
 
-> | `POST /session/rename` | library backed up, files renamed, JSON rewritten, then `ReplaceAll` — or, on failure, files and JSON restored from the backup | yes; the backup precedes any change and the JSON is rewritten only after every file is renamed |
+**§ 13.2 — ordering row.** `POST /session/rename`: backup, then two-phase rename, then JSON rewrite,
+then `ReplaceAll` — or, on cancel/failure, files and JSON restored from the backup; committed only at
+`succeeded`.
 
-**§ 13.3 — add a retry row:**
+**§ 13.3 — retry row.** `POST /session/rename`: not blindly retriable; a client that loses the
+connection polls `GET /session/rename` — the operation is server-owned and still running or terminal;
+never start a second while one runs (`409 rename_in_progress`).
 
-> | `POST /session/rename` | **no** | disconnecting does not abort it; `GET /session` and read `lastAction` — `type: "rename"` with your `clientRequestId` means it landed. A blind re-POST re-backs-up and re-renames for nothing |
+**§ 14 — flip the feature.** `"rename": false` → `"rename": true`; delete "there is no build in which
+it is `true`"; replace with "`rename` is `true` when the server exposes the `/session/rename`
+operation (§ 10.16)." Update both `/ping` examples.
 
-**§ 14 — flip the feature and delete the reversed sentence.** `"rename": false` becomes
-`"rename": true`. Delete "`rename` is `false` and there is no build in which it is `true`." Replace
-with: "`rename` is `true` when the server exposes `POST /session/rename` (§ 10.16)."
+**§ 16 — known gaps.** Add: "`POST /session/rename` has no progress ceiling the server enforces, and
+a server kill mid-run leaves the folder mid-flight — the backup folder is the manual recovery; an
+action journal (gap 1) would let the server resolve it, and is out of scope."
 
-**§ 16 — add a known gap:**
+**§ 5 — three error codes.** Add:
 
-> 10. **`POST /session/rename` has no progress and no server-enforced ceiling.** A very large library
->     can outlast a client's patience; the client must set a long timeout. Same class as gap 5.
+> | `rename_in_progress` | 409 | a mutating `/session*` call, or a second `POST /session/rename`, while a rename runs | `{ "operationId": string }` |
+> | `no_rename_operation` | 404 | `GET`/cancel of `/session/rename` with a session open but no rename recorded | — |
+> | `rename_failed` | 500 | the rename threw | `{ "restored": bool, "backup": string\|null }` |
 
-**§ 5 — add the error code.** Under § 5.4 (or a short new § 5.7 "Rename"), add:
-
-> | `rename_failed` | 500 | `POST /session/rename` threw | `{ "restored": bool, "backup": string\|null }` |
-
-`restored: true` means files and JSON were put back and the session is unchanged; `restored: false`
-is the double fault — the backup at `backup` is the way back and the server has closed the session.
-
-Also mention in § 6's `500` row that it now covers `rename_failed` alongside `save_failed`,
-`move_failed` and `internal_error`.
-
-**`SERVER_PLAN.md` — the scope owner must change too.** Remove the top-of-file line "Rename-by-rank
-is deliberately **not** exposed." In § 4, delete "Deliberately absent: **rename**. No endpoint, no
-plumbing, no flag." and add `POST /session/rename` to the session action list. In § 7's decisions
-table, change the rename row from a non-goal to "Rename by rank | **On the server**, `POST
-/session/rename` | owner decision 2026-09-16". This is a deliberate scope reversal, recorded as one.
+**`SERVER_PLAN.md` — the scope owner changes too.** Remove the top-of-file "Rename-by-rank is
+deliberately not exposed." In § 4 delete "Deliberately absent: rename …" and add the `/session/rename`
+operation to the session block, noting it is the one long-running operation. In § 7's table change
+the rename row to "On the server, started/observed/cancellable `/session/rename` — owner decisions
+2026-09-16". Record it as a deliberate scope reversal.
 
 ---
 
 ## 4. `openapi.yaml` changes
 
-`tests/RankMaster2.Server.Tests/OpenApiContractTests.cs` now checks that the document parses and
-that documented routes and served routes and types match — the document is load-bearing, not
-decoration. Make all of:
+`tests/RankMaster2.Server.Tests/OpenApiContractTests.cs` checks that the document parses and that
+documented routes and served routes and types match — it is load-bearing. Make all of:
 
-1. **New path `/session/rename`** under `paths:`, `post:`, `tags: [actions]`,
-   `operationId: renameByRank`, summarising § 10.16. `requestBody` `required: false` referencing a
-   new `RenameRequest` schema (`{ clientRequestId?: string ≤64 }`, `additionalProperties: false`).
-   Responses: `200` → `SessionSnapshot` (reuse `#/components/responses/Snapshot`); `400`
-   BadRequest; `401` Unauthorized; `404` NoSession; `413` PayloadTooLarge; `415`
-   UnsupportedContentType; `500` a new `RenameFailed` response (or inline) whose example is
-   `rename_failed` with `details: { restored: true, backup: "…/rankmaster_backup_20260916_120000" }`;
-   `503` SessionBusy; `default` InternalError. The prose must say it takes no `pairToken`, is
-   synchronous and slow, and that a `200` means the JSON is already rewritten (§ 13.1).
-2. **`RenameRequest` schema** in `components/schemas`.
-3. **`ErrorCode` enum**: add `rename_failed`.
-4. **`ActionType` enum** (used by `LastAction.type`): add `rename`.
-5. **`PingFeatures.rename`**: change `const: false` to `const: true` and rewrite its `description`
-   to "True when `POST /session/rename` (§ 10.16) is exposed." Update **both** `/ping` response
-   examples (`public` and `authenticated`) so `features.rename` reads `true`.
-6. Update the top-of-file `description`'s "Deliberately absent: **rename by rank**. No endpoint, no
-   flag, no debug route" — it now names the endpoint and keeps only "no *other* rename route".
+1. **Three paths.** `/session/rename` with `post` (`operationId: startRename`, `202` →
+   `RenameOperation`, plus `400/401/404/409 (rename_in_progress)/413/415/503/default`) and `get`
+   (`operationId: getRenameOperation`, `200` → `RenameOperation`, `401/404`); `/session/rename/cancel`
+   with `post` (`operationId: cancelRename`, `200` → `RenameOperation`, `401/404`). Each `post`
+   description states cancel = rollback, that `202` is not a completion, and that the run is
+   server-owned.
+2. **`RenameOperation` schema** (`additionalProperties:false`, every field required incl. nullable
+   `error`), the `RenameState` and `RenamePhase` enums, and a `RenameStartRequest`
+   (`{ clientRequestId? }`).
+3. **`ErrorCode` enum**: add `rename_in_progress`, `no_rename_operation`, `rename_failed`.
+4. **`ActionType` enum**: add `rename`.
+5. **`PingFeatures.rename`**: `const:false` → `const:true`, rewrite its description, update **both**
+   `/ping` examples to `rename: true`.
+6. **Top-of-file `description`**: rewrite the "Deliberately absent: rename" note to name the operation
+   and keep only "no *other* rename route".
 
-`OpenApiContractTests` needs one new `[InlineData("/session/rename")]` in
-`Every_route_the_server_maps_is_in_the_document` (§ 5). The record-shape tests
-(`SessionSnapshot`/`LastAction`/`Counts`/`MediaRef`) need no change: rename returns the ordinary
-snapshot and adds no field — `rename` is a new *value* of `type`, not a new key.
+`OpenApiContractTests`: add `[InlineData("/session/rename")]` and `[InlineData("/session/rename/cancel")]`
+to `Every_route_the_server_maps_is_in_the_document`. The `SessionSnapshot`/`LastAction`/`Counts`/
+`MediaRef` shape tests need no change (rename adds no snapshot field; `rename` is a `type` *value*).
+Add a `RenameOperation` shape test mirroring the others if the suite gains a served
+`RenameOperation` record.
 
 ---
 
 ## 5. Exactly which existing tests must change, and to what
 
-Deleting an assertion that pins a rule the owner reversed is correct; deleting one that pins a rule
-still standing is not. The difference is called out on every line.
+Deleting an assertion that pins a reversed rule is correct; deleting one that pins a standing rule is
+not. The difference is named on every line.
 
-- **`tests/RankMaster2.Server.Tests/PingContractTests.cs`**,
-  `The_absent_features_are_absent_and_not_configurable`: change
-  `Assert.False(features.GetProperty("rename")…)` to `Assert.True(...)`, and delete the message
-  "There is no build in which rename-by-rank exists (SERVER_SPEC.md § 1.1)." **This pins a reversed
-  rule — change it.** The other four asserts in that test (`videoTranscoding`, `posterFrames`,
-  `videoProbe`, `browse`, `maxConcurrentSessions`) pin rules that still stand — leave them.
+- **`PingContractTests.The_absent_features_are_absent_and_not_configurable`**: `Assert.False(...rename...)`
+  → `Assert.True(...)`, delete "There is no build in which rename-by-rank exists." **Reversed rule —
+  change it.** The four other asserts pin standing rules — leave them. `PingFeatureKeys` unchanged
+  (the key still exists).
+- **`TransportTests.There_is_no_rename_route`**: **remove `[InlineData("/session/rename")]`** — now a
+  real route; asserting it 404s pins a reversed rule. **Keep `/rename`, `/library/rename-by-rank`,
+  `/debug/rename`** — that rule stands. (`/session/rename/cancel` is also real; do not add it to this
+  negative theory.)
+- **`ErrorCodeTableTests`**: `Every_code_has_exactly_the_forty_the_spec_defines` → **43**, and rename
+  the method. Add `[InlineData("rename_in_progress",409)] [InlineData("no_rename_operation",404)]
+  [InlineData("rename_failed",500)]`. The agreement tests pass once the three codes are in
+  `SERVER_SPEC.md` § 5, the `openapi.yaml` enum, `Contracts/ApiError.cs` (`ErrorCodes`), and
+  `tests/RankMaster2.Server.Tests/Harness/ErrorStatuses.cs`.
+- **`android/app/src/test/kotlin/com/rankmaster2/phone/net/Rm2Fixtures.kt`** (~line 238): ping
+  fixture `"rename": false` → `true`, so the Android contract fixture matches the server.
 
-- **`tests/RankMaster2.Server.Tests/Harness/ContractShape.cs`**, `PingFeatureKeys`: unchanged
-  (the *key* `rename` still exists; only its value changed).
+**New server tests** — `tests/RankMaster2.Server.Tests/RenameTests.cs`, in `Rm2ServerCollection`,
+against the real HTTP surface. Determinism is the concern: a six-file folder renames faster than a
+poll, so the wire lifecycle uses an **injected catalog** that blocks the final `Save` on a signal
+(the registry already accepts an `ICatalog` from DI — that is how tests inject a fake), letting the
+test hold the run in the `saving` phase and observe it:
 
-- **`tests/RankMaster2.Server.Tests/TransportTests.cs`**, `There_is_no_rename_route` theory: **remove
-  the `[InlineData("/session/rename")]` case** — that path is now a real route, and asserting it
-  404s pins a reversed rule. **Keep `/rename`, `/library/rename-by-rank`, `/debug/rename`** — the
-  rule "no *other* rename route, no flag, no debug route" still stands, so those must still 404. This
-  is the line the brief draws: three of the four cases survive, one is deleted.
+1. `Rename_starts_with_202_and_an_operation` — `POST /session/rename` → `202`,
+   `RenameOperation.state == "running"`, `Location` header set.
+2. `The_operation_can_be_observed_to_succeed` — with the blocking catalog, `GET /session/rename`
+   shows a non-terminal state; release the block; poll to `state == "succeeded"`, `phase == "done"`.
+3. `A_succeeded_rename_renumbers_the_folder_and_the_session` — after success, on disk the top-level
+   files are `000001.ext …`, JSON keys equal `filename`s equal those names, a `rankmaster_backup_*`
+   folder exists with the originals; `GET /session` shows `pairSeq` +1, new numeric pair ids,
+   `lastAction.type == "rename"` with `clientRequestId` echoed, `undoAvailable == false`, `cues`
+   empty, `sessionVotes` unchanged; the old ids `GET` `404`; a stale pre-rename `pairToken` on
+   `vote` → `409 stale_pair_token` with the new snapshot.
+4. `Ratings_survive_the_rename` — μ/σ/matches/impressions/lastPlayed carried onto the numeric ids.
+5. `A_second_rename_while_one_runs_is_rejected` — with the run held in `saving`, a second `POST
+   /session/rename` → `409 rename_in_progress`; a `vote` → `409 rename_in_progress` too.
+6. `Cancel_at_the_saving_phase_restores_the_originals` — hold the run just before the final `Save`
+   (the injected catalog blocks and, on the *first* `Save` attempt, signals the test then throws or
+   waits); `POST /session/rename/cancel` → `200` `cancelling`; release; poll to `state ==
+   "cancelled"`; on disk the **original** filenames are back and the JSON lists them; `GET /session`
+   still ranks the original ids with `pairSeq` unmoved. (This proves cancel = rollback deterministically
+   at the last checkpoint; the mid-file checkpoint is proven at the unit level, item 11.)
+7. `Cancel_is_idempotent` — a second cancel → `200`, no second rollback, no error.
+8. `Rename_routes_need_a_session` — all three routes with no session → `404 no_session`; `GET`/cancel
+   with a session but no run → `404 no_rename_operation`.
+9. `Rename_takes_no_pairToken` — a start body carrying a stale `pairToken` still starts.
+10. `Rename_route_is_reachable` — `POST /session/rename` is not a 404 route (complements the OpenApi
+    route check).
 
-- **`tests/RankMaster2.Server.Tests/ErrorCodeTableTests.cs`**:
-  `Every_code_has_exactly_the_forty_the_spec_defines` → **41**, and rename the method. The three
-  agreement tests (`The_servers_code_table_matches_the_contract`, `The_openapi_enum_lists_the_same_codes`)
-  pass automatically once `rename_failed` is in `SERVER_SPEC.md` § 5, `openapi.yaml`'s `ErrorCode`
-  enum, `src/RankMaster2.Server/Contracts/ApiError.cs` (`ErrorCodes`), and
-  `tests/RankMaster2.Server.Tests/Harness/ErrorStatuses.cs` — add `rename_failed = 500` to both code
-  tables. Add an `[InlineData("rename_failed", 500)]` spot-check.
+**Unit tests** — `tests/RankMaster2.Catalog.Tests` and/or a new `RankMaster2.Actions.Tests`, where
+cancellation is deterministic without the HTTP race:
 
-- **`android/app/src/test/kotlin/com/rankmaster2/phone/net/Rm2Fixtures.kt`** (line ~238): the ping
-  fixture has `"rename": false`. Flip to `true` so the Android fixture matches the server. (Not a
-  server test, but it is a fixture of the contract and will otherwise mislead the phone tests.)
+11. `Cancel_mid_file_restores_original_names` — call the new
+    `LibraryActions.RenameByRank(progress, token)` (or the `FileOps` overload directly) with an
+    `IProgress` callback that cancels the token the first time it sees a `renaming` report; assert it
+    throws `OperationCanceledException`, the folder holds the **original** filenames, the JSON lists
+    them, and a `rankmaster_backup_*` folder exists. This is the load-bearing proof that cancel
+    restores originals part-way through, free of any timing race.
+12. `Progress_reports_backup_then_rename_then_save` — the `IProgress` callback receives phases in
+    order `BackingUp`, `Renaming` (with `done` climbing to `2 × N`), then `Saving`.
+13. `The_desktop_RenameByRank_is_unchanged` — the parameterless `RenameByRank()` still renames and
+    `ReplaceAll`s exactly as before (the existing `FileOpsTests` already cover the naming; add one
+    that the parameterless overload behaves identically to the new one followed by a manual
+    `ReplaceAll`).
 
-**New server tests** — a new `tests/RankMaster2.Server.Tests/RenameTests.cs`, in the
-`Rm2ServerCollection`, driving the real HTTP surface against a `LibraryFolder`:
+**State-machine audit** (`tests/RankMaster2.Audit.StateMachine/`, later re-derived by
+`rm2-audit-state`):
 
-1. `Rename_renumbers_every_file_and_rewrites_the_database` — open `SixStills`, vote a few, rename,
-   assert `200`; the snapshot's `pair` ids match `^\d{6}\.[a-z]+$`; on disk the top-level files are
-   `000001.ext …` and `rankmaster_db.json`'s keys equal its `filename`s equal those names; a
-   `rankmaster_backup_*` folder exists containing the original files and JSON.
-2. `Rename_advances_pairSeq_and_leaves_a_rename_lastAction` — `pairSeq` +1, new non-null
-   `pairToken`, `lastAction.type == "rename"`, `lastAction.clientRequestId` echoed,
-   `undoAvailable == false`, `cues` empty, `sessionVotes` unchanged.
-3. `Ratings_survive_the_rename` — capture μ/σ/matches/impressions per file before; after rename the
-   same values are present, carried onto the new numeric ids (compare via `GET /media/{id}/meta` on
-   the new ids, or read the JSON).
-4. `The_old_ids_are_gone_after_a_rename` — a `GET /media/{oldId}/still` answers `404`
-   (`unknown_media_id`); a stale pre-rename `pairToken` on `POST /session/vote` answers
-   `409 stale_pair_token` with the post-rename snapshot embedded.
-5. `Rename_takes_no_pairToken_and_ignores_one` — a body carrying a (stale) `pairToken` still
-   succeeds; the token is neither required nor validated.
-6. `Rename_needs_no_session_open_is_a_404` — `POST /session/rename` with no session →
-   `404 no_session`.
-7. `Rename_route_is_documented_and_reachable` — belt-and-braces that `POST /session/rename` is not a
-   404 route (complements the `OpenApiContractTests` route check).
+14. `RenameFailureRestoresAndChangesNothing` — `AuditFolder.SixStills().JamSave()`, start the rename,
+    poll to `failed`; assert `error.code == "rename_failed"`, `error.restored == true`, `error.backup`
+    names an existing backup, the top-level files are the **originals**, and `GET /session` still
+    ranks the original ids with an unmoved `pairSeq` and its original token still valid. (The
+    `JamSave` lever — a directory on `rankmaster_db.json.tmp` — makes the final `Save` throw while
+    file moves succeed, which is exactly the restore path.)
+15. `RenameHoldsTheSessionAgainstOtherActions` — while the run is held (jam or blocking catalog), a
+    concurrent `vote`/`discard` → `409 rename_in_progress`.
+16. `RenameClearsUndo` — discard a side (so `undoAvailable`), rename to success, then `undoAvailable
+    == false` and `POST /session/undo` → `409 nothing_to_undo`.
 
-**State-machine audit** — extend `tests/RankMaster2.Audit.StateMachine/` (this is what the
-`rm2-audit-state` agent owns; the plan writes the tests, the audit agent will later re-derive them):
+**Compatibility audit** (`tests/RankMaster2.Audit.Compatibility/RoundTripTests.cs`, `rm2-audit-compat`):
 
-8. `RenameHoldsTheLock` — start a rename against a folder large enough to be slow (or use the
-   `JamSave` lever to stall it deterministically); a concurrent `POST /session/vote` gets
-   `503 session_busy`. If a deterministic stall is hard, assert the weaker invariant that two renames
-   cannot interleave (the second waits, never corrupts).
-9. `RenameFailureRestoresAndChangesNothing` — `AuditFolder.SixStills().JamSave()`, then rename:
-   `RenameByConservativeScore` moves the files, the second `Save` throws, `RestoreLibrary` puts
-   originals and JSON back. Assert `500 rename_failed`, `details.restored == true`,
-   `details.backup` names an existing backup folder; the top-level files are the **original** names
-   again; `error.session` is the **unchanged** snapshot with the **unchanged** `pairSeq` and a still
-   non-null original `pairToken`; a `GET /session` still ranks the original ids. This reuses the
-   exact `JamSave` mechanism `RollbackAsymmetryTests` already relies on.
-10. `RenameClearsUndo` — discard one side (so `undoAvailable` is true), then rename; afterwards
-    `undoAvailable == false` and `POST /session/undo` answers `409 nothing_to_undo`.
-
-**Compatibility audit** — add to `tests/RankMaster2.Audit.Compatibility/RoundTripTests.cs` (owned
-by `rm2-audit-compat`):
-
-11. `A_renamed_library_still_loads_in_the_desktop_app` — open, vote, `POST /session/rename`, close;
-    then `new JsonCatalog().Scan(folder)` (what the desktop app calls) returns the same count with
-    keys `000001.ext …`, every rating/match/impression/lastPlayed intact; `Db.RequireV1Schema`
-    passes; and, since RM1 identity is the filename, `Rm1`-style read confirms keys equal
-    `filename`s. This is the compatibility contract for the renamed file: the desktop app and RM1
-    must open what the server's rename wrote, ratings intact.
+17. `A_renamed_library_still_loads_in_the_desktop_app` — open, vote, rename to success, close; then
+    `new JsonCatalog().Scan(folder)` (what the desktop reads) returns the same count with keys
+    `000001.ext …`, ratings/matches/impressions/lastPlayed intact, `Db.RequireV1Schema` passes, keys
+    equal `filename`s. This is the compatibility contract for the renamed file.
 
 ---
 
 ## 6. The `rm2ctl` change — the acceptance gate for the whole server
 
-`src/rm2ctl/Cycle.cs` is the server's acceptance gate: its cycle drives the whole contract and exits
-non-zero on any disagreement. Two changes.
+`src/rm2ctl/Cycle.cs` drives the whole contract and exits non-zero on any disagreement. Two changes.
 
-- **`UnhappyPathsAsync`, the "unknown route, and the rename that does not exist" step (~line 714).**
-  Its loop currently asserts `/rename`, `/session/rename` and `/library/rename-by-rank` all 404. The
-  rule reversed for exactly one of them. Rename the step to "unknown route, and the rename routes
-  that do not exist", and **drop `/session/rename` from the loop** — keep `/rename` and
-  `/library/rename-by-rank` (and `/debug/rename` if desired), which must still 404. The comment must
-  now read that `POST /session/rename` is the *one* rename route and no other exists.
+- **`UnhappyPathsAsync`, the "rename that does not exist" step (~line 714).** Rename it "the rename
+  routes that do not exist"; **drop `/session/rename` from the loop** (now real); keep `/rename` and
+  `/library/rename-by-rank`, which must still 404. Update the comment: `/session/rename` is the one
+  rename operation, no other rename route exists.
+- **A new happy-path step, driven last** (after `SaveAsync`, before `CloseAsync`, because rename
+  renumbers everything): `RenameAsync`. On the scratch library it:
+  1. records the pre-rename ids and each file's rating (`GET /media/{id}/meta`);
+  2. `POST /session/rename` with a `clientRequestId` → checks `202` and a `running` `RenameOperation`;
+  3. **polls `GET /session/rename`** until a terminal state, checking the phase only ever advances
+     (`backing_up` → `renaming` → `saving` → `done`) and never goes backwards, and that it reaches
+     `succeeded`;
+  4. `GET /session` → checks `pairSeq == before + 1`, new `pairToken`, `lastAction.type == "rename"`
+     with the `clientRequestId` echoed, `undoAvailable == false`;
+  5. checks the new `pair` ids match `^\d{6}\.`, the old ids now `GET` `404`, a `rankmaster_backup_*`
+     folder appeared, and the on-disk JSON still loads with ratings intact.
 
-- **A new happy-path step, driven last** (after `SaveAsync`, before `CloseAsync`, so it does not
-  disturb the earlier vote/skip/discard/special/undo checks — rename renumbers everything):
-  `RenameAsync`. On the scratch library it:
-  1. reads the pre-rename ids and each file's rating via `GET /media/{id}/meta`;
-  2. `POST /session/rename` with a `clientRequestId`, using an extended client timeout;
-  3. checks `200`, a `SessionSnapshot`, `pairSeq == before + 1`, a new `pairToken != before`,
-     `lastAction.type == "rename"` and its `clientRequestId` echoed, `undoAvailable == false`;
-  4. checks the new `pair` ids match `^\d{6}\.` and the old ids now `GET` `404`;
-  5. checks a `rankmaster_backup_*` folder appeared in the scratch dir;
-  6. checks the on-disk JSON still loads (reuse the cycle's existing JSON read) with ratings intact.
+  Add `Rm2Api.StartRenameAsync(clientRequestId)`, `Rm2Api.GetRenameAsync()`,
+  `Rm2Api.CancelRenameAsync()` in `src/rm2ctl/Rm2Api.cs`, and teach `src/rm2ctl/Snapshot.cs` the
+  `rename` `lastAction.type`. `ScratchLibrary.Create()`'s six PNGs are enough. `rm2ctl` need not
+  exercise cancel in the cycle (it would need a large folder to catch mid-run); cancel is proven by
+  the deterministic unit and server tests (§ 5 items 6, 11).
 
-  Add a matching `Rm2Api.RenameAsync(clientRequestId)` in `src/rm2ctl/Rm2Api.cs` and, if the cycle's
-  snapshot wire type (`src/rm2ctl/Snapshot.cs`) switches on `lastAction.type`, teach it the `rename`
-  value. `ScratchLibrary.Create()` already makes six PNGs, which is enough to renumber.
-
-The acceptance gate for the server is unchanged in spirit — `rm2ctl cycle` green against a real
-folder with the desktop app never launched — and now includes the rename that *does* exist.
+The server's acceptance gate — `rm2ctl cycle` green against a real folder with the desktop app never
+launched — now includes starting, observing to completion, and verifying a rename.
 
 ---
 
 ## 7. Phases
 
-**Phase 1 — contract, alone, reviewed before any code.** All of § 3 (SERVER_SPEC.md + SERVER_PLAN.md)
-and § 4 (openapi.yaml). Nothing else. Reviewed against `SPEC.md` § Rename by rank and against
-`LibraryActions.RenameByRank` — the spec must describe what the code does, because the code is not
-changing. Gate: `dotnet test` still builds; `OpenApiContractTests.The_document_parses` and
-`ErrorCodeTableTests` are updated in lockstep (§ 5) so the suite stays green on the contract triangle
-even before the endpoint exists. (Route/feature tests for the new endpoint go red here — that is
-expected until Phase 2.)
+**Phase 1 — contract, alone, reviewed first.** All of § 3 (SERVER_SPEC.md + SERVER_PLAN.md) and § 4
+(openapi.yaml). Reviewed against `SPEC.md` § Rename by rank and against `LibraryActions.RenameByRank`.
+Gate: the suite builds; `OpenApiContractTests.The_document_parses` and `ErrorCodeTableTests` are
+updated in lockstep so the contract triangle stays green; the new route/feature/lifecycle tests may
+be red until Phase 3.
 
-**Phase 2 — the endpoint, in `Sessions/`.** Add `RenameByRankAsync(JsonElement? body, BodyError?
-bodyError, CancellationToken)` to `SessionRegistry`, modelled on `MoveAsync`: read the optional
-`clientRequestId`; no `pairToken` read; `WithLockAsync`; if no session → `no_session`; then
-`try { open.Actions.RenameByRank(); open.Actions.ClearLastMove(); open.PairSeq++;
-open.LastSavedAt = now; open.LastAction = rename record; return Ok(Materialise(open)); }`. The catch
-distinguishes the two failure rows of § 2.3 by inspecting the exception message
-`RenameByRank` throws — it says "Folder restored from: <backup>" on a restored failure and "Rename
-failed and restore did not finish. Backup is at: <backup>" on the double fault; parse the backup path
-out, and on the double fault also `_open = null; open.Lock.Dispose();` before returning
-`rename_failed` with `restored:false` and no `error.session`. **If parsing a message is judged too
-brittle**, the alternative is a one-line change to `LibraryActions.RenameByRank` to throw a typed
-`RenameFailedException(bool Restored, string Backup)` instead of `IOException` — but that touches
-`RankMaster2.Actions`, so it requires a `SPEC.md`/scope note first and is the fallback, not the
-default. Map `RenameByRank`'s `InvalidOperationException("Nothing to rename.")` (empty folder) to
-`rename_failed` `restored:true` (nothing was touched). Register the route in `SessionEndpoints.cs`
-as `group.MapPost("/rename", …)`, reading the body with `required: false` like `undo`. Flip
-`PingFeatures(Rename: false …)` to `true` in `src/RankMaster2.Server/Security/SecurityEndpoints.cs`,
-and add `rename_failed` to `ErrorCodes`. Gate: the § 5 route/feature/error tests go green.
+**Phase 2 — the operation.** Additive overloads first, in the shared libs (behaviour-preserving; a
+one-line `SPEC.md` note that rename may be observed and cancelled, cancel restoring from the backup):
+`FileOps.BackupLibrary/RestoreLibrary/RenameByConservativeScore` gain `(…, IProgress<int>?,
+CancellationToken)` overloads, the old signatures delegating with `null, default`;
+`LibraryActions.RenameByRank(IProgress<RenameProgress>, CancellationToken)` performs scan / pre-save /
+`ReleaseAll` / backup / two-phase rename / remap / final save with progress and a between-files
+cancellation check, restores from the backup on cancel or failure, and **returns the remapped
+records without touching the session** (so the session apply can happen under the server lock). The
+parameterless `RenameByRank()` stays as the desktop's, unchanged.
 
-**Phase 3 — tests and `rm2ctl`.** The new `RenameTests.cs` (§ 5 items 1–7) and the `rm2ctl` changes
-(§ 6). Gate: the whole `RankMaster2.Server.slnf` suite green on Linux, and `rm2ctl cycle` green end
-to end including the rename step.
+Then the server, in `Sessions/`: a `RenameOperation` record and a `RenameProgress` type; on
+`SessionRegistry`, a `StartRenameAsync` (lock → checks → create op + CTS + flag → `Task.Run(run)` →
+release → `202`), a lock-free `GetRenameAsync`, a `CancelRenameAsync` (signal CTS, return op), and
+the `run` body (call the new `RenameByRank` overload off-lock, marshalling progress into the op via
+volatile writes; on success re-take the lock and `ReplaceAll`/`ClearLastMove`/`PairSeq++`/set
+`lastAction`/clear flag; on `OperationCanceledException` mark `cancelled` and clear the flag under the
+lock, session untouched; on other exceptions mark `failed` with `restored`/`backup` parsed from the
+exception, and on the double fault close the session under the lock). Distinguish the two failure
+messages `RenameByRank` throws to fill `restored`; if message-parsing is judged brittle, the fallback
+is a typed `RenameFailedException(bool Restored, string Backup)` from `Actions` — a shared-lib change,
+so spec-note first. Register `POST/GET /session/rename` and `POST /session/rename/cancel` in
+`SessionEndpoints.cs`. Add the three error codes to `ErrorCodes`. Flip `PingFeatures.Rename` to `true`
+in `Security/SecurityEndpoints.cs`. Gate: route/feature/error tests green.
 
-**Phase 4 — audits.** The state-machine (§ 5 items 8–10) and compatibility (§ 5 item 11) tests. Gate:
-both audit suites green on Linux.
+**Phase 3 — tests and `rm2ctl`.** `RenameTests.cs` (§ 5 items 1–10), the unit tests (11–13), and the
+`rm2ctl` changes (§ 6). Gate: the whole `RankMaster2.Server.slnf` suite green on Linux, and
+`rm2ctl cycle` green end to end including the observed rename.
+
+**Phase 4 — audits.** State-machine (§ 5 items 14–16) and compatibility (item 17). Gate: both green.
 
 ---
 
@@ -569,58 +522,64 @@ both audit suites green on Linux.
 Rename-by-rank on the server is done when, on this Linux box, with the desktop app never launched:
 
 1. `dotnet build RankMaster2.Server.slnf` succeeds and the entire suite passes — the pre-existing
-   count plus the new `RenameTests`, the three audit additions, and the flipped/adjusted ping,
-   transport, error-count and OpenApi tests. No test that pins a still-standing rule was deleted; the
-   only deletions are the reversed-rule assertions named in § 5.
-2. `rm2ctl cycle` against a scratch folder is green and its run includes the new rename step: rename
-   returns `200`, renumbers every file to `000001.ext …`, advances `pairSeq`, leaves
-   `lastAction.type == "rename"`, produces a backup folder, dead-ends every old media id, and the
-   JSON it wrote still loads.
-3. The compatibility audit proves a **renamed** library loads through `JsonCatalog.Scan` — the
-   desktop app opening the folder after the phone renamed it — with every rating intact and keys
-   equal to filenames equal to `000001.ext …`. This is the compatibility contract for rename.
-4. The state-machine audit proves a jammed-save rename restores the library and changes nothing:
-   `rename_failed` with `restored: true`, the original filenames back on disk, and a session whose
-   `pairSeq` and `pairToken` never moved.
-5. `SERVER_SPEC.md`, `SERVER_PLAN.md` and `openapi.yaml` agree with the server: the endpoint, the
-   error code, the `ActionType` value, and `features.rename == true` appear in all of them, and the
-   contract-triangle tests (`ErrorCodeTableTests`, `OpenApiContractTests`) enforce it.
+   count plus `RenameTests`, the unit tests, the audit additions, and the flipped ping/transport/
+   error-count/OpenApi tests. The only deletions are the reversed-rule assertions named in § 5.
+2. `rm2ctl cycle` is green and its run **starts a rename, polls the operation to `succeeded` with
+   the phases only advancing, and verifies** the renumbering, the backup, the dead old ids and the
+   still-loadable JSON.
+3. A server test **observes a rename through its phases** (`backing_up` → `renaming` → `saving` →
+   `done`) using the injected blocking catalog, and a unit test proves **cancel mid-file restores the
+   original names** deterministically.
+4. A server test proves a **cancel** returns the folder to its original names with the session
+   unchanged, and the state-machine audit proves a **jammed-save failure** does the same via
+   `rename_failed` with `restored: true`.
+5. A server test proves a mutating call during a rename gets **`409 rename_in_progress`**.
+6. The compatibility audit proves a **renamed** library loads through `JsonCatalog.Scan` with ratings
+   intact and keys `000001.ext …` — the desktop app opening the folder after the phone renamed it.
+7. `SERVER_SPEC.md`, `SERVER_PLAN.md` and `openapi.yaml` agree with the server on the three routes,
+   the three error codes, the `rename` `ActionType`, the `202`, and `features.rename == true`, and the
+   contract-triangle tests enforce it.
 
 ---
 
 ## 9. What is verifiable here, and what is not
 
-**Fully verifiable on this build machine.** Rename by rank is pure filesystem plus JSON — no WPF, no
-native media, no video decode. `RenameByRank` and its `FileOps` primitives already run in
-`RankMaster2.Catalog.Tests` on Linux (`RenameByConservativeScore_OrdersByMuMinusThreeSigma`,
-`RemapAfterRename_KeepsRatings`). The server, its 500-plus tests, `rm2ctl` and both audit suites all
-build and run on Linux today (`SERVER_PLAN.md` § 8). Every claim in § 8 is checkable here with
-`dotnet test` and `rm2ctl cycle`.
+**Fully verifiable on this build machine.** Rename is filesystem plus JSON — no WPF, no native media,
+no video decode. The naming and remap already run in `RankMaster2.Catalog.Tests` on Linux; the
+server, its 500-plus tests, `rm2ctl` and both audit suites build and run on Linux today
+(`SERVER_PLAN.md` § 8). The progress phases, the cancel-restores-originals guarantee (unit-tested
+with an injected cancel), the `rename_in_progress` gate, the failure/restore path (via `JamSave`),
+and the wire lifecycle (via an injected blocking catalog) are all checkable here with `dotnet test`
+and `rm2ctl cycle`.
 
-**Not verifiable here, and not this part's to verify.** Whether the phone or the PC client shows a
-rename button and puts the destructive confirmation in front of it — that is `PC_CLIENT_PLAN.md`
-§ 6.6 and `pc/plans/E-ranking-surface.md` § E6, and it depends on the owner's client decision, not on
-the server. The Windows-only edge of § 2.5 (a media `GET` holding a brief read handle over a
-`File.Move` mid-rename, absorbed by `MoveWithRetry`) cannot be exercised on Linux, where an open
-handle does not block a move; it is recorded, not tested here. And the § 2.2 ceiling — a library so
-large the rename outlasts a client's patience — is a property of real hardware and library size, not
-something a unit test asserts; it is the known gap added to § 16.
+**Not verifiable here.** Whether the PC client draws the bar and puts the confirmation in front of the
+button, and whether the phone hides the option — client work in `PC_CLIENT_PLAN.md` § 6.6 and
+`pc/plans/E-ranking-surface.md` § E6. A true many-minute rename on tens of thousands of files on real
+hardware — a scale property, recorded as § 16 gap, not asserted by a test. The Windows-only edge of
+§ 2.5 (a media `GET` holding a brief read handle over a `File.Move` mid-rename, absorbed by
+`MoveWithRetry`) — a no-op on Linux, where an open handle does not block a move. A server-process kill
+mid-run — unrecoverable by design (§ 2.4), with the backup as manual recovery; the plan does not test
+a kill because there is nothing for the server to do about it.
 
 ---
 
 ## 10. For the coordinator — decisions this plan made that touch a shared document
 
-- **Reverses `SERVER_SPEC.md` § 1.1 and `SERVER_PLAN.md` § 4/§ 7**, and flips `openapi.yaml`
-  `PingFeatures.rename` and `features.rename` in `/ping`. This is a deliberate scope reversal on the
-  owner's 2026-09-16 decision, recorded as one in `SERVER_PLAN.md` § 7.
-- **Same `sessionId` across a rename**, not a new one (§ 2.1). If a future reader prefers "a rename
-  mints a new session," that is a bigger contract change (new secret, `pairSeq` reset, and edits to
-  § 8.3, § 9.1 and § 12.5's cache-scope promise) and must be made spec-first; this plan chose the
-  in-place transition because it is the same session and needs no new invariant.
-- **`rename_failed` distinguishes `restored` from the double fault by parsing `RenameByRank`'s
-  exception message** (§ 7, Phase 2). The clean alternative is a typed exception from
-  `RankMaster2.Actions`, which is a one-line change to a shared library and therefore needs a
-  `SPEC.md`/scope note first. If the coordinator would rather take that change now, this plan's
-  Phase 2 simplifies and the fragility disappears.
-- **The phone offering rename** is left to the client parts, with a recommendation only: offer it,
-  behind rename's one allowed confirmation, gated on `features.rename` from `/ping`.
+- **Reverses `SERVER_SPEC.md` § 1.1 and `SERVER_PLAN.md` § 4/§ 7**, flips `features.rename`, and adds
+  the **first long-running operation and the first `202`** to the contract — named as such in
+  § 13.1. Whatever the next long operation is, this is the precedent: a separate small resource with
+  start/observe/cancel, `/session` keeping its one snapshot shape.
+- **Cancel is a rollback to original names** (§ 2.1), because there is no consistent half-renamed
+  terminus. If a future reader wants a resumable/partial rename, that is a different operation and a
+  bigger design; do not confuse it with cancel.
+- **The run is server-owned and survives a client disconnect** (§ 2.4); a disconnect is not a cancel.
+- **Additive overloads in `RankMaster2.Actions` and `RankMaster2.Catalog`** carry progress and
+  cancellation; the desktop's parameterless `RenameByRank()` is untouched. This is a shared-lib change
+  and takes a one-line `SPEC.md` note (rename may be observed and cancelled; cancel restores from the
+  backup) — behaviour, not result, is what changes.
+- **`rename_failed` distinguishes `restored` by parsing `RenameByRank`'s exception message** (§ 7,
+  Phase 2); the clean alternative is a typed exception from `Actions`, a shared-lib change needing a
+  spec note first. The coordinator may prefer to take that now and simplify Phase 2.
+- **The phone should not offer rename** (§ 2.6) — a recommendation to the client authors, argued from
+  the fact that a phone is the worst place to watch a bar and press cancel, not from convenience. The
+  endpoint stays open to any token because availability is a server concern.

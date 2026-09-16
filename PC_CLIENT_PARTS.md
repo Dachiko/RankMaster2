@@ -121,6 +121,38 @@ execution begins; the planners may argue for changes, but not invent their own.
 | `IVideoSurface` | D → E | create, start, stop, release, current frame, and "this file will not play" |
 | `IMediaProbe` | C, D → A | "does this folder contain video" — the question that keeps the video engine asleep |
 
+## Rulings, where two plans disagreed
+
+Both flagged by part A on the way in. Settled here so nobody works around them.
+
+**`IMediaProbe` splits in two, because it was two questions wearing one name.** Part C asked for an
+async, folder-level answer; part D for a synchronous per-file one. Both are right about their own
+question:
+
+- *"Does this folder contain video?"* enumerates a directory. It is I/O, it is async, part C owns it,
+  and part A runs it **concurrently** with the server open so the video engine can begin waking
+  before the snapshot lands.
+- *"Is this file a video?"* is a string and a table. It is `Core.MediaExtensions.KindOf`, it already
+  exists, it is already the server's answer, and it does not need a seam at all. Anyone who wants it
+  calls Core.
+
+A seam is for a thing one part does on another's behalf. Classifying an extension is not that.
+
+**The HEVC packetizer ships.** Part D listed it; part A excluded it, citing `SPEC.md`'s non-goals.
+The non-goal is real but it is about *images* — it sits in a list with HEIC, RAW, TIFF and AVIF, and
+those are still formats.
+
+What settles it is that the video policy is **by extension**: `mp4 webm mkv avi mov` (`SPEC.md`
+§ Media policy). So an `.mp4` is paired and shown whatever codec is inside it, and if that is HEVC
+and the packetizer is absent, the owner gets a file he can see in his folder, cannot play, and
+cannot do anything about. One DLL against that is a trade worth making. It is not support for HEVC
+as a feature; it is not failing on a file the product already claims to handle.
+
+**Part A's two seam additions are granted** (`LibVlcLayout`, `StartupClock.Mark`) — both are part A's
+own surface rather than anything another part must honour.
+
+---
+
 ## Verification, for every part
 
 Development is on Linux. .NET compiles and publishes for Windows here; **nothing Windows runs
