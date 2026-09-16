@@ -82,6 +82,17 @@ undid has to be said out loud. The server names it — `lastAction.undoneType` i
 `skip`, `discard` or `special` — and a person who presses undo expecting one thing and gets another
 without being told has been lied to by the interface.
 
+**Rename-by-rank stays, and lives on the server** (2026-09-16). It is a deliberate reversal of
+`SERVER_SPEC.md` § 1.1, which forbids a rename endpoint in unusually strong terms; the contract
+changes first, then the implementation. Planned separately as part F.
+
+**Rename shows progress and can be cancelled** (2026-09-16). That makes it the first long-running
+operation in a contract where every endpoint is synchronous, and it puts one hard question at the
+centre of part F: what cancel means when three thousand files have already been renamed. Rolling
+back is itself thousands of file moves, so the cancel needs its own progress and must not look
+frozen. The owner has to know *before* he presses it whether cancel undoes the work or stops where
+it stands.
+
 ---
 
 ## The seams, frozen before anyone starts
