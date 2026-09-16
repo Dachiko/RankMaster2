@@ -132,6 +132,16 @@ public sealed class Rm2Client(HttpClient http, string? token = null)
     public Task<Rm2Response> UndoAsync(string? clientRequestId = null) =>
         SendAsync(HttpMethod.Post, "/session/undo", new { clientRequestId });
 
+    // ---- rename (SERVER_SPEC.md § 10.16) -----------------------------------------------------
+
+    public Task<Rm2Response> StartRenameAsync() =>
+        SendAsync(HttpMethod.Post, "/session/rename", new { });
+
+    public Task<Rm2Response> GetRenameAsync() => GetAsync("/session/rename");
+
+    public Task<Rm2Response> CancelRenameAsync() =>
+        SendAsync(HttpMethod.Post, "/session/rename/cancel", new { });
+
     // ---- media ------------------------------------------------------------------------------
 
     /// <summary>

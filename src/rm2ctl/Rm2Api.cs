@@ -251,6 +251,16 @@ public sealed class Rm2Api : IDisposable
     public Task<Reply> UndoAsync(string? clientRequestId) =>
         SendAsync(HttpMethod.Post, "/session/undo", new { clientRequestId });
 
+    // ---- rename (SERVER_SPEC.md § 10.16) -------------------------------------------------------
+
+    public Task<Reply> StartRenameAsync(string? clientRequestId = null) =>
+        SendAsync(HttpMethod.Post, "/session/rename", new { clientRequestId });
+
+    public Task<Reply> GetRenameAsync() => GetAsync("/session/rename");
+
+    public Task<Reply> CancelRenameAsync() =>
+        SendAsync(HttpMethod.Post, "/session/rename/cancel", new { });
+
     public Task<Reply> RootsAsync() => GetAsync("/libraries/roots");
 
     public Task<Reply> BrowseAsync(string path, bool? counts = null)

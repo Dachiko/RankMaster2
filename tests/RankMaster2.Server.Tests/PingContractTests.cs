@@ -65,9 +65,11 @@ public class PingContractTests(Rm2Server server)
         ContractShape.RequireExactKeys(features, "PingFeatures", ContractShape.PingFeatureKeys,
                                        "GET /ping (SERVER_SPEC.md § 14)", response);
 
-        // SERVER_PLAN.md § 7 fixes all of these; rename in particular is a product decision.
-        Assert.False(features.GetProperty("rename").GetBoolean(),
-            "features.rename is always false. There is no build in which rename-by-rank exists (SERVER_SPEC.md § 1.1).");
+        // SERVER_PLAN.md § 7 fixes all of these. Rename is reversed (2026-09-16): it now lives on
+        // the server as a journalled, long-running operation (SERVER_SPEC.md § 10.16); every other
+        // absent feature stands.
+        Assert.True(features.GetProperty("rename").GetBoolean(),
+            "features.rename is true — rename-by-rank is a journalled server operation (SERVER_SPEC.md § 10.16).");
         Assert.False(features.GetProperty("videoTranscoding").GetBoolean());
         Assert.False(features.GetProperty("posterFrames").GetBoolean());
         Assert.False(features.GetProperty("videoProbe").GetBoolean(),

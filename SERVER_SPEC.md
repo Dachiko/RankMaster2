@@ -28,11 +28,10 @@ pair tokens. It owns **no** ranking logic.
 
 ### 1.1 Deliberately absent
 
-- **Rename by rank. There is no rename endpoint.** `LibraryActions.RenameByRank` exists and the
-  server MUST NOT call it, MUST NOT expose it, and MUST NOT gate it behind a flag, a config key, a
-  debug build or an undocumented route. A request to any path containing `rename` MUST fall through
-  to the normal 404 `not_found`. This is a product decision (`SERVER_PLAN.md` § 4), not a
-  sequencing one.
+- **Rename by rank is a journalled, long-running operation at `/session/rename` (§ 10.16)** —
+  `POST` to start, `GET` to observe, `POST /session/rename/cancel` to stop — and nowhere else. It
+  copies no files. A request to any *other* path containing `rename` MUST fall through to `404
+  not_found`.
 - **Transcoding, poster frames, duration and codec probing** (`SERVER_PLAN.md` § 3.4, § 7). The
   server never decodes a video frame. `GET /media/{id}/thumb` and `GET /media/{id}/still` MUST fail
   with `wrong_media_kind` for a video id.
@@ -241,6 +240,20 @@ produce a misleading error path.
 |---|---|---|
 | `internal_error` | 500 | anything unhandled |
 
+### 5.7 Rename (§ 10.16)
+
+| Code | Status | When | `details` |
+|---|---|---|---|
+| `rename_in_progress` | 409 | a mutating `/session*` call, or a second `POST /session/rename`, while a rename runs | `{ "operationId": string }` |
+| `no_rename_operation` | 404 | `GET`/cancel of `/session/rename` with a session open but no rename recorded | — |
+| `rename_failed` | 500 | the rename (or recovery on open) could not reunite the ratings | `{ "reunited": bool, "journal": string\|null }` |
+
+`reunited: true` means the ratings are safe (folder possibly half-renamed); `reunited: false` is the
+rare double fault — the reunite `Save` itself failed (e.g. disk full), the journal is left at
+`journal` and the next open will retry recovery. `POST /session` runs recovery first and, if it
+cannot reunite, returns `rename_failed { reunited:false, journal }` and does **not** open the session
+(so nothing scans-and-drops before the ratings are safe).
+
 ---
 
 ## 6. Status codes
@@ -249,21 +262,22 @@ produce a misleading error path.
 |---|---|
 | 200 | successful `GET`; `POST /session` resuming the session already open; every successful action |
 | 201 | `POST /session` that opened a **new** session; `POST /pair` |
+| 202 | `POST /session/rename` (§ 10.16) — accepted, **not** a completion; durability is asserted only when the operation reaches `succeeded` (§ 13.1) |
 | 204 | `DELETE /session`, `DELETE /pair/{deviceId}` |
 | 206 | `GET /media/{id}/video` with a satisfiable `Range` |
 | 304 | media `GET` whose `If-None-Match` matches the current ETag |
 | 400 | malformed request — § 5.2 |
 | 401 | no credential, bad credential, revoked credential — § 5.1 |
 | 403 | the credential is fine but the operation is refused: media outside the session folder, a disallowed extension, an OS-denied folder, pairing not open |
-| 404 | no such route; no session open; unknown media id; missing file; missing folder |
-| 409 | the request is well-formed and authorised but conflicts with the current state: stale token, no current pair, nothing to undo, folder not rankable, unreadable library JSON, a session already open on another folder, wrong media kind |
+| 404 | no such route; no session open; unknown media id; missing file; missing folder; no rename operation recorded (`no_rename_operation`, § 10.16) |
+| 409 | the request is well-formed and authorised but conflicts with the current state: stale token, no current pair, nothing to undo, folder not rankable, unreadable library JSON, a session already open on another folder, wrong media kind, a rename already running (`rename_in_progress`, § 10.16) |
 | 413 | body too large |
 | 415 | wrong request `Content-Type` |
 | 416 | unsatisfiable `Range` |
 | 422 | the file is present but cannot be decoded as an image |
 | 423 | the folder's lock file is held by another process |
 | 429 | pairing rate limit |
-| 500 | `save_failed`, `move_failed`, `internal_error` |
+| 500 | `save_failed`, `move_failed`, `internal_error`, `rename_failed` (§ 10.16) |
 | 503 | `session_busy` (with `Retry-After`), `server_shutting_down` (with `Retry-After`) |
 
 `503` and `429` MUST carry a `Retry-After` header in delta-seconds.
@@ -308,6 +322,9 @@ file, or by closing and reopening the session.
 | ranking\|exhausted | `POST /session/undo` ok | ranking | +1 | move file back, `Restore`, save |
 | ranking\|exhausted | `DELETE /session` | closed | — | releases the lock; writes nothing |
 | exhausted | vote / skip / discard / special | exhausted | unchanged | `409 no_current_pair` |
+| ranking\|exhausted | `POST /session/rename` started | unchanged | unchanged | `202`; every other mutating call answers `409 rename_in_progress` until it settles (§ 10.16) |
+| ranking\|exhausted | rename succeeded | ranking or exhausted | +1 | every id new; `lastAction.type == "rename"` |
+| ranking\|exhausted | rename cancelled or failed | resynced from disk | unchanged | ratings intact; filenames possibly mixed (§ 10.16) |
 
 ### 7.3 Serialisation
 
@@ -351,6 +368,9 @@ These are properties of `RankingSession`, stated so no client is promised otherw
 10. **`impressions` increments only on vote and skip** (`SPEC.md` § Ranking). Reading a pair,
     fetching a still, prefetching a warm pair, and closing the session MUST NOT increment it. The
     pair open when `DELETE /session` arrives is **unseen**.
+11. **A rename does not change `sessionId`.** On success it advances the session one generation —
+    every numeric id new, `pairSeq` +1, `cues` cleared, `undoAvailable` false. On cancel or failure
+    the session is resynced from disk with ratings intact; filenames may be mixed. See § 10.16.
 
 ---
 
@@ -405,10 +425,13 @@ The asymmetry is deliberate and mirrors the library:
 | undo of a move: move-back throws | nothing changed | unchanged | still valid |
 | undo of a move: move-back ok, `Restore` ok, `Save` throws | file already back, record already restored | **+1** | stale |
 | `POST /session/save`, any `GET` | — | unchanged | still valid |
+| rename succeeds | database rewritten with new keys, session replaced | **+1** | stale — every id is new |
+| rename cancelled or failed | session resynced from disk (§ 10.16) | unchanged | old tokens stale anyway, because the pair they name may no longer exist under that filename |
 
 `pairSeq` never decreases and never resets while a session is open. It resets to 0 only when a new
 session opens — and `sessionId` changes at the same moment, so old tokens from a previous session can
-never collide with new ones.
+never collide with new ones. A rename does neither: it does not reset `pairSeq` and does not change
+`sessionId`, even on success (§ 10.16).
 
 ### 8.4 Checking a token
 
@@ -536,7 +559,7 @@ The most recent **successful** mutation of this session. Used for retry disambig
 | Field | Type | Null? | Meaning |
 |---|---|---|---|
 | `seq` | integer | no | The `pairSeq` value this action produced. |
-| `type` | enum | no | `vote` \| `skip` \| `discard` \| `special` \| `undo` \| `drop_missing`. |
+| `type` | enum | no | `vote` \| `skip` \| `discard` \| `special` \| `undo` \| `drop_missing` \| `rename` (§ 10.16 — every other field null). |
 | `pairToken` | string | **yes** | The token this action consumed. `null` for `undo` and `drop_missing`, which do not take one. |
 | `clientRequestId` | string | **yes** | Echoed verbatim from the request body, or `null` if the client sent none. |
 | `winner` | enum | **yes** | `left` \| `right` — `vote` only. |
@@ -888,6 +911,127 @@ Response: `{ path, parent, entries: [BrowseEntry] }`. `parent` is `null` at a ro
 - Files are never listed. Hidden and system directories are listed with their real names; filtering
   them is the client's choice.
 
+### 10.16 Rename by rank — `POST /session/rename`, `GET /session/rename`, `POST /session/rename/cancel`
+
+The server side of `SPEC.md` § Rename by rank, **with no file backup** — safety is a journal, not a
+copy. Reversed from an earlier prohibition (2026-09-16, owner decision); § 1.1 now points here.
+
+**Scope.** These three routes take no `pairToken`; one sent in the body MUST be ignored — a rename
+is not pair-scoped. Any *other* path containing `rename` still falls through to `404 not_found`
+(§ 1.1).
+
+**The three routes and `RenameOperation`:**
+
+```
+POST   /session/rename          start    -> 202 Accepted + RenameOperation (running)
+GET    /session/rename          observe  -> 200 RenameOperation   (poll for the bar; no lock taken)
+POST   /session/rename/cancel   cancel   -> 200 RenameOperation
+```
+
+```json
+{
+  "operationId": "T8l63K3ATihvFD9hSwOCtr",
+  "state": "running",
+  "phase": "renaming",
+  "done": 4,
+  "total": 12,
+  "startedAt": "2026-09-16T18:04:11.400Z",
+  "updatedAt": "2026-09-16T18:04:11.412Z",
+  "error": null
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `operationId` | string | Opaque, stable for the life of this run. |
+| `state` | enum | `running` \| `cancelling` \| `succeeded` \| `cancelled` \| `failed`. |
+| `phase` | enum | `preparing` \| `renaming` \| `saving` \| `reuniting` \| `done`. |
+| `done`, `total` | integer | Moves completed / `2 × N` (phase 1 then phase 2, § below). |
+| `startedAt`, `updatedAt` | string | RFC 3339 UTC. |
+| `error` | object\|null | `null` unless `state` is `failed`: `{ "code": "rename_failed", "reunited": bool, "journal": string\|null }` (§ 5.7). |
+
+**`202` is an acknowledgement, not a completion** — the first, named exception to "a 2xx means the
+change is durable" (§ 13.1). By the time it is returned the journal is already fsynced, but the
+moves and the database commit may not have run yet. Durability is asserted only when the operation
+observed through `GET /session/rename` reaches `succeeded`.
+
+**The journal.** Before the first file moves, the server writes `<folder>/.rankmaster-rename.json`
+and fsyncs it (the same write-tmp / `Flush(true)` / atomic-replace discipline `JsonCatalog.Save`
+uses). It carries the full old→new plan **and every rating row** (`mu, sigma, matches, impressions,
+lastPlayed`), so recovery can rebuild a correct database from the journal alone, independent of
+whatever `rankmaster_db.json` currently says. Its extension is not a media extension, so
+`JsonCatalog.Scan` never lists it, exactly like `.rankmaster.lock`. Phase 1 moves each file to a
+**deterministic** temporary, `__rm2_<new>` (e.g. `__rm2_000001.jpg`); phase 2 moves that to `<new>`.
+Every temporary on disk names its own eventual target, so recovery can identify any file it finds
+without a per-file journal write — unlike the desktop path's random-GUID temporaries, which a crash
+would leave unidentifiable.
+
+**Ordering.** Under the session lock: compute the plan (`μ − 3σ` descending, then filename, to
+`000001.ext …` — `SPEC.md`), write and fsync the journal, mark the session rename-in-progress; the
+lock is then released and the rest runs on a server task, observable and cancellable. Phase 1, phase
+2, then the database is rewritten with the new keys (atomic), then the journal is deleted — **the
+commit point** — then, under the lock again, the session is updated: `ReplaceAll` with the remapped
+records, undo cleared, `pairSeq` +1, `lastAction.type = "rename"`.
+
+**Recovery is forward and total, and never needs the owner.** It runs on the next `POST /session`,
+under the folder lock, **before** `RankingSession.Start()` scans anything: if the journal is present,
+a rename was interrupted. Recovery finalizes the moves toward `<new>` where it can (best-effort — an
+entry it cannot finish is not a failure) and then **reunites every rating with its file at that
+file's current name**, writing a fresh database from the journal's ratings; a file with no journal
+entry gets a default rating, as `Scan` already gives one; a journal entry whose file is gone from
+disk entirely is dropped (its image no longer exists, the only unavoidable loss). The journal is then
+deleted. **Every interruption point resolves to "every rating finds its file":**
+
+| Killed at | On disk when reopened | Recovery reunites because |
+|---|---|---|
+| after the journal fsync, before any move | files original, DB original, journal present | files are still `old`; reunite writes the same DB; harmless |
+| mid phase 1 / phase 2 | mix of `old`, `__rm2_<new>`, `<new>`; DB still original (old keys) | the journal maps every current name back to its rating; reunite keys the DB to current names |
+| after all moves, before the DB save | files all `<new>`, DB still old keys | **the dangerous case** — the ordinary `Scan`/`Save` merge would drop every rating; recovery instead reunites from the journal, so ratings follow the files |
+| after the DB save, before the journal delete | files `<new>`, DB new keys, journal present | reunite is idempotent (ratings already match); it just deletes the journal |
+| after the journal delete | files `<new>`, DB new keys, no journal | nothing to recover; consistent |
+
+The one thing that does **not** heal a mid-rename crash is the ordinary `Scan` merge — it keys by
+filename and would assign the renamed files fresh ratings and drop the real ones (`JsonCatalog.Save`
+merges against what is on disk; `SPEC.md` § Persistence). That is why recovery via the journal MUST
+run before anything scans. A half-renamed folder is an **acceptable
+resting state**: recovery reunites ratings even when it cannot finish every move, and the owner may
+simply re-run rename.
+
+**Cancel — stop and reunite in place, never a database-risking rollback.**
+
+- In `preparing`, before the journal is written and before any move: abort cleanly, delete any
+  half-written journal, session unchanged.
+- In `renaming`: stop issuing moves, run **reunite in place** — write the database keyed by the
+  files' current (mixed) names from the journal's ratings, delete the journal, then resync the
+  session from a fresh `Scan`. Terminus `cancelled`. No database risk: the reunite `Save` is atomic.
+- In `saving` or later: too late; the operation completes and cancel just reports the current state.
+
+Cancel is idempotent: a second press returns the operation, no second action.
+
+**On success** the session effect is: same `sessionId`, `pairSeq` +1, new numeric pair ids, `cues`
+cleared, `undoAvailable` false, `sessionVotes`/`counts`/`progress` unchanged in value,
+`lastAction.type == "rename"`. An in-flight action that arrives after success gets `409
+stale_pair_token` with the new snapshot and MUST NOT be replayed. Every cached media URL now 404s
+(§ 11.3), because every filename changed.
+
+**Concurrency.** The run holds the session semaphore only at the start (create + journal
++ flag) and at the final apply (`ReplaceAll`). While the moves run off the lock, the rename-in-progress
+flag makes every mutating `/session*` call that takes the lock answer `409 rename_in_progress`
+(`details.operationId`); a `GET /session` read still works and shows the pre-rename session; the
+status poll (`GET /session/rename`) is lock-free. Media `GET`s (lock-free) see files mid-move and
+answer `404 media_file_missing`, and afterward `404 unknown_media_id` for the old ids (§ 11.3) —
+never corruption, because a `GET` never mutates.
+
+**The honest slow-phase truth (§ 3.1 of the design).** `FileOps`-style renaming within one directory
+is directory-entry moves, not byte copies, and near-instant even for thousands of files — there is no
+meaningfully slow phase for a normal folder. The progress bar and cancel button exist for a folder
+large enough that directory-entry churn takes perceptible time; a small folder is simply over before
+a human can react, and clients SHOULD say so rather than imply a copy is happening.
+
+**Who offers it.** `features.rename` is `true` (§ 14) whenever the server exposes this operation; the
+endpoint itself is open to any paired token. The *recommendation* — PC client yes, phone no — is a
+client concern (`PC_CLIENT_PARTS.md`), not an availability restriction.
+
 ---
 
 ## 11. Media identity
@@ -1135,7 +1279,11 @@ Normative guarantees, and their exact limits:
 **Known limit:** the fingerprint is `(name, size, mtime)`. A file replaced with different content of
 the same length inside the filesystem's mtime granularity produces the same ETag, and a client will
 serve stale bytes from its cache. Hashing content would cost a full read of every file on every
-request; the trade is deliberate. Clients that must be certain MAY bypass with a distinct `v`.
+request; the trade is deliberate. Clients that must be certain MAY bypass with a distinct `v`. A
+rename (§ 10.16) reassigns every name to `000001.ext …`, so across **two** renames a numeric id can
+reuse a name, and therefore an ETag, that an earlier rename also assigned it — the same `(name,
+size, mtime)` limit, one rename apart. Within a single rename it cannot bite, because every name in
+one run is assigned exactly once.
 
 ---
 
@@ -1164,6 +1312,11 @@ release session lock
 The corollary matters more than the rule: **a 200 is proof of durability, and the absence of a
 response proves nothing.**
 
+**The one exception is `POST /session/rename` (§ 10.16),** which returns `202` before the change is
+durable, because the owner requires a progress bar and a cancel button. A rename's durability is
+asserted only when its operation reaches `succeeded`; until then the folder is explicitly mid-flight,
+and its safety rests on the journal (§ 10.16), not on the response.
+
 ### 13.2 Per-endpoint ordering
 
 | Endpoint | Disk effects, in order | Committed before the response? |
@@ -1176,6 +1329,7 @@ response proves nothing.**
 | `POST /session/undo` | of a move: file moved back, then JSON written. Of a vote/skip: JSON written, no file touched | yes, and in that order |
 | `DELETE /session` | lock file closed and removed; **no JSON write** | yes |
 | `GET /media/*` | none | — |
+| `POST /session/rename` | journal fsynced, then two-phase moves, then the database rewritten to the new names, then the journal deleted | **no** — `202` is issued once the journal is fsynced; the moves and the commit follow. On interruption, recovery on the next open reunites every rating with its file from the journal, before any scan (§ 10.16) |
 
 Between the move and the save of a discard there is a window in which the file is in `discarded/`
 and the JSON still lists it. If the process dies there, the next session's `Scan` simply does not see
@@ -1211,6 +1365,7 @@ MUST hold the token of an in-flight action until they have a definite answer.
 | `SessionVotes`, `cues`, the recent-shown set, warm pairs | **no** — session-only by design (`SPEC.md`) |
 | the recorded last action, so `undoAvailable` | **no** — nothing done before the restart can be cancelled |
 | `lastAction` | **no** |
+| a rename interrupted by a restart | **the ratings survive**: the journal in the folder is found on the next open and reunites every rating with its file before anything scans (§ 10.16). The filenames may be left mixed; the ratings are not lost. This is a strict improvement over the general in-flight gap below. |
 
 After a restart the client re-opens the folder and gets a new `sessionId`. Every old token is stale.
 
@@ -1237,7 +1392,7 @@ Unauthenticated (public subset) or authenticated (full). Never requires a sessio
   "certificateFingerprint": "sha256:3b1f…64 lowercase hex…",
   "serverTime": "2026-09-12T18:04:11.412Z",
   "features": {
-    "rename": false,
+    "rename": true,
     "videoTranscoding": false,
     "posterFrames": false,
     "videoProbe": false,
@@ -1263,7 +1418,8 @@ Unauthenticated (public subset) or authenticated (full). Never requires a sessio
 - `ready` is `false` only while the server is starting or shutting down; every other endpoint returns
   `503 server_shutting_down` in that window.
 - `features` values are fixed by `SERVER_PLAN.md` § 7 and MUST NOT be configurable. `rename` is
-  `false` and there is no build in which it is `true`.
+  `true` when the server exposes the `/session/rename` operation (§ 10.16); a server predating this
+  part answers `false`.
 
 ---
 
@@ -1312,3 +1468,8 @@ without changing `SPEC.md` first.
 9. **`progress` is a mean over `Rankable` only.** In a mixed folder it ignores videos entirely, and
    after a discard it can move upward for reasons unrelated to voting. It is an overlay number, not a
    measurement.
+10. **A rename interrupted by a crash may leave filenames mixed until re-run.** This is untidy, never
+    lossy: the journal (§ 10.16) reunites every rating with its file on the next open regardless of
+    how far the moves got, so a mid-rename crash is recoverable for the one thing that matters. The
+    residual gap is cosmetic — some files may still carry their old names until the owner reruns
+    rename.

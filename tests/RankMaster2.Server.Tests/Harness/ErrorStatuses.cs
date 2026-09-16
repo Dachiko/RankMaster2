@@ -63,6 +63,11 @@ public static class ErrorStatuses
 
         // § 5.6 Server
         ["internal_error"] = 500,
+
+        // § 5.7 Rename (§ 10.16)
+        ["rename_in_progress"] = 409,
+        ["no_rename_operation"] = 404,
+        ["rename_failed"] = 500,
     };
 
     public static int Of(string code) =>

@@ -84,6 +84,9 @@ public static class ActionTypes
     public const string Special = "special";
     public const string Undo = "undo";
     public const string DropMissing = "drop_missing";
+
+    /// <summary>SERVER_SPEC.md § 10.16: a rename that reached <c>succeeded</c>. Every other field null.</summary>
+    public const string Rename = "rename";
 }
 
 public static class Sides

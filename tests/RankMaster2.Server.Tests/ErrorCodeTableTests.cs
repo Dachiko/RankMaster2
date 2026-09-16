@@ -57,11 +57,12 @@ public class ErrorCodeTableTests
     }
 
     [Fact]
-    public void Every_code_has_exactly_the_forty_the_spec_defines()
+    public void Every_code_has_exactly_the_forty_three_the_spec_defines()
     {
         // A count is a crude assertion, but it catches the case where a code is added to all three
-        // places at once without anyone deciding it belongs there.
-        Assert.Equal(40, ErrorStatuses.All.Count);
+        // places at once without anyone deciding it belongs there. 40 plus the three § 10.16 rename
+        // codes added 2026-09-16 (rename_in_progress, no_rename_operation, rename_failed).
+        Assert.Equal(43, ErrorStatuses.All.Count);
     }
 
     [Theory]
@@ -74,6 +75,9 @@ public class ErrorCodeTableTests
     [InlineData("folder_locked", 423)]
     [InlineData("range_not_satisfiable", 416)]
     [InlineData("session_busy", 503)]
+    [InlineData("rename_in_progress", 409)]
+    [InlineData("no_rename_operation", 404)]
+    [InlineData("rename_failed", 500)]
     public void Spot_checks_against_the_prose_table(string code, int status) =>
         Assert.Equal(status, ErrorStatuses.Of(code));
 }

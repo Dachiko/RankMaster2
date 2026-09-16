@@ -21,9 +21,12 @@ info:
        sent (`SERVER_SPEC.md` § 13). No response means the outcome is unknown; resolve it by
        replaying the *same* `pairToken`, never by voting again with a fresh one.
 
-    Deliberately absent: **rename by rank**. No endpoint, no flag, no debug route
-    (`SERVER_PLAN.md` § 4). Also absent: transcoding, poster frames and video probing — the server
-    never decodes a video frame (`SERVER_PLAN.md` § 7).
+    **Rename by rank is a journalled, long-running operation** at `POST /session/rename` (start),
+    `GET /session/rename` (observe) and `POST /session/rename/cancel` (stop) — SERVER_SPEC.md
+    § 10.16. It copies no files: safety is a small journal in the folder, fsynced before the first
+    move, not a backup of the library. There is no *other* rename route; a path containing "rename"
+    anywhere else still falls through to the ordinary 404. Also absent: transcoding, poster frames
+    and video probing — the server never decodes a video frame (`SERVER_PLAN.md` § 7).
   license:
     name: Proprietary — personal project
   contact:
@@ -92,7 +95,7 @@ paths:
                     certificateFingerprint: "sha256:3b1f9a0c5d2e47b8106f33a9c7e5d1204b8e6f7a9c0d1e2f3a4b5c6d7e8f9012"
                     serverTime: "2026-09-12T18:04:11.412Z"
                     features:
-                      rename: false
+                      rename: true
                       videoTranscoding: false
                       posterFrames: false
                       videoProbe: false
@@ -115,7 +118,7 @@ paths:
                     certificateFingerprint: "sha256:3b1f9a0c5d2e47b8106f33a9c7e5d1204b8e6f7a9c0d1e2f3a4b5c6d7e8f9012"
                     serverTime: "2026-09-12T18:04:11.412Z"
                     features:
-                      rename: false
+                      rename: true
                       videoTranscoding: false
                       posterFrames: false
                       videoProbe: false
@@ -699,6 +702,106 @@ paths:
         "503": { $ref: '#/components/responses/SessionBusy' }
         default: { $ref: '#/components/responses/InternalError' }
 
+  /session/rename:
+    post:
+      tags: [session]
+      operationId: startRename
+      summary: Start renaming the library by rank. Journalled, long-running, copies no files.
+      description: |
+        SERVER_SPEC.md § 10.16. Renumbers every file to `000001.ext …` by `μ − 3σ` descending, then
+        filename — the same ordering `SPEC.md` § Rename by rank fixes for the desktop app. Unlike
+        the desktop path, **the server makes no backup copy**: safety is a small journal
+        (`<folder>/.rankmaster-rename.json`), written and fsynced before the first file moves,
+        carrying the full old→new plan and every rating row. If the server is interrupted, the next
+        `POST /session` reunites every rating with its file before anything scans, and the folder may
+        be left with a mix of old and new names — untidy, never lossy.
+
+        **`202` is an acknowledgement, not a completion** — the one exception to "a 2xx means the
+        change is durable" (§ 13.1). The journal is already fsynced by the time this responds, but
+        the moves and the database commit may not have happened yet; durability is asserted only
+        when the operation observed through `GET /session/rename` reaches `succeeded`.
+
+        Takes no `pairToken`; one sent in the body is ignored — a rename is not pair-scoped. While it
+        runs, every other mutating `/session*` call and a second `POST /session/rename` answer
+        `409 rename_in_progress`; reads and this operation's own poll are unaffected. For a normal
+        folder there is no meaningfully slow phase (§ 3.1 of the plan) — the bar and cancel exist for
+        a folder large enough that directory-entry churn takes perceptible time.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameStartRequest' }
+      responses:
+        "202":
+          description: Accepted. The journal is fsynced; the moves and the commit may still be running.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Location:
+              description: Always `/api/v1/session/rename`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenameOperation' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "409": { $ref: '#/components/responses/RenameInProgress' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/RenameFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+    get:
+      tags: [session]
+      operationId: getRename
+      summary: Observe the rename operation's progress.
+      description: |
+        Lock-free (§ 3.4 of the plan): the poll that drives a progress bar must never queue behind
+        the run it is watching. `404 no_rename_operation` when a session is open but no rename has
+        ever been started for it.
+      responses:
+        "200":
+          description: The current operation, in whatever state it is in.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenameOperation' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSessionOrNoRename' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/rename/cancel:
+    post:
+      tags: [session]
+      operationId: cancelRename
+      summary: Stop the rename and reunite every rating with its file at its current name.
+      description: |
+        SERVER_SPEC.md § 10.16. **Stops and reunites in place — never a database-risking rollback.**
+        Before any file has moved, the journal is discarded and nothing changes. Once files are
+        moving, the run stops issuing moves and writes the database keyed by whatever mix of old and
+        new names the files currently carry, from the ratings in the journal; the folder is left
+        consistent, possibly half-renamed, and the owner may re-run rename. Once the database commit
+        has started it is too late — the operation finishes to `succeeded` and cancel just reports
+        that. Idempotent: a second cancel returns the same operation, no second action.
+      responses:
+        "200":
+          description: The operation, now `cancelling`/`cancelled`, or unchanged if it was already terminal.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenameOperation' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSessionOrNoRename' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
   /media/{id}/meta:
     get:
       tags: [media]
@@ -1121,6 +1224,56 @@ components:
               code: no_session
               message: No session is open.
               requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+
+    NoSessionOrNoRename:
+      description: |
+        `no_session` — no session is open; or `no_rename_operation` — a session is open but no
+        rename has ever been started for it.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: no_rename_operation
+              message: No rename operation is recorded for this session.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+
+    RenameInProgress:
+      description: |
+        `rename_in_progress` — a rename is already running, on a mutating `/session*` call or on a
+        second `POST /session/rename`. `error.details.operationId` names the run in progress.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: rename_in_progress
+              message: A rename is already running.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details: { operationId: "T8l63K3ATihvFD9hSwOCtr" }
+
+    RenameFailed:
+      description: |
+        `rename_failed` — the rename (or the recovery `POST /session` runs before any scan) could
+        not reunite every rating with its file. `details.reunited: true` means the ratings are safe
+        even though this call failed (the folder may be left half-renamed); `false` is the rare
+        double fault where the reunite write itself failed, in which case `details.journal` names the
+        journal left behind for the next open to retry.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: rename_failed
+              message: An interrupted rename could not be reunited with its ratings.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details: { reunited: false, journal: "D:\\photos\\trip\\.rankmaster-rename.json" }
 
     Unauthorized:
       description: '`unauthenticated`, `invalid_token` or `token_revoked`.'
@@ -1575,6 +1728,9 @@ components:
         - media_decode_failed
         - range_not_satisfiable
         - internal_error
+        - rename_in_progress
+        - no_rename_operation
+        - rename_failed
 
     SessionState:
       type: string
@@ -1605,8 +1761,67 @@ components:
       type: string
       description: |
         `drop_missing` is a discard whose file was already gone from disk: the record is dropped and
-        saved, no file is moved, and no undo entry is recorded.
-      enum: [vote, skip, discard, special, undo, drop_missing]
+        saved, no file is moved, and no undo entry is recorded. `rename` is a rename that reached
+        `succeeded` (SERVER_SPEC.md § 10.16); every other `lastAction` field is null for it.
+      enum: [vote, skip, discard, special, undo, drop_missing, rename]
+
+    RenameState:
+      type: string
+      description: |
+        `running` while preparing, renaming or saving; `cancelling` from the moment a cancel is
+        accepted until the reunite it triggers finishes; then one of the three termini.
+      enum: [running, cancelling, succeeded, cancelled, failed]
+
+    RenamePhase:
+      type: string
+      description: |
+        `preparing` — computing the plan and writing the journal. `renaming` — the two-phase moves,
+        `done` counting up to `total` (2 × file count: old→temp, then temp→new). `saving` — the
+        database is being rewritten with the new names. `reuniting` — a cancel's "stop and reunite in
+        place" step. `done` — terminal.
+      enum: [preparing, renaming, saving, reuniting, done]
+
+    RenameOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, state, phase, done, total, startedAt, updatedAt, error]
+      description: |
+        SERVER_SPEC.md § 10.16. The body of every 2xx from `/session/rename*`. A separate small
+        resource — `/session`'s `SessionSnapshot` keeps its one shape and is not extended for this.
+      properties:
+        operationId: { type: string, description: Opaque, stable for the life of this run. }
+        state: { $ref: '#/components/schemas/RenameState' }
+        phase: { $ref: '#/components/schemas/RenamePhase' }
+        done: { type: integer, minimum: 0, description: Moves completed so far. }
+        total: { type: integer, minimum: 0, description: 2 × the file count being renamed. }
+        startedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        error:
+          description: 'Null unless `state` is `failed`.'
+          oneOf:
+            - { $ref: '#/components/schemas/RenameOperationError' }
+            - { type: "null" }
+
+    RenameOperationError:
+      type: object
+      additionalProperties: false
+      required: [code, reunited, journal]
+      properties:
+        code: { type: string, const: rename_failed }
+        reunited:
+          type: boolean
+          description: True means every rating is safe even though this call failed (§ 5).
+        journal:
+          type: [string, "null"]
+          description: The journal path left behind for the next open to retry, when `reunited` is false.
+
+    RenameStartRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
+      description: |
+        Takes no `pairToken` — a rename is not pair-scoped, and one sent here is ignored.
 
     SessionSnapshot:
       type: object
@@ -2008,10 +2223,10 @@ components:
       properties:
         rename:
           type: boolean
-          const: false
+          const: true
           description: |
-            Always false. There is no rename-by-rank endpoint, no flag and no build in which one
-            exists; `LibraryActions.RenameByRank` is never called by the server.
+            Always true. The server exposes the journalled `/session/rename` operation
+            (SERVER_SPEC.md § 10.16) — reversed from an earlier prohibition (2026-09-16).
         videoTranscoding: { type: boolean, const: false }
         posterFrames: { type: boolean, const: false }
         videoProbe: { type: boolean, const: false, description: The server never decodes a video frame. }

@@ -214,7 +214,7 @@ public static class SecurityEndpoints
                 CertificateFingerprint: state.Certificates.FingerprintHeaderValue,
                 ServerTime: Rfc3339(DateTimeOffset.UtcNow),
                 Features: new PingFeatures(
-                    Rename: false,
+                    Rename: true,
                     VideoTranscoding: false,
                     PosterFrames: false,
                     VideoProbe: false,

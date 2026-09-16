@@ -4,7 +4,9 @@
 
 Goal: a mobile client on the local network can perform the entire ranking cycle against a
 folder on the PC, with nothing shown on the PC screen. The WPF app is **frozen** until this
-server is functional. Rename-by-rank is deliberately **not** exposed.
+server is functional. Rename-by-rank lives on the server as a journalled, long-running operation
+(`SERVER_SPEC.md` § 10.16) — a deliberate reversal, 2026-09-16, of this document's earlier
+"deliberately not exposed" (§ 7).
 
 `SPEC.md` remains the source of truth for ranking behaviour. This document is the source of
 truth for the server. Where they overlap (TrueSkill, pair selection, JSON persistence,
@@ -193,7 +195,15 @@ GET    /media/{id}/thumb
 GET    /media/{id}/video          Range-capable stream of the original bytes
 ```
 
-Deliberately absent: **rename**. No endpoint, no plumbing, no flag.
+**Session rename** — the one long-running operation
+```
+POST   /session/rename            journalled rename by rank -> 202, observe/cancel below
+GET    /session/rename            observe progress (no lock taken)
+POST   /session/rename/cancel     stop and reunite in place
+```
+Reversed from an earlier "deliberately absent" (2026-09-16, owner decision): it copies no files —
+safety is a journal in the folder, not a backup copy — and is specified in full at
+`SERVER_SPEC.md` § 10.16.
 
 Warm pairs are returned so the client prefetches exactly as the desktop pipeline does. The
 session response is a complete snapshot — folder name, unranked count, session votes,
@@ -286,6 +296,7 @@ Settled before Phase 0, and the reasoning that goes with them:
 | Video handling | Originals only | **No FFmpeg, no poster frames, no video probing.** Server never decodes video |
 | Folder access | Full filesystem | No allowlist; media endpoints restricted by extension + session folder instead |
 | Coexistence | One at a time | No multi-client design; lock file retained as cheap insurance |
+| Rename by rank | On the server, journalled, no file backup — owner decisions 2026-09-16 | A deliberate reversal of this document's earlier "deliberately not exposed"; see `SERVER_SPEC.md` § 10.16 |
 
 Decisions 2 and 4 together removed roughly a third of the original scope, which is why the
 Media agent's job is now stills-plus-range-streaming rather than a media subsystem.

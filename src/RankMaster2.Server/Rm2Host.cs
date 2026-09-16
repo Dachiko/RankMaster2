@@ -47,6 +47,9 @@ public static class Rm2Host
         // The /session* group (SERVER_SPEC.md § 10). Routes live in Sessions/SessionEndpoints.cs.
         Sessions.SessionEndpoints.MapSessionEndpoints(app);
 
+        // The /session/rename group (SERVER_SPEC.md § 10.16). Routes live in Sessions/RenameEndpoints.cs.
+        Sessions.RenameEndpoints.MapRenameEndpoints(app);
+
         // The /media/* group (SERVER_SPEC.md § 12). Routes and everything behind them live in Media/.
         Media.MediaEndpoints.MapMediaEndpoints(app);
 

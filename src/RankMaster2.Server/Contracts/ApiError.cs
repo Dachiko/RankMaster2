@@ -61,6 +61,11 @@ public static class ErrorCodes
     public const string RangeNotSatisfiable = "range_not_satisfiable";
     public const string InternalError = "internal_error";
 
+    // SERVER_SPEC.md § 10.16 / § 5: the journalled rename operation.
+    public const string RenameInProgress = "rename_in_progress";
+    public const string NoRenameOperation = "no_rename_operation";
+    public const string RenameFailed = "rename_failed";
+
     private static readonly Dictionary<string, int> Statuses = new()
     {
         ["unauthenticated"] = 401,
@@ -103,6 +108,10 @@ public static class ErrorCodes
         ["media_decode_failed"] = 422,
         ["range_not_satisfiable"] = 416,
         ["internal_error"] = 500,
+
+        ["rename_in_progress"] = 409,
+        ["no_rename_operation"] = 404,
+        ["rename_failed"] = 500,
     };
 
     /// <summary>The status this code is contractually bound to. Unknown codes are a bug, not a 500.</summary>

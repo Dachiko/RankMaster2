@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace RankMaster2.Cli;
 
@@ -32,7 +33,133 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         await SaveAsync(snapshot);
 
         await UnhappyPathsAsync(snapshot);
+
+        // Driven last, since a successful rename renumbers everything: the unhappy-path checks
+        // above depend on the ids in `snapshot` still naming real files, which a rename would break.
+        await RenameAsync(snapshot);
+
         await CloseAsync();
+    }
+
+    // ---- rename by rank (SERVER_SPEC.md § 10.16) -------------------------------------------------
+
+    /// <summary>
+    /// The server's acceptance gate for part F: start a rename, poll it to completion, and verify
+    /// the renumber carried every rating, created no backup folder, and left a loadable database.
+    /// Cancel is not exercised here — it needs a folder large enough to still be moving when cancel
+    /// lands (SERVER_SPEC.md § 10.16 "the honest slow-phase truth"), which this scratch folder isn't;
+    /// cancel is proven deterministically instead, in RenameEngineTests and RenameTests.
+    /// </summary>
+    private async Task RenameAsync(Snapshot before)
+    {
+        journal.Title("Rename by rank");
+        journal.Step($"start POST /session/rename against {before.Folder}");
+
+        var start = await api.StartRenameAsync("rm2ctl-rename-1");
+        if (!journal.Check(start.Status == 202,
+                "POST /session/rename starts with 202 Accepted (SERVER_SPEC.md § 10.16)", Explain(start)))
+            return;
+
+        journal.Check(start.Json?.GetProperty("state").GetString() == "running",
+            "the 202 body reports state 'running' (SERVER_SPEC.md § 10.16)");
+        journal.Check(
+            start.Header("Location")?.EndsWith("/api/v1/session/rename", StringComparison.Ordinal) == true,
+            "a 202 carries Location: /api/v1/session/rename (SERVER_SPEC.md § 10.16)",
+            $"Location was '{start.Header("Location") ?? "(absent)"}'");
+
+        // Poll to a terminal state, asserting the phase only ever advances (SERVER_SPEC.md § 10.16:
+        // preparing -> renaming -> saving -> [reuniting] -> done).
+        var phaseOrder = new[] { "preparing", "renaming", "saving", "reuniting", "done" };
+        var highestPhaseSeen = -1;
+        var phaseWentBackwards = false;
+        Reply? terminal = null;
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var poll = await api.GetRenameAsync();
+            if (!journal.Check(poll.Status == 200,
+                    "GET /session/rename while polling (SERVER_SPEC.md § 10.16)", Explain(poll)))
+                return;
+
+            var phase = poll.Json?.GetProperty("phase").GetString() ?? "";
+            var index = Array.IndexOf(phaseOrder, phase);
+            if (index >= 0)
+            {
+                if (index < highestPhaseSeen) phaseWentBackwards = true;
+                highestPhaseSeen = Math.Max(highestPhaseSeen, index);
+            }
+
+            var state = poll.Json?.GetProperty("state").GetString();
+            if (state is "succeeded" or "cancelled" or "failed")
+            {
+                terminal = poll;
+                break;
+            }
+
+            await Task.Delay(50);
+        }
+
+        journal.Check(!phaseWentBackwards, "the observed phase only ever advances (SERVER_SPEC.md § 10.16)");
+
+        if (terminal is null)
+        {
+            journal.Failure("the rename operation reaches a terminal state within 30s (SERVER_SPEC.md § 10.16)");
+            return;
+        }
+
+        journal.Detail(terminal.Summarise());
+        if (!journal.Check(terminal.Json?.GetProperty("state").GetString() == "succeeded",
+                "the rename reaches 'succeeded' (SERVER_SPEC.md § 10.16)", Explain(terminal)))
+            return;
+
+        var after = Snapshot.From(await api.GetSessionAsync());
+        if (after is null)
+        {
+            journal.Failure("GET /session after a succeeded rename returns a SessionSnapshot");
+            return;
+        }
+
+        journal.Detail(after.Describe());
+
+        journal.Check(after.PairSeq == before.PairSeq + 1,
+            "a succeeded rename advances pairSeq by exactly 1 (SERVER_SPEC.md § 8.3)",
+            $"{before.PairSeq} -> {after.PairSeq}");
+        journal.Check(after.LastActionType == "rename",
+            "lastAction.type is 'rename' (SERVER_SPEC.md § 9.4)");
+        journal.Check(!after.UndoAvailable, "a rename clears undo (SERVER_SPEC.md § 10.16)");
+
+        foreach (var id in new[] { after.Left?.Id, after.Right?.Id })
+        {
+            if (id is null) continue;
+            journal.Check(Regex.IsMatch(id, @"^\d{6}\."),
+                $"{id}: a renamed file's new id matches ^\\d{{6}}\\. (SPEC.md § Rename by rank)");
+        }
+
+        var hasBackupFolder = Directory.Exists(before.Folder) &&
+            Directory.EnumerateDirectories(before.Folder, "rankmaster_backup_*").Any();
+        journal.Check(!hasBackupFolder,
+            "no rankmaster_backup_* folder was created (SERVER_SPEC.md § 10.16 — the server copies no files)");
+
+        var dbPath = Path.Combine(before.Folder, "rankmaster_db.json");
+        if (!journal.Check(File.Exists(dbPath), "rankmaster_db.json exists after a succeeded rename"))
+            return;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllBytes(dbPath));
+            var images = document.RootElement.TryGetProperty("images", out var img) ? img : default;
+            var everyKeyIsNew = images.ValueKind == JsonValueKind.Object &&
+                images.EnumerateObject().All(p => Regex.IsMatch(p.Name, @"^\d{6}\."));
+
+            journal.Check(everyKeyIsNew,
+                "the on-disk database still loads and every key matches the new numeric names — the " +
+                "acceptance gate: no rating lost to the rename (SERVER_SPEC.md § 10.16)");
+        }
+        catch (JsonException)
+        {
+            journal.Failure("rankmaster_db.json still parses as JSON after the rename");
+        }
     }
 
     // ---- the happy path -------------------------------------------------------------------------
@@ -711,17 +838,19 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         }
 
         // --- no such route --------------------------------------------------------------------
-        journal.Step("unknown route, and the rename that does not exist");
+        journal.Step("unknown route, and the rename routes that do not exist");
         var missing = await api.GetAsync("/no/such/route");
         journal.Check(missing.ErrorCode is not null,
             "an unknown route answers in the one error envelope (SERVER_SPEC.md § 4)", Explain(missing));
 
-        foreach (var path in new[] { "/rename", "/session/rename", "/library/rename-by-rank" })
+        // /session/rename is now a real route (SERVER_SPEC.md § 10.16, reversed 2026-09-16) and is
+        // exercised for real by RenameAsync below. The general rule still stands: no *other* path
+        // containing "rename" is a route.
+        foreach (var path in new[] { "/rename", "/library/rename-by-rank" })
         {
             var reply = await api.GetAsync(path, quiet: true);
             journal.Check(reply.Status is 404 or 401 or 405,
-                $"{path} is not a route — rename by rank has no endpoint, no flag and no debug build " +
-                "(SERVER_SPEC.md § 1.1)",
+                $"{path} is not a route — SERVER_SPEC.md § 1.1 still forbids any *other* rename path",
                 $"answered {reply.Status}");
         }
     }

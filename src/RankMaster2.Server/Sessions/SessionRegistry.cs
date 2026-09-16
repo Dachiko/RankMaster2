@@ -41,10 +41,12 @@ public sealed class SessionRegistry : IDisposable
     private readonly IRatingEngine _engine;
     private readonly IPairSelector _selector;
     private readonly IMediaPipeline _pipeline = new NoOpMediaPipeline();
+    private readonly IRenameJournalWriter _journalWriter;
     private readonly int _prefetchPairs;
     private readonly string _serverVersion;
 
     private OpenSession? _open;
+    private RenameRun? _rename;
     private bool _disposed;
 
     public SessionRegistry(
@@ -52,7 +54,8 @@ public sealed class SessionRegistry : IDisposable
         IRatingEngine? engine = null,
         IPairSelector? selector = null,
         int prefetchPairs = DefaultPrefetchPairs,
-        string? serverVersion = null)
+        string? serverVersion = null,
+        IRenameJournalWriter? journalWriter = null)
     {
         _catalog = catalog ?? new JsonCatalog();
         _engine = engine ?? new TrueSkill();
@@ -61,6 +64,7 @@ public sealed class SessionRegistry : IDisposable
         _serverVersion = serverVersion
             ?? typeof(SessionRegistry).Assembly.GetName().Version?.ToString(3)
             ?? "0.0.0";
+        _journalWriter = journalWriter ?? new DefaultRenameJournalWriter();
     }
 
     /// <summary>
@@ -248,6 +252,23 @@ public sealed class SessionRegistry : IDisposable
                     });
             }
 
+            // Step 4.5 (§ 10.16): recovery runs before anything scans. If a rename was interrupted,
+            // <folder>/.rankmaster-rename.json is still here; reunite every rating with its file at
+            // that file's current name before RankingSession.Start() ever calls JsonCatalog.Scan —
+            // the plain Scan/Save merge is exactly the thing that would silently drop them (§ 1).
+            if (RenameEngine.JournalExists(folder))
+            {
+                var recovery = RenameEngine.RecoverIfPresent(folder, _catalog);
+                if (!recovery.Reunited)
+                {
+                    folderLock.Dispose();
+                    return SessionOutcome.Fail(
+                        ErrorCodes.RenameFailed,
+                        "An interrupted rename could not be reunited with its ratings.",
+                        new { reunited = false, journal = recovery.JournalPath });
+                }
+            }
+
             // Step 5. Every failure from here releases the lock before it answers.
             var ranking = new RankingSession(folder, _catalog, _engine, _selector, _prefetchPairs);
             bool started;
@@ -318,6 +339,11 @@ public sealed class SessionRegistry : IDisposable
 
             _open = opened;
 
+            // A freshly opened session starts with no rename recorded, even if one from an earlier
+            // session on this same folder is still sitting here — GET/cancel of /session/rename
+            // must answer 404 no_rename_operation until this session starts one of its own.
+            Volatile.Write(ref _rename, null);
+
             // Start() does not save: lastSavedAt describes this session's writes, not the file's age.
             return SessionOutcome.Ok(Materialise(opened), StatusCodes.Status201Created);
         });
@@ -342,6 +368,7 @@ public sealed class SessionRegistry : IDisposable
                 return NoSession();
 
             _open = null;
+            Volatile.Write(ref _rename, null);
             open.Lock.Dispose();
             return SessionOutcome.NoContent();
         });
@@ -355,6 +382,9 @@ public sealed class SessionRegistry : IDisposable
         {
             if (_open is not { } open)
                 return NoSession();
+
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
 
             try
             {
@@ -382,6 +412,9 @@ public sealed class SessionRegistry : IDisposable
         {
             if (_open is not { } open)
                 return NoSession();
+
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
 
             // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
             // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
@@ -436,6 +469,9 @@ public sealed class SessionRegistry : IDisposable
             if (_open is not { } open)
                 return NoSession();
 
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
+
             // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
             // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
             // client that branches on the code retries the body forever against a closed session.
@@ -479,6 +515,9 @@ public sealed class SessionRegistry : IDisposable
         {
             if (_open is not { } open)
                 return NoSession();
+
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
 
             // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
             // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
@@ -580,6 +619,9 @@ public sealed class SessionRegistry : IDisposable
         {
             if (_open is not { } open)
                 return NoSession();
+
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
 
             // § 8.4 step 1 before step 2: a body that never parsed is still a step-2 failure, so
             // with no session open the caller hears "reopen", not "your body is bad" — otherwise a
@@ -686,6 +728,270 @@ public sealed class SessionRegistry : IDisposable
                 undoneType: undoneMove);
             return SessionOutcome.Ok(Materialise(open));
         });
+
+    // ---------------------------------------------------------------------------------------
+    // POST /session/rename, GET /session/rename, POST /session/rename/cancel — § 10.16.
+    //
+    // The first long-running operation in the contract (§ 13.1's named exception): a 202 is an
+    // acknowledgement, not a completion. The run holds the session semaphore only twice — here, to
+    // create the operation, build the plan and write+fsync the journal before returning 202; and at
+    // the very end, to apply the result to the session. Everything in between (the moves, the
+    // commit) runs on a background task, off the lock, so a vote elsewhere in the app is never
+    // blocked behind a rename — it is refused outright instead (`rename_in_progress`), because
+    // nothing else may mutate the folder while the journal's plan is being carried out.
+    // ---------------------------------------------------------------------------------------
+
+    public async Task<RenameOutcome> StartRenameAsync(CancellationToken cancellation)
+    {
+        var acquired = await _gate.WaitAsync(LockTimeout, cancellation);
+        if (!acquired)
+        {
+            return RenameOutcome.Fail(
+                ErrorCodes.SessionBusy,
+                "The session is busy; another action is still running.",
+                new { retryAfterSeconds = 1 });
+        }
+
+        OpenSession open;
+        RenameRun run;
+        bool abortedBeforeAnyMove;
+        try
+        {
+            if (_open is not { } o)
+                return RenameOutcome.Fail(ErrorCodes.NoSession, "No session is open.");
+            open = o;
+
+            if (open.RenameInProgress)
+            {
+                var existing = Volatile.Read(ref _rename);
+                return RenameOutcome.Fail(
+                    ErrorCodes.RenameInProgress,
+                    "A rename is already running.",
+                    new { operationId = existing?.OperationId },
+                    Materialise(open));
+            }
+
+            // § 3.3 "preparing": order by μ − 3σ desc, then filename, from the records as they are
+            // right now. Published to _rename before the (possibly slow, or test-blocked) journal
+            // write, so a concurrent cancel can flag it even while this call has not returned.
+            var plan = RenameEngine.BuildPlan(open.Session.Records);
+            run = new RenameRun(PairTokens.NewSessionId(), open.Folder, open.Session.Records, DateTimeOffset.UtcNow)
+            {
+                Plan = plan,
+            };
+            open.RenameInProgress = true;
+            Volatile.Write(ref _rename, run);
+
+            _journalWriter.Write(open.Folder, plan, DateTimeOffset.UtcNow);
+
+            abortedBeforeAnyMove = run.CancelRequested;
+            if (abortedBeforeAnyMove)
+            {
+                // § 3.5, "preparing": abort cleanly before any move. Delete the half-written
+                // journal (nothing has moved, so there is nothing else to undo) and leave the
+                // session exactly as it was.
+                RenameEngine.DeleteJournal(open.Folder);
+                open.RenameInProgress = false;
+                run.AbortBeforeAnyMove();
+            }
+            else
+            {
+                run.MarkPreparingDone(total: plan.Count * 2);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        // Captured before the background task is dispatched: for a small folder the run can reach
+        // `succeeded` before this thread would otherwise get back from Task.Run, and the wire shape
+        // (§ 3.4) promises 202 always answers with the just-started "running" state.
+        var accepted = run.ToWire();
+
+        if (!abortedBeforeAnyMove)
+            _ = Task.Run(() => RunRenameAsync(open, run));
+
+        return RenameOutcome.Ok(accepted, StatusCodes.Status202Accepted);
+    }
+
+    /// <summary>
+    /// § 3.4: reads the operation without the session lock, so the poll for the bar never queues
+    /// behind the run it is watching.
+    /// </summary>
+    public Task<RenameOutcome> GetRenameAsync(CancellationToken cancellation)
+    {
+        if (Volatile.Read(ref _open) is null)
+            return Task.FromResult(RenameOutcome.Fail(ErrorCodes.NoSession, "No session is open."));
+
+        var run = Volatile.Read(ref _rename);
+        if (run is null)
+        {
+            return Task.FromResult(RenameOutcome.Fail(
+                ErrorCodes.NoRenameOperation, "No rename operation is recorded for this session."));
+        }
+
+        return Task.FromResult(RenameOutcome.Ok(run.ToWire()));
+    }
+
+    /// <summary>
+    /// § 3.5: stop and reunite in place, never a database-risking rollback. Deliberately does not
+    /// take the session semaphore — it only has to flag the run, so it must be able to land even
+    /// while <see cref="StartRenameAsync"/> is still holding the gate inside the journal write.
+    /// Idempotent: a second cancel just reports the state the first one produced.
+    /// </summary>
+    public Task<RenameOutcome> CancelRenameAsync(CancellationToken cancellation)
+    {
+        if (Volatile.Read(ref _open) is null)
+            return Task.FromResult(RenameOutcome.Fail(ErrorCodes.NoSession, "No session is open."));
+
+        var run = Volatile.Read(ref _rename);
+        if (run is null)
+        {
+            return Task.FromResult(RenameOutcome.Fail(
+                ErrorCodes.NoRenameOperation, "No rename operation is recorded for this session."));
+        }
+
+        run.RequestCancel();
+        return Task.FromResult(RenameOutcome.Ok(run.ToWire()));
+    }
+
+    /// <summary>
+    /// The live forward operation (§ 3.3), off the session lock: phase 1, phase 2, the commit, the
+    /// journal delete (the commit point), then the apply back under the lock. Cancellation is
+    /// polled between files; once phase 2 (renaming) has fully finished and the commit has begun,
+    /// it is too late (§ 3.5) and the run always finishes to a terminus.
+    /// </summary>
+    private async Task RunRenameAsync(OpenSession open, RenameRun run)
+    {
+        var plan = run.Plan;
+
+        try
+        {
+            RenameEngine.MovePhase1(
+                open.Folder, plan,
+                shouldStop: _ => run.CancelRequested,
+                onProgress: (done, _) => run.ReportProgress(RenamePhases.Renaming, done));
+
+            if (run.CancelRequested)
+            {
+                await CancelInPlaceAsync(open, run);
+                return;
+            }
+
+            RenameEngine.MovePhase2(
+                open.Folder, plan,
+                shouldStop: _ => run.CancelRequested,
+                onProgress: (done, _) => run.ReportProgress(RenamePhases.Renaming, plan.Count + done));
+
+            if (run.CancelRequested)
+            {
+                await CancelInPlaceAsync(open, run);
+                return;
+            }
+
+            run.ReportProgress(RenamePhases.Saving, plan.Count * 2);
+
+            IReadOnlyList<MediaRecord> remapped;
+            try
+            {
+                remapped = RenameEngine.Commit(_catalog, open.Folder, run.PreRenameRecords, plan);
+            }
+            catch (Exception)
+            {
+                // The commit threw. The journal is still on disk, so reunite from it right now
+                // rather than waiting for the next open — the ratings are the asset (§ 1).
+                var recovery = RenameEngine.RecoverIfPresent(open.Folder, _catalog);
+                await FinishAsync(open, run, () =>
+                {
+                    open.RenameInProgress = false;
+                    run.Fail(recovery.Reunited, recovery.JournalPath);
+                });
+                return;
+            }
+
+            RenameEngine.DeleteJournal(open.Folder);   // the commit point (§ 3.3 step 4)
+
+            await FinishAsync(open, run, () =>
+            {
+                open.Session.ReplaceAll(remapped);
+                open.Actions.ClearLastMove();
+                open.PairSeq++;
+                open.LastSavedAt = DateTimeOffset.UtcNow;
+                open.LastAction = new SnapshotLastAction(
+                    open.PairSeq, ActionTypes.Rename,
+                    PairToken: null, ClientRequestId: null, Winner: null, Side: null,
+                    Id: null, RestoredId: null, UndoneType: null, At: Rfc3339(DateTimeOffset.UtcNow));
+                open.RenameInProgress = false;
+                run.Succeed();
+            });
+        }
+        catch (Exception)
+        {
+            // Anything else that went wrong mid-move: the journal is still on disk (it is only
+            // deleted at the commit point above), so recovery from it is exactly the right answer,
+            // identical to what the next POST /session would do if the process had died here.
+            var recovery = RenameEngine.RecoverIfPresent(open.Folder, _catalog);
+            await FinishAsync(open, run, () =>
+            {
+                open.RenameInProgress = false;
+                run.Fail(recovery.Reunited, recovery.JournalPath);
+            });
+        }
+    }
+
+    /// <summary>§ 3.5: stop issuing moves, reunite in place (never finalizing the rest), resync the
+    /// session from a fresh scan since filenames on disk may now differ from what it holds in
+    /// memory.</summary>
+    private async Task CancelInPlaceAsync(OpenSession open, RenameRun run)
+    {
+        run.ReportPhase(RenamePhases.Reuniting);
+        var outcome = RenameEngine.ReuniteInPlace(open.Folder, _catalog);
+
+        await FinishAsync(open, run, () =>
+        {
+            open.RenameInProgress = false;
+            if (outcome.Reunited)
+            {
+                open.Session.Start();   // re-scan: the folder may be a mix of old and new names now
+                run.Cancel();
+            }
+            else
+            {
+                run.Fail(outcome.Reunited, outcome.JournalPath);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Re-acquires the session gate to apply the run's result. § 3.4: the run is server-owned and
+    /// reaches a consistent terminus even if the client vanished — including if the session itself
+    /// was closed and possibly reopened while the run was off the lock, in which case there is
+    /// nothing left in memory to apply to; the filesystem and database work already committed
+    /// correctly regardless, so this is not a failure, just nothing further to do.
+    /// </summary>
+    private async Task FinishAsync(OpenSession open, RenameRun run, Action apply)
+    {
+        var acquired = await _gate.WaitAsync(LockTimeout);
+        try
+        {
+            if (acquired && ReferenceEquals(_open, open))
+                apply();
+        }
+        finally
+        {
+            if (acquired)
+                _gate.Release();
+        }
+    }
+
+    /// <summary>§ 3.6: the answer every mutating <c>/session*</c> call gives while a rename runs.</summary>
+    private SessionOutcome RenameInProgress(OpenSession open) =>
+        SessionOutcome.Fail(
+            ErrorCodes.RenameInProgress,
+            "A rename is already running.",
+            new { operationId = Volatile.Read(ref _rename)?.OperationId },
+            Materialise(open));
 
     // ---------------------------------------------------------------------------------------
 
@@ -973,5 +1279,11 @@ public sealed class SessionRegistry : IDisposable
         public SnapshotLastAction? LastAction { get; set; }
 
         public DateTimeOffset? LastSavedAt { get; set; }
+
+        /// <summary>
+        /// § 3.6: while a rename runs, every other mutating <c>/session*</c> call answers
+        /// <c>409 rename_in_progress</c>. Reads, and the rename's own poll, are unaffected.
+        /// </summary>
+        public bool RenameInProgress { get; set; }
     }
 }

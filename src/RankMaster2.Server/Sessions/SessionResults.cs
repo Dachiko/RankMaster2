@@ -19,6 +19,13 @@ internal static class SessionResults
         return Results.Json(snapshot, statusCode: status);
     }
 
+    /// <summary>SERVER_SPEC.md § 10.16: the body of every 2xx from <c>/session/rename*</c>.</summary>
+    public static IResult Operation(HttpContext http, RenameOperation operation, int status = StatusCodes.Status200OK)
+    {
+        NoStore(http);
+        return Results.Json(operation, statusCode: status);
+    }
+
     public static IResult Error(
         HttpContext http,
         string code,

@@ -67,13 +67,14 @@ public class TransportTests(Rm2Server server) : SessionTestBase(server)
     }
 
     /// <summary>
-    /// SERVER_SPEC.md § 1.1 is unusually emphatic: rename by rank has no endpoint, no flag, no debug
-    /// route, and any path containing `rename` falls through to the ordinary 404. It is a product
-    /// decision, so it is worth a test that would notice someone adding it back "just for testing".
+    /// SERVER_SPEC.md § 1.1 used to forbid a rename endpoint outright; that product decision is
+    /// reversed (2026-09-16) and `/session/rename` is now real (SERVER_SPEC.md § 10.16, covered by
+    /// <c>RenameTests</c>). The rule that stands is the general one: an unknown path containing
+    /// "rename" still falls through to the ordinary 404, and this pins exactly that — not the one
+    /// reversed route.
     /// </summary>
     [Theory]
     [InlineData("/rename")]
-    [InlineData("/session/rename")]
     [InlineData("/library/rename-by-rank")]
     [InlineData("/debug/rename")]
     public async Task There_is_no_rename_route(string path)

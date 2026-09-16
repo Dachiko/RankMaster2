@@ -235,7 +235,7 @@ const val PING_BODY: String = """
   "certificateFingerprint": "sha256:3b1f00000000000000000000000000000000000000000000000000000000beef",
   "serverTime": "2026-09-12T18:04:11.412Z",
   "features": {
-    "rename": false,
+    "rename": true,
     "videoTranscoding": false,
     "posterFrames": false,
     "videoProbe": false,

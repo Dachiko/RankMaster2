@@ -156,7 +156,13 @@ public sealed class JsonCatalog : ICatalog
         }
     }
 
-    private static List<(MediaId Id, MediaKind Kind)> ListTopLevelMedia(string folder)
+    /// <summary>
+    /// Internal rather than private so <see cref="RenameEngine"/> can list the folder's media files
+    /// the identical way <see cref="Scan"/> and <see cref="Save"/> do — recovery and cancel's
+    /// "reunite" step (SERVER_SPEC.md § 10.16) must see exactly the same set, or a file one of them
+    /// skips is a rating the other silently drops.
+    /// </summary>
+    internal static List<(MediaId Id, MediaKind Kind)> ListTopLevelMedia(string folder)
     {
         var list = new List<(MediaId, MediaKind)>();
         if (!Directory.Exists(folder))

@@ -129,4 +129,82 @@ public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
             Assert.Equal(RankMaster2.Ranking.RankingConstants.InitialSigma, rows[id].Sigma);
         }
     }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.16, the compatibility half of the acceptance gate: a file the server
+    /// renamed must still be exactly what the desktop app (and Rank Master 1) would open — v1
+    /// schema, every key equal to its own `filename` field, every rating intact under the new
+    /// `000001.ext …` names.
+    /// </summary>
+    [Fact]
+    public async Task A_renamed_library_still_loads_in_the_desktop_app()
+    {
+        using var folder = Scratch.New("rename-roundtrip");
+        folder.Stills(6);
+
+        var client = await ClientAsync();
+        var snapshot = await OpenAsync(folder.Path);
+
+        var voted = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < 8 && snapshot.IsRanking; i++)
+        {
+            voted.Add(snapshot.Left.Id);
+            voted.Add(snapshot.Right.Id);
+            snapshot = (await client.VoteAsync(snapshot.RequireToken("ranking"), i % 2 == 0 ? "left" : "right"))
+                .ShouldBeSnapshot(200, "POST /session/vote (SERVER_SPEC.md § 10.6)");
+        }
+
+        var beforeRows = Db.Rows(folder.Path);
+
+        var start = await client.StartRenameAsync();
+        start.ShouldHaveStatus(202, "POST /session/rename (SERVER_SPEC.md § 10.16)");
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        Rm2Response poll;
+        string? state;
+        while (true)
+        {
+            poll = await client.GetRenameAsync();
+            poll.ShouldHaveStatus(200, "GET /session/rename while polling");
+            state = poll.JsonBody.GetProperty("state").GetString();
+            if (state is "succeeded" or "cancelled" or "failed")
+                break;
+            if (DateTime.UtcNow > deadline)
+                throw poll.Failure("the rename did not reach a terminal state within 30s");
+            await Task.Delay(20);
+        }
+
+        Assert.Equal("succeeded", state);
+
+        await CloseAsync();
+
+        // The desktop app's own read path: JsonCatalog.Scan, never the server's DTOs.
+        var loaded = new JsonCatalog().Scan(folder.Path).ToDictionary(r => r.Filename, StringComparer.Ordinal);
+        Assert.Equal(6, loaded.Count);
+        Assert.All(loaded.Keys, key => Assert.Matches("^\\d{6}\\.", key));
+
+        Db.RequireV1Schema(folder.Path, "a renamed library is still v1 (SPEC.md § Persistence)");
+
+        var rows = Db.Rows(folder.Path);
+        Assert.Equal(6, rows.Count);
+        foreach (var (key, row) in rows)
+            Assert.Equal(key, row.Filename);   // the key and the `filename` field always agree
+
+        // Every rating the server produced before the rename is still there under a new name — the
+        // conservative-score ordering means we cannot predict which new name went to which old one
+        // without recomputing it, so match by the (mu, sigma, matches, impressions, lastPlayed)
+        // tuple, which the rename carries verbatim (it is not recomputed).
+        var beforeTuples = beforeRows.Values
+            .Select(r => (r.Mu, r.Sigma, r.Matches, r.Impressions, r.LastPlayed))
+            .OrderBy(t => t)
+            .ToList();
+        var afterTuples = rows.Values
+            .Select(r => (r.Mu, r.Sigma, r.Matches, r.Impressions, r.LastPlayed))
+            .OrderBy(t => t)
+            .ToList();
+        Assert.Equal(beforeTuples, afterTuples);
+
+        foreach (var id in voted)
+            Assert.DoesNotContain(id, rows.Keys);   // the old names are gone; the ratings are not
+    }
 }

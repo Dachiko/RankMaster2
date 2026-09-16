@@ -71,6 +71,8 @@ public class OpenApiContractTests
     [InlineData("/session/special")]
     [InlineData("/session/save")]
     [InlineData("/session/undo")]
+    [InlineData("/session/rename")]
+    [InlineData("/session/rename/cancel")]
     [InlineData("/pair")]
     [InlineData("/ping")]
     public void Every_route_the_server_maps_is_in_the_document(string path)
@@ -115,5 +117,18 @@ public class OpenApiContractTests
         Assert.Equal(
             WireNamesOf<SnapshotMediaRef>().OrderBy(n => n),
             PropertiesOf("MediaRef").OrderBy(n => n));
+    }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.16: the body of every 2xx from `/session/rename*`, added 2026-09-16.
+    /// Mirrors <see cref="SessionSnapshot_promises_exactly_what_the_server_serialises"/>.
+    /// </summary>
+    [Fact]
+    public void RenameOperation_promises_exactly_what_the_server_serialises()
+    {
+        var served = WireNamesOf<RenameOperation>();
+
+        Assert.Equal(served.OrderBy(n => n), PropertiesOf("RenameOperation").OrderBy(n => n));
+        Assert.Equal(served.OrderBy(n => n), RequiredOf("RenameOperation").OrderBy(n => n));
     }
 }

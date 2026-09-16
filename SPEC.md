@@ -63,7 +63,7 @@ Honor EXIF orientation on stills.
 
 1. **Start** — Open folder (`O` or button). App version under the title. If a last-folder path exists and is still valid, show **Resume** and **Rename**. Resume does **not** auto-start; the user clicks it. Last folder path lives in app local data, not in the media folder. Resume does not restore a pair (pick a new one). Scan/merge JSON happens here with no separate loading screen.
 2. **Ranking** — **True fullscreen** two-pane compare (covers the Windows taskbar / Start menu). No title bar.
-3. **Renaming** — Progress for backup + two-phase rename.
+3. **Renaming** — Progress for backup + two-phase rename. *This describes the desktop app. The headless server renames without copying files, using a journal specified in `SERVER_SPEC.md` § 10.16.*
 
 There is no “Saved” screen. `Esc` **quits the process immediately**.
 
@@ -139,6 +139,9 @@ File: `<folder>/rankmaster_db.json`
 - v1 only *creates* `special 1`. Do not create `special 2` until we ask.
 
 ### Rename by rank
+
+*This describes the desktop app. The headless server renames without copying files, using a journal
+specified in `SERVER_SPEC.md` § 10.16.*
 
 From the start screen, when a folder is loaded/remembered:
 
