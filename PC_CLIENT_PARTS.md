@@ -168,6 +168,17 @@ own surface rather than anything another part must honour.
 
 ---
 
+**Rename is the server's, not the client's.** `PC_CLIENT_PLAN.md` § 6.6 predates the owner's
+decision and has the PC renaming files itself under the lock convention, using
+`RankMaster2.Actions`. That is now wrong: rename is part F, on the server, behind
+`POST /session/rename`. The PC client shows the progress and the cancel button and does not move a
+single file. § 6.6 is superseded.
+
+This matters beyond tidiness — the whole reason rename moved to the server is that the server is the
+only writer. A client that renames locally is a second writer wearing a disguise.
+
+---
+
 ## Verification, for every part
 
 Development is on Linux. .NET compiles and publishes for Windows here; **nothing Windows runs
