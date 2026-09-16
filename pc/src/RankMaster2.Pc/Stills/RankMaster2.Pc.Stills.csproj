@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Part A's shared RankMaster2.Pc.csproj (pc/src/RankMaster2.Pc/RankMaster2.Pc.csproj) does not
+    exist yet in this worktree at the time this part was built (parallel build isolation; see
+    PC_CLIENT_PARTS.md and pc/plans/C-stills.md, section 4, "Prerequisites from part A"). Rather
+    than create or edit a file that belongs to part A, this is a small standalone class library
+    scoped to exactly this folder, so the code can be compiled and tested here.
+
+    THIS IS A TEMPORARY SCAFFOLD FOR THE INTEGRATOR. The intended shape (plan section 4) is for
+    these .cs files to compile as part of pc/src/RankMaster2.Pc/RankMaster2.Pc.csproj alongside
+    every other part's folder. When that project exists, either delete this .csproj and let the
+    shared project's globbing pick up Stills/*.cs, adding the two PackageReferences below to it,
+    or keep this as a referenced sub project. Both give the same production assembly shape that
+    acceptance point 10 checks for: RankMaster2.Core, SkiaSharp and the BCL only.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RankMaster2.Pc.Stills</RootNamespace>
+    <AssemblyName>RankMaster2.Pc.Stills</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\RankMaster2.Core\RankMaster2.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
+  </ItemGroup>
+</Project>

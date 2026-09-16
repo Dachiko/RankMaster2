@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    References the temporary RankMaster2.Pc.Stills.csproj scaffold (see the comment in that file)
+    rather than pc/src/RankMaster2.Pc/RankMaster2.Pc.csproj, which does not exist yet in this
+    worktree. Also references RankMaster2.Catalog directly, for MediaProbeTests'
+    Agrees_with_the_catalog test only (plan section 9 point 6: the test project may reference
+    Catalog; the production code must not, and does not; see DependencyTests).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>RankMaster2.Pc.Stills.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RankMaster2.Pc\Stills\RankMaster2.Pc.Stills.csproj" />
+    <ProjectReference Include="..\..\..\src\RankMaster2.Catalog\RankMaster2.Catalog.csproj" />
+  </ItemGroup>
+</Project>
