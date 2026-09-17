@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.MonotonicFrameClock
+import androidx.compose.runtime.BroadcastFrameClock
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -115,10 +115,10 @@ class VideoPaneLayoutTest {
     // as soon as it is asked, is what the Compose test rule does for the same reason.
     private val scheduler = TestCoroutineScheduler()
     private val dispatcher = StandardTestDispatcher(scheduler)
-    private val frameClock = object : MonotonicFrameClock {
-        override suspend fun <R> withFrameNanos(onFrame: (frameTimeNanos: Long) -> R): R =
-            onFrame(scheduler.currentTime * 1_000_000)
-    }
+    // Frames are sent from `frame()`, never on their own: the pane's progress spinner is an
+    // infinite animation, and a clock that answered every request at once would never go idle.
+    private val frameClock = BroadcastFrameClock()
+    private var frameTimeNanos = 0L
     private val recomposerScope = CoroutineScope(dispatcher + frameClock)
     private val recomposers = mutableListOf<Recomposer>()
 
@@ -166,8 +166,11 @@ class VideoPaneLayoutTest {
 
         /** Lets Compose recompose, measure and place, and the View tree lay out, until quiet. */
         fun frame() {
-            repeat(3) {
+            repeat(5) {
                 Snapshot.sendApplyNotifications()
+                scheduler.advanceUntilIdle()
+                frameTimeNanos += 16_000_000L
+                frameClock.sendFrame(frameTimeNanos)
                 scheduler.advanceUntilIdle()
                 shadowOf(Looper.getMainLooper()).idle()
                 roots().forEach { it.measureAndLayoutForTest() }
@@ -268,7 +271,11 @@ class VideoPaneLayoutTest {
     /** The picture is [shape], fits inside [pane], and sits in its middle - to the pixel. */
     private fun assertPictureFits(what: String, picture: Rect, pane: Rect, shape: Float) {
         assertEquals("$what: shape", shape, picture.width / picture.height, 0.002f)
-        assertTrue("$what: inside its pane ($picture in $pane)", pane.contains(picture.topLeft) && pane.contains(picture.bottomRight))
+        assertTrue(
+            "$what: inside its pane ($picture in $pane)",
+            picture.left >= pane.left - 1f && picture.top >= pane.top - 1f &&
+                picture.right <= pane.right + 1f && picture.bottom <= pane.bottom + 1f,
+        )
         assertTrue("$what: as large as the pane allows", abs(picture.width - pane.width) <= 1f || abs(picture.height - pane.height) <= 1f)
         assertTrue("$what: centred ($picture in $pane)", abs(picture.center.x - pane.center.x) <= 1f && abs(picture.center.y - pane.center.y) <= 1f)
     }

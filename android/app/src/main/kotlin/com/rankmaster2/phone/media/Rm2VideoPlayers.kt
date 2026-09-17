@@ -1,6 +1,7 @@
 package com.rankmaster2.phone.media
 
 import android.content.Context
+import android.view.SurfaceView
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -184,55 +185,31 @@ class Rm2VideoPlayers internal constructor(
      * player were both alive, decoder and surface each. `acquire` runs the two steps itself, in the
      * only safe order: release what this slot already holds, *then* build and `prepare()` the next
      * player. There is never a moment with two.
+     *
+     * Nothing survives a release - not the shape the last player knew, not for the same file. A
+     * slot briefly remembered that (2026-09-17, so a pane resuming from under the full-screen
+     * viewer would not start at "shape unknown"), and it was taken out again the same day: the
+     * pane now shows nothing until its own decoder has reported, so a fresh player's honest
+     * "unknown" costs nothing to look at, and a remembered shape was one more place for a pane
+     * to be told something about a picture by anything other than the decoder drawing it.
      */
     inner class Slot internal constructor(
         private val build: (MediaRef, (MediaPaneState) -> Unit) -> Rm2Video? =
             { ref, onState -> create(ref, onState) },
     ) {
         private var current: Rm2Video? = null
-        private var currentRefId: String? = null
-
-        // The shape this slot last had reported for whichever file it most recently held, kept
-        // across a release so the *next* player for the *same* file does not have to rediscover it.
-        //
-        // This is the owner's second repro on this bug (BUGS.md § 1): full-screen a video, swipe the
-        // pair a few times, press back. § 2.5 releases a covered pane's player outright, so the pane
-        // that resumes gets a brand-new `Rm2Video` - and a fresh one starts at `aspectRatio == null`
-        // (its own doc comment), even though the decoder already told this exact slot the shape a
-        // moment earlier, before the viewer covered it. Until the new player's own
-        // `onVideoSizeChanged` arrives, the pane fills its box - `RESIZE_MODE_FIT` keeps that from
-        // ever being stretched, but it is still the wrong shape for however long that takes, right
-        // after the owner was looking at the correct one full screen. Seeding the next player from
-        // what this slot already knows about *that file* closes the gap; tagging it with the file's
-        // id keeps it from ever being handed to a different file that happens to land in this slot
-        // next (an ordinary pair change, not this bug, but the same field would be wrong for it).
-        private var lastKnownRatioRefId: String? = null
-        private var lastKnownRatio: Float? = null
 
         /** Releases whatever this slot holds, then builds and prepares [ref]'s player. */
         fun acquire(ref: MediaRef, onState: (MediaPaneState) -> Unit = {}): Rm2Video? {
             release()
-            val next = build(ref, onState)
-            if (next != null && ref.id == lastKnownRatioRefId) {
-                next.aspectRatio.value = lastKnownRatio
-            }
-            current = next
-            currentRefId = ref.id
+            current = build(ref, onState)
             return current
         }
 
         /** Gives back this slot's player, if it has one, without taking a new one. */
         fun release() {
-            current?.let { video ->
-                val ratio = video.aspectRatio.value
-                if (ratio != null) {
-                    lastKnownRatioRefId = currentRefId
-                    lastKnownRatio = ratio
-                }
-                video.release()
-            }
+            current?.release()
             current = null
-            currentRefId = null
         }
 
         /**
@@ -361,12 +338,10 @@ class Rm2VideoPlayers internal constructor(
  */
 @OptIn(UnstableApi::class)
 class Rm2Video internal constructor(
-    /** For attaching to a `PlayerView`, and for nothing else. Null only in a test of the rule. */
+    /** The player behind this video. Null only in a test of a rule that needs no player. */
     private val maybePlayer: ExoPlayer?,
     private val onState: (MediaPaneState) -> Unit = {},
 ) {
-
-    val player: ExoPlayer get() = requireNotNull(maybePlayer) { "this Rm2Video has no player" }
 
     var isReleased: Boolean = false
         private set
@@ -374,16 +349,37 @@ class Rm2Video internal constructor(
     /**
      * The shape of the picture, once the decoder knows it, and null until then.
      *
-     * This exists because the pane used to take its shape from the `PlayerView` inside it. The
-     * video's size arrives after the first frame is decoded, which is long after Compose measured
-     * the pane, and nothing told Compose to look again - so the picture kept whatever box it had
-     * been given and drew stretched until a rotation forced a fresh layout pass. That is the whole
-     * of "rotating twice fixes it".
-     *
-     * Reported as Compose state instead, so the *Compose* layout owns the shape: a new value is a
-     * recomposition and a re-measure, which is the one thing the old arrangement could not produce.
+     * Compose state, so that the pane's box is measured from it: the decoder reports the shape
+     * with the first frame, long after the pane was first measured, and a state read is what turns
+     * that report into a re-measure. It is the *only* source of the shape - the surface the pane
+     * draws on is a bare `SurfaceView` that fills the box, with nothing of its own to say about
+     * proportions - and until it is known the pane shows nothing at all (MediaPane's cover),
+     * because a decoder scales its frames to whatever surface it has and the provisional one is
+     * not the picture's shape.
      */
     val aspectRatio: MutableState<Float?> = mutableStateOf(null)
+
+    /** The surface this video is currently drawing on, if any. */
+    private var surface: SurfaceView? = null
+
+    /**
+     * Draw on [view]. The pane calls this from `AndroidView.update`, for each surface it creates
+     * for this video - the provisional one, and the one made at the picture's own size.
+     */
+    fun showOn(view: SurfaceView) {
+        if (isReleased) return
+        surface = view
+        maybePlayer?.setVideoSurfaceView(view)
+    }
+
+    /**
+     * Stop drawing on [view], if that is where this video is drawing. A surface that is about to
+     * leave the window is never left attached to a live decoder.
+     */
+    fun hideFrom(view: SurfaceView) {
+        if (surface === view) surface = null
+        if (!isReleased) maybePlayer?.clearVideoSurfaceView(view)
+    }
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(state: Int) {
@@ -458,6 +454,8 @@ class Rm2Video internal constructor(
      */
     fun release() {
         if (isReleased) return
+        surface?.let { maybePlayer?.clearVideoSurfaceView(it) }
+        surface = null
         isReleased = true
         maybePlayer?.removeListener(listener)
         maybePlayer?.release()

@@ -1,7 +1,7 @@
 package com.rankmaster2.phone.media
 
+import android.view.SurfaceView
 import android.view.ViewGroup
-import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -24,13 +25,11 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.rankmaster2.phone.net.MediaRef
@@ -112,7 +111,6 @@ private fun StillPane(
     if (state !is MediaPaneState.Loaded) StatusPane(state)
 }
 
-@OptIn(UnstableApi::class)
 @Composable
 private fun VideoPane(
     ref: MediaRef,
@@ -161,50 +159,66 @@ private fun VideoPane(
         return
     }
 
-    // The shape of the picture, owned by Compose.
+    // The shape of the picture, owned by Compose and by nothing else.
     //
-    // The player reports it once the first frame is decoded, which is well after this pane was
-    // first measured. Reading it as state here means the arrival of the true shape is a
-    // recomposition and therefore a re-measure - so the box the video is drawn into is the right
-    // shape from the moment anyone could know what the right shape is, and stays right across a
-    // rotation without anything being asked to look again.
-    //
-    // Until then the pane fills its box, and `RESIZE_MODE_FIT` inside it means the worst this can
-    // ever look is a picture drawn smaller than it could be. It is never stretched.
+    // The decoder reports it with the first frame, which is well after this pane was first
+    // measured; reading it as state here makes its arrival a recomposition and a re-measure. What
+    // is drawn into the box is a bare `SurfaceView` that fills it: no `PlayerView`, no
+    // `AspectRatioFrameLayout` with a second opinion about the shape, no resize mode. A decoder
+    // scales its frames to whatever surface it is given, so the surface being the right shape is
+    // the whole of the picture being the right shape, and one owner of that is one fewer thing to
+    // disagree.
     val ratio = video.aspectRatio.value
 
-    AndroidView(
-        modifier = if (ratio != null) Modifier.aspectRatio(ratio) else Modifier.fillMaxSize(),
-        factory = { context ->
-            PlayerView(context).apply {
-                // No controller, no transport bar, nothing that can swallow a tap that was meant
-                // to be a vote. See Rm2VideoPlayers.
-                useController = false
-                setShutterBackgroundColor(android.graphics.Color.BLACK)
-                // FIT, always, and never FILL.
-                //
-                // The box around this view is already the picture's shape, so FIT has nothing
-                // left to letterbox and costs nothing. What it buys is that the one remaining way
-                // to be wrong stays harmless: if the ratio Compose was given ever disagreed with
-                // the picture, FIT draws it *small* and correctly proportioned, while FILL would
-                // stretch it - which is the bug this whole change exists to remove, on a narrower
-                // path. A safety net that costs nothing stays.
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-            }
-        },
-        update = { view -> view.player = video.player },
-        onReset = { view -> view.player = null },
-        // onReset fires when the view is recycled; onRelease when it is thrown away. A PlayerView
-        // that leaves the screen still holding a player keeps its surface, and the next video finds
-        // the decoder occupied.
-        onRelease = { view -> view.player = null },
-    )
+    // One surface per shape, created at its final size and never resized in place.
+    //
+    // Before the shape is known there has to be a surface - the decoder cannot produce the first
+    // frame, and so cannot report a shape, without one - so a provisional full-pane surface is
+    // created under the cover below. When the shape arrives, this pane does not resize that
+    // surface into the right box; `key(ratio)` throws it away and creates a new one whose very
+    // first layout is the right size. That is exactly what a rotation does to a pane, and a
+    // rotation is the one thing the owner has reported as putting a wrong pane right (BUGS.md § 1,
+    // and his report of 2026-09-17 where turning the phone moved the fault from one pane to the
+    // other and a second turn cleared it - each turn rebuilds both surfaces). Everything above the
+    // surface - Compose's box, the View's rectangle - is proven right by VideoPaneLayoutTest in
+    // every orientation; what a live SurfaceView's *surface* does when its View is resized under
+    // it is decided by the compositor, which nothing on a build machine can see, and which this
+    // rule simply never asks to do anything.
+    key(ratio) {
+        AndroidView(
+            modifier = (if (ratio != null) Modifier.aspectRatio(ratio) else Modifier.fillMaxSize())
+                .testTag(MediaPaneTags.VIDEO),
+            factory = { context ->
+                SurfaceView(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                }
+            },
+            update = { view -> video.showOn(view) },
+            onReset = { view -> video.hideFrom(view) },
+            // onReset fires when the view is recycled; onRelease when it is thrown away. A surface
+            // that leaves the screen still attached to a player keeps the decoder's output, and
+            // the next surface finds it occupied.
+            onRelease = { view -> video.hideFrom(view) },
+        )
+    }
 
-    if (state !is MediaPaneState.Loaded) StatusPane(state)
+    // The cover: opaque, the pane's full size, and there until the picture underneath is right.
+    //
+    // Until the decoder has reported the shape, the surface is the provisional full-pane one and
+    // the frames the decoder scales into it are the wrong shape by construction - `RESIZE_MODE_FIT`
+    // never protected against that, because a surface that is the wrong shape is a picture that is
+    // the wrong shape, whatever a frame layout around it intended. So nothing of the picture is
+    // shown until its shape is known *and* the player has reached ready (which, for a player with
+    // a real surface, it only does once it has rendered a frame). What shows instead is the same
+    // spinner or message the pane would show anyway.
+    if (ratio == null || state !is MediaPaneState.Loaded) {
+        Box(Modifier.fillMaxSize().background(Color.Black).testTag(MediaPaneTags.COVER)) {
+            StatusPane(if (state is MediaPaneState.Loaded) MediaPaneState.Loading else state)
+        }
+    }
 
     // The mark. A red dot in the corner of a video that cannot hold its frame rate, so the limit
     // being hit is something the owner *sees*, on his own files, in the middle of ranking - rather

@@ -15,19 +15,43 @@ the device**, which is the only place any of this is true.
 **Seen:** a video pane draws the picture stretched or squashed. Turning the phone and turning it
 back puts it right.
 
-**Read:** that "rotating fixes it" is the whole clue. Rotation forces a fresh layout pass, so the
-geometry is correct once something re-measures — meaning the first measurement happened before the
-player knew the video's shape.
+**Fixed twice on wrong diagnoses before the third attempt established anything.** Both earlier
+readings are written down here because they were plausible, were believed, and were false — and
+because he was told twice that this was fixed.
 
-The pane measures itself, hands the size to a `PlayerView` inside an `AndroidView`, and the
-`PlayerView` sets its own aspect ratio when the video size arrives. But the video size arrives
-*after* the first frame is decoded, which is well after Compose has measured the pane. Nothing tells
-Compose to look again, so the view keeps the box it was given.
+- **"Nothing tells Compose to look again."** Disproved by bytecode: `AndroidViewsHandler.requestLayout`
+  forwards a child View's `requestLayout` to `LayoutNode.requestRemeasure`. That fix changed timing,
+  not the fault.
+- **"A resumed pane rebuilds its player and forgets the shape."** Real, and provable on the slot —
+  but it cannot reach the reported case. The manifest declares `configChanges="orientation|screenSize"`,
+  so a rotation disposes and rebuilds **both** panes with fresh slots and surfaces. No remembered
+  shape survives it. That fix has been reverted.
+- **"`Modifier.aspectRatio` overflows a weighted pane."** Disproved by measurement. Both the pane's
+  `Box` and `MediaPane`'s `BoxWithConstraints` drop min-constraints, so the aspect node always finds
+  a fitting size; the width-first fallback needs *fixed* constraints, which never arrive. Measured to
+  the pixel in both orientations.
+- **"`RESIZE_MODE_FIT` means it can never be stretched."** Also false, and it was repeated to him as
+  reassurance. A decoder scales frames to whatever surface it has; FIT only sizes the frame once
+  `PlayerView` knows the aspect. Before the shape arrives there is a full-pane surface with frames
+  scaled into it — stretched, by construction.
 
-**Likely fix:** take the ratio from the player rather than from the view — listen for the video size
-(`onVideoSizeChanged` gives width, height and the pixel-aspect ratio) and apply it as an
-`aspectRatio` modifier on the pane, so the *Compose* layout owns the shape and re-measures when it
-changes. That also removes the need for `AspectRatioFrameLayout` to do it.
+**What is established:** everything above the surface is correct in every case that can be executed
+on a JVM — Compose box, view, content frame and `SurfaceView` agree to the pixel. The one layer a
+JVM cannot see is the compositor: whether a live `SurfaceView`'s *surface* follows an in-place
+resize of its View. That in-place resize is the only thing the old design did that a rotation does
+not, and a rotation is the reported cure. That was not proved; everything else was eliminated and
+then the operation was removed.
+
+**What is in the tree now:** no `PlayerView` and no `AspectRatioFrameLayout` — a bare `SurfaceView`
+filling a Compose box whose shape is the one the decoder reported. A surface is **created at its
+final size and never resized in place** (`key(ratio)` discards the provisional one), which is what a
+rotation does, for every pane, every time. An opaque cover hides the pane until the shape is known
+*and* the player is ready, so the pre-shape frames are never visible.
+
+**Still open, because only his phone can close it.** The one question that would confirm or refute
+it: was the bad pane **stretched**, or **correctly shaped but the wrong size or position**?
+Stretched fits everything above. "Right shape, wrong size" would mean the box itself was wrong,
+which the measurements say cannot happen — and would send this back to the start.
 
 **Watch for:** anamorphic files, where the pixel aspect ratio is not 1. `onVideoSizeChanged` reports
 it separately and it must be multiplied in, or the fix produces a subtler version of the same bug.
