@@ -123,6 +123,38 @@ class MediaErrorsTest {
     }
 
     @Test
+    fun `no room on the PC is not the same answer as an unreadable file`() {
+        // SERVER_SPEC.md § 5.2: media_decode_failed carries details.reason. The two cases share one
+        // code, so before this field the phone had to pick one sentence for both — and picked the
+        // one that blamed the owner's photograph and his phone for the PC being briefly busy.
+        assertEquals(
+            MediaPaneState.NoRoomOnThePc,
+            MediaFailures.stateOf(422, "media_decode_failed", "busy", reason = "no_room"),
+        )
+        assertEquals(
+            MediaPaneState.Undecodable,
+            MediaFailures.stateOf(422, "media_decode_failed", "bad bytes", reason = "unreadable"),
+        )
+        // An older server sends no reason at all. Falling back to Undecodable keeps today's
+        // behaviour rather than inventing an optimistic one from a field that is not there.
+        assertEquals(
+            MediaPaneState.Undecodable,
+            MediaFailures.stateOf(422, "media_decode_failed", "no details"),
+        )
+    }
+
+    @Test
+    fun `the reason is read off the wire, not just accepted as an argument`() {
+        server.enqueue(MediaFixtures.errorResponse(422, "media_decode_failed", reason = "no_room"))
+
+        val thrown = runCatching { get().close() }.exceptionOrNull()
+        val http = generateSequence(thrown) { it.cause }.filterIsInstance<MediaHttpException>().first()
+
+        assertEquals("no_room", http.reason)
+        assertEquals(MediaPaneState.NoRoomOnThePc, MediaFailures.stateOf(http))
+    }
+
+    @Test
     fun `a success passes straight through, untouched`() {
         server.enqueue(MediaFixtures.stillResponse())
 

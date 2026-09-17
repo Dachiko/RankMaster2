@@ -34,6 +34,15 @@ class MediaHttpException(
     val code: String?,
     val url: String,
     override val message: String,
+    /**
+     * `error.details.reason`, when the envelope carried one. Only `media_decode_failed` uses it so
+     * far (`no_room` / `unreadable`), and it exists because the difference between "the PC had no
+     * memory free just then" and "this file is not an image" lived only in `error.message` — which
+     * SERVER_SPEC.md § 4 fixes as unstable and never to be parsed. The phone obeyed that, could
+     * branch only on the code, and so told the owner his perfectly good photograph could not be
+     * opened by his phone. Reading a field meant for machines is the fix.
+     */
+    val reason: String? = null,
 ) : IOException(message)
 
 /**
@@ -53,11 +62,12 @@ class MediaErrorInterceptor : Interceptor {
         val response = chain.proceed(chain.request())
         if (response.isSuccessful) return response
 
-        val code = try {
-            codeOf(response.peekBody(MAX_ERROR_BODY).string())
+        val envelope = try {
+            errorOf(response.peekBody(MAX_ERROR_BODY).string())
         } catch (_: Exception) {
             null
         }
+        val code = envelope?.first
         val url = response.request.url.toString()
         response.close()
 
@@ -66,6 +76,7 @@ class MediaErrorInterceptor : Interceptor {
             code = code,
             url = url,
             message = "HTTP ${response.code}" + (code?.let { " $it" } ?: "") + " for $url",
+            reason = envelope?.second,
         )
     }
 
@@ -74,14 +85,13 @@ class MediaErrorInterceptor : Interceptor {
 
         val JSON = Json { ignoreUnknownKeys = true }
 
-        /** `error.code`, or null if this was not an error envelope at all. */
-        fun codeOf(body: String): String? =
-            JSON.parseToJsonElement(body)
-                .jsonObject["error"]
-                ?.jsonObject
-                ?.get("code")
-                ?.jsonPrimitive
-                ?.content
+        /** `error.code` and `error.details.reason`, or null if this was not an error envelope. */
+        fun errorOf(body: String): Pair<String?, String?>? {
+            val error = JSON.parseToJsonElement(body).jsonObject["error"]?.jsonObject ?: return null
+            val code = error["code"]?.jsonPrimitive?.content
+            val reason = error["details"]?.jsonObject?.get("reason")?.jsonPrimitive?.content
+            return code to reason
+        }
     }
 }
 
@@ -108,6 +118,14 @@ sealed interface MediaPaneState {
     data object Undecodable : MediaPaneState
 
     /**
+     * `422 media_decode_failed` with `details.reason = "no_room"`: the file is fine and the PC
+     * simply had no decode memory free at that moment. Nothing is wrong with the picture and
+     * nothing is wrong with this phone, so the pane must say neither — it will very likely arrive
+     * on the next attempt.
+     */
+    data object NoRoomOnThePc : MediaPaneState
+
+    /**
      * `404 media_file_missing` / `unknown_media_id`, or a `MediaRef` that already arrived with
      * `sizeBytes: null`. The file has left the folder under the session (§ 11.3). The caller's one
      * sane offer is to discard that side, which the server turns into `drop_missing` (§ 10.8).
@@ -124,13 +142,17 @@ sealed interface MediaPaneState {
 /** How a failure from Coil, Media3 or a plain GET becomes one of the states above. */
 object MediaFailures {
 
+    /** `details.reason` on `media_decode_failed` — SERVER_SPEC.md § 5.2. */
+    const val REASON_NO_ROOM = "no_room"
+
     fun stateOf(error: Throwable?): MediaPaneState {
         val http = error?.asMediaHttp()
             ?: return MediaPaneState.Unavailable(null, error?.message ?: "The picture did not load.")
-        return stateOf(http.status, http.code, http.message)
+        return stateOf(http.status, http.code, http.message, http.reason)
     }
 
-    fun stateOf(status: Int, code: String?, detail: String): MediaPaneState = when {
+    fun stateOf(status: Int, code: String?, detail: String, reason: String? = null): MediaPaneState = when {
+        code == MediaErrorCodes.MEDIA_DECODE_FAILED && reason == REASON_NO_ROOM -> MediaPaneState.NoRoomOnThePc
         code == MediaErrorCodes.MEDIA_DECODE_FAILED -> MediaPaneState.Undecodable
         code == MediaErrorCodes.MEDIA_FILE_MISSING -> MediaPaneState.Gone
         code == MediaErrorCodes.UNKNOWN_MEDIA_ID -> MediaPaneState.Gone

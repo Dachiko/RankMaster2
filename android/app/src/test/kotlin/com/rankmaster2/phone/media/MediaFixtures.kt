@@ -34,11 +34,20 @@ object MediaFixtures {
             .setBody(okio.Buffer().write(PNG))
 
     /** The § 4 envelope, which is what a client is required to branch on. */
-    fun errorResponse(status: Int, code: String, message: String = "no"): MockResponse =
-        MockResponse()
+    fun errorResponse(
+        status: Int,
+        code: String,
+        message: String = "no",
+        reason: String? = null,
+    ): MockResponse {
+        // `details` is omitted entirely when there is no reason, which is what an older server
+        // sends — the case the client has to keep handling.
+        val details = reason?.let { ""","details":{"id":"x.jpg","reason":"$it"}""" } ?: ""
+        return MockResponse()
             .setResponseCode(status)
             .setHeader("Content-Type", "application/json")
-            .setBody("""{"error":{"code":"$code","message":"$message","requestId":"r1"}}""")
+            .setBody("""{"error":{"code":"$code","message":"$message","requestId":"r1"$details}}""")
+    }
 
     fun still(id: String, encoded: String = id, version: String = "9f2a1c77b0e4d310"): MediaRef =
         MediaRef(

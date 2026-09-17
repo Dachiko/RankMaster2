@@ -259,7 +259,7 @@ private class VideoSlotHolder(val slot: Rm2VideoPlayers.Slot) : RememberObserver
  * buried in a pane the user is about to tap.
  */
 @Composable
-private fun StatusPane(state: MediaPaneState) {
+private fun StatusPane(state: MediaPaneState, name: String? = null) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when (state) {
             is MediaPaneState.Loading -> CircularProgressIndicator(color = Color(0xFF6B7280))
@@ -268,14 +268,29 @@ private fun StatusPane(state: MediaPaneState) {
             // always the same gesture: press and hold this side. Saying so is what turns a pane
             // that has gone blank into a pane with an answer in it.
             is MediaPaneState.Gone ->
-                Message("This file is not in the folder any more.\n\nPress and hold here to drop it.")
+                Message(named(name, "is not in the folder any more", "This file is not in the folder any more") +
+                    ".\n\nPress and hold here to drop it.")
+            // Named, and blaming neither the phone nor - without evidence - the file. The old text
+            // read "This phone cannot open this file", which was wrong twice over: the phone never
+            // receives the file, and the usual cause was the PC running out of decode memory.
             is MediaPaneState.Undecodable ->
-                Message("This phone cannot open this file.\n\nPress and hold here to drop it.")
+                Message(named(name, "could not be read as a picture", "This file could not be read as a picture") +
+                    ".\n\nPress and hold here to drop it.")
+            // Nothing is wrong with this picture and nothing is wrong with this phone, so it offers
+            // no discard: throwing away a good photograph because the PC was briefly busy is the
+            // one outcome this pane must not invite.
+            is MediaPaneState.NoRoomOnThePc ->
+                Message(named(name, "could not be prepared just now", "This one could not be prepared just now") +
+                    " — the PC had no memory free for it.\n\nThe file is fine. It will load next time it comes up.")
             is MediaPaneState.Unavailable ->
                 Message("This one did not arrive from the PC.\n\nIt will try again on the next pair.")
         }
     }
 }
+
+/** The filename when the pane knows it, because "which one?" is the owner's first question. */
+private fun named(name: String?, tail: String, fallback: String): String =
+    if (name.isNullOrBlank()) fallback else "$name $tail"
 
 @Composable
 private fun Message(text: String) {
