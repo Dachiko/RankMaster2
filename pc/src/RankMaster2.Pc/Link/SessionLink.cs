@@ -24,6 +24,10 @@ internal sealed class SessionLink : ISessionLink
     private Credential? _credential;
 
     private int _busyFlag;
+    /// <summary>Non-null exactly while a <see cref="ConnectAsync"/> call holds the busy gate; every
+    /// other caller that lands meanwhile awaits this instead of throwing (H9). Cleared, after the
+    /// flag itself is released, by the same <see cref="ExitBusy"/> that let the connect go.</summary>
+    private TaskCompletionSource<bool>? _connectInFlight;
 
     public LinkState State { get; private set; } = LinkState.Disconnected;
     public WireSnapshot? Snapshot { get; private set; }
@@ -41,25 +45,51 @@ internal sealed class SessionLink : ISessionLink
 
     // ---- the busy gate (§ 4.1, § 5.1.1 step 1 and 7) ---------------------------------------------
 
-    private void EnterBusy()
+    private void EnterBusy(bool isConnect)
     {
         if (Interlocked.CompareExchange(ref _busyFlag, 1, 0) != 0)
             throw new InvalidOperationException(
                 "A call is already in flight on this ISessionLink. Call it from one thread, one call at a time.");
+        if (isConnect)
+            Volatile.Write(ref _connectInFlight, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
     }
 
-    private void ExitBusy() => Volatile.Write(ref _busyFlag, 0);
-
-    private async Task<T> Gated<T>(Func<Task<T>> body)
+    private void ExitBusy()
     {
-        EnterBusy();
+        // Release the flag before waking anyone waiting on it, so a waiter's own EnterBusy (below)
+        // never races its own wake-up.
+        var connectDone = Interlocked.Exchange(ref _connectInFlight, null);
+        Volatile.Write(ref _busyFlag, 0);
+        connectDone?.TrySetResult(true);
+    }
+
+    /// <summary>Every call except <see cref="ConnectAsync"/> itself. A caller that lands while a
+    /// <em>different</em> caller's <see cref="ConnectAsync"/> holds the gate waits for it instead of
+    /// throwing — bounded by <c>ConnectAsync</c>'s own timeouts (offer + server-start, ~18 s), since
+    /// this simply awaits that call's completion (H9: <c>MainWindow.OnOpened</c> fires
+    /// <c>ConnectAsync</c> in the background at first frame while Open/Resume are already enabled).
+    /// A caller that lands while anything <em>other</em> than a connect holds the gate still throws
+    /// at once — that rule is unchanged.</summary>
+    private async Task<T> Gated<T>(Func<Task<T>> body, CancellationToken ct = default)
+    {
+        if (Volatile.Read(ref _connectInFlight) is { } connecting)
+            await connecting.Task.WaitAsync(ct).ConfigureAwait(false);
+
+        EnterBusy(isConnect: false);
+        try { return await body().ConfigureAwait(false); }
+        finally { ExitBusy(); }
+    }
+
+    private async Task<T> GatedConnect<T>(Func<Task<T>> body)
+    {
+        EnterBusy(isConnect: true);
         try { return await body().ConfigureAwait(false); }
         finally { ExitBusy(); }
     }
 
     // ---- ConnectAsync (§ 5.2.2) -------------------------------------------------------------------
 
-    public Task<ConnectResult> ConnectAsync(CancellationToken ct = default) => Gated(() => ConnectCore(ct));
+    public Task<ConnectResult> ConnectAsync(CancellationToken ct = default) => GatedConnect(() => ConnectCore(ct));
 
     private async Task<ConnectResult> ConnectCore(CancellationToken ct)
     {
@@ -273,7 +303,7 @@ internal sealed class SessionLink : ISessionLink
 
     // ---- OpenAsync (§ 5.3.1) ----------------------------------------------------------------------
 
-    public Task<OpenResult> OpenAsync(string folder, CancellationToken ct = default) => Gated(() => OpenCore(folder, ct));
+    public Task<OpenResult> OpenAsync(string folder, CancellationToken ct = default) => Gated(() => OpenCore(folder, ct), ct);
 
     private async Task<OpenResult> OpenCore(string folder, CancellationToken ct)
     {
@@ -377,27 +407,27 @@ internal sealed class SessionLink : ISessionLink
         State = State == LinkState.Disconnected ? LinkState.Disconnected : LinkState.Connected;
         Snapshot = null;
         return true;
-    });
+    }, ct);
 
     // ---- the action protocol (§ 5.1.1) -------------------------------------------------------------
 
     public Task<ActionResult> VoteAsync(Side winner, long onPairSeq, CancellationToken ct = default) =>
-        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Vote(token, WireOf(winner), id), ct));
+        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Vote(token, WireOf(winner), id), ct), ct);
 
     public Task<ActionResult> SkipAsync(long onPairSeq, CancellationToken ct = default) =>
-        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Skip(token, id), ct));
+        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Skip(token, id), ct), ct);
 
     public Task<ActionResult> DiscardAsync(Side side, long onPairSeq, CancellationToken ct = default) =>
-        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Discard(token, WireOf(side), id), ct));
+        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Discard(token, WireOf(side), id), ct), ct);
 
     public Task<ActionResult> SpecialAsync(Side side, long onPairSeq, CancellationToken ct = default) =>
-        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Special(token, WireOf(side), id), ct));
+        Gated(() => RunPairAction(onPairSeq, (token, id) => FrozenRequest.Special(token, WireOf(side), id), ct), ct);
 
-    public Task<ActionResult> UndoAsync(CancellationToken ct = default) => Gated(() => UndoCore(ct));
+    public Task<ActionResult> UndoAsync(CancellationToken ct = default) => Gated(() => UndoCore(ct), ct);
 
-    public Task<ActionResult> SaveAsync(CancellationToken ct = default) => Gated(() => SaveCore(ct));
+    public Task<ActionResult> SaveAsync(CancellationToken ct = default) => Gated(() => SaveCore(ct), ct);
 
-    public Task<ActionResult> RefreshAsync(CancellationToken ct = default) => Gated(() => RefreshCore(ct));
+    public Task<ActionResult> RefreshAsync(CancellationToken ct = default) => Gated(() => RefreshCore(ct), ct);
 
     private static string WireOf(Side side) => side == Side.Left ? "left" : "right";
 

@@ -22,6 +22,11 @@ internal sealed class PairingForm : Form
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 500 };
     private PairingOffer? _offer;
 
+    /// <summary>Set once the window's offer file has been destroyed out from under it (five wrong
+    /// guesses from somewhere on the LAN, A30/H12) — stops the countdown from overwriting the
+    /// message with a stale time-left.</summary>
+    private bool _closedByServer;
+
     public PairingForm(string dataDirectory)
     {
         _dataDirectory = dataDirectory;
@@ -98,6 +103,7 @@ internal sealed class PairingForm : Form
             if (IsDisposed)
                 return;
 
+            _closedByServer = false;
             _code.Text = _offer.CodeDisplay;
             _qr.Image?.Dispose();
             _qr.Image = Render(_offer.Payload);
@@ -123,10 +129,25 @@ internal sealed class PairingForm : Form
         }
     }
 
+    /// <summary>
+    /// Ticks the visible countdown and — the same poll, so a stranger burning the window's guess
+    /// budget is noticed within one tick — checks that the offer file this window is showing is
+    /// still the one on disk. Five wrong guesses from anywhere on the LAN destroy it before
+    /// <see cref="PairingOffer.ExpiresAt"/> arrives (H12); without this the window would keep
+    /// counting down a code the server has already refused (A30).
+    /// </summary>
     private void Countdown()
     {
-        if (_offer is null)
+        if (_offer is null || _closedByServer)
             return;
+
+        if (!File.Exists(PairingChannel.OfferPath(_dataDirectory)))
+        {
+            _closedByServer = true;
+            _expiry.ForeColor = Color.FromArgb(160, 60, 60);
+            _expiry.Text = "Closed: too many wrong codes. Open a new one.";
+            return;
+        }
 
         var left = _offer.Remaining(DateTimeOffset.UtcNow);
         if (left <= TimeSpan.Zero)

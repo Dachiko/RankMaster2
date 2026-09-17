@@ -19,7 +19,7 @@ namespace RankMaster2.Pc.Ui.Tests.Views;
 /// </summary>
 public class UiRootTests
 {
-    private static (Window Window, UiRoot Root, RankCoordinator Coordinator, FakeSessionLink Link, FakeClock Clock) Build()
+    private static (Window Window, UiRoot Root, RankCoordinator Coordinator, FakeSessionLink Link, FakeClock Clock, FakeStillSource Stills) Build()
     {
         var link = new FakeSessionLink { Snapshot = SnapshotBuilder.Ranking() };
         var stills = new FakeStillSource();
@@ -29,13 +29,13 @@ public class UiRootTests
         var root = new UiRoot(coordinator);
         var window = new Window { Content = root, Width = 1280, Height = 720 };
         window.Show();
-        return (window, root, coordinator, link, clock);
+        return (window, root, coordinator, link, clock, stills);
     }
 
     [AvaloniaFact]
     public async Task Right_arrow_reaches_the_model_even_with_nothing_focused()
     {
-        var (window, _, coordinator, link, clock) = Build();
+        var (window, _, coordinator, link, clock, _) = Build();
         await coordinator.OpenFolderAsync("/lib");
         coordinator.Rank.SetPanes(coordinator.Rank.Left! with { Kind = PaneKind.Ready }, coordinator.Rank.Right! with { Kind = PaneKind.Ready }, coordinator.Rank.PairArrivedAt);
         clock.Advance(Timings.ArrivalGuardMs + TimeSpan.FromMilliseconds(1));
@@ -51,7 +51,7 @@ public class UiRootTests
     [AvaloniaFact]
     public void F1_toggles_the_help_sheet_and_Esc_still_quits_with_it_open()
     {
-        var (window, _, coordinator, _, _) = Build();
+        var (window, _, coordinator, _, _, _) = Build();
         _ = coordinator.OpenFolderAsync("/lib");
 
         Assert.False(coordinator.Rank.HelpPinned);
@@ -67,7 +67,7 @@ public class UiRootTests
     [AvaloniaFact]
     public void Space_and_Enter_do_nothing_on_the_compare_screen()
     {
-        var (window, _, coordinator, link, _) = Build();
+        var (window, _, coordinator, link, _, _) = Build();
         _ = coordinator.OpenFolderAsync("/lib");
 
         var votesBefore = link.CallCount(nameof(ISessionLink.VoteAsync));
@@ -84,7 +84,7 @@ public class UiRootTests
     [InlineData(800, 600)]
     public void Pane_widths_are_equal_and_full_height(int width, int height)
     {
-        var (window, root, coordinator, _, _) = Build();
+        var (window, root, coordinator, _, _, _) = Build();
         _ = coordinator.OpenFolderAsync("/lib");
         window.Width = width;
         window.Height = height;
@@ -98,6 +98,22 @@ public class UiRootTests
         Assert.Equal(left.Bounds.Width, right.Bounds.Width, 0.5);
         Assert.Equal(panes.Bounds.Height, left.Bounds.Height, 0.5);
         Assert.Equal(panes.Bounds.Height, right.Bounds.Height, 0.5);
+    }
+
+    /// <summary>H10: stills decoded at the constructor default (960x1080) regardless of the real
+    /// window because nothing called <see cref="RankCoordinator.SetPaneSize"/>. Now RankView reports
+    /// the laid-out pane size on Loaded/SizeChanged.</summary>
+    [AvaloniaFact]
+    public void Opening_a_folder_forwards_the_laid_out_pane_size_to_the_still_source()
+    {
+        var (_, _, coordinator, _, _, stills) = Build();
+        _ = coordinator.OpenFolderAsync("/lib");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(stills.PaneWidth > 0);
+        Assert.True(stills.PaneHeight > 0);
+        Assert.NotEqual(960, stills.PaneWidth);
+        Assert.NotEqual(1080, stills.PaneHeight);
     }
 
     private static T? FindDescendant<T>(Control root, string? name = null) where T : Control

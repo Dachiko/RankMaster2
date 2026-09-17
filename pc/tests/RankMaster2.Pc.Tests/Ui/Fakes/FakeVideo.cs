@@ -1,3 +1,4 @@
+using System.Threading;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using RankMaster2.Pc.Video;
@@ -23,6 +24,12 @@ public sealed class FakeVideoSurface : IVideoSurface
 
     public bool Disposed { get; private set; }
     public Action? OnDisposed { get; set; }
+
+    /// <summary>A21 regression guard: the real <c>VideoSurface.Dispose</c> blocks synchronously,
+    /// waiting up to 2 s per surface for the file to release. Set this to prove <c>Quit()</c> never
+    /// calls <see cref="Dispose"/> at all any more -- if it ever does again, this makes the call
+    /// take real, measurable time instead of silently succeeding.</summary>
+    public bool DisposeBlocks { get; set; }
 
     public FakeVideoSurface(string paneName) => PaneName = paneName;
 
@@ -69,6 +76,7 @@ public sealed class FakeVideoSurface : IVideoSurface
 
     public void Dispose()
     {
+        if (DisposeBlocks) Thread.Sleep(500); // see DisposeBlocks
         Disposed = true;
         OnDisposed?.Invoke();
     }

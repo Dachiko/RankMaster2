@@ -134,7 +134,7 @@ internal static class Entry
             {
                 journal.Failure(
                     "the server publishes an open pairing window in its data directory",
-                    $"Looked for {string.Join(", ", Pairing.OfferFileNames)} in '{directory}' for 20 s and asked " +
+                    $"Looked for {Pairing.OfferFileName} in '{directory}' for 20 s and asked " +
                     $"for one with {Pairing.RequestFileName}.\n" +
                     "Point --data-dir at the server's data directory, or pass the code with --code.");
                 return journal.Summary();
@@ -157,11 +157,33 @@ internal static class Entry
                 journal.Note($"using the address from the pairing offer: {options.BaseUrl}");
             }
 
+            // SERVER_SPEC.md § 10.1.1: "The client MUST pin the fingerprint before sending the
+            // code. The code is a bearer secret: handing it to an unverified TLS peer hands it to
+            // whoever answered." The offer just read carries that fingerprint and came from a
+            // directory only the owner's account can write, so there is nothing to trust on first
+            // use — and trusting on first use here is precisely the window an attacker needs.
+            if (options.Pin is null && !options.Insecure)
+            {
+                if (offer.Fingerprint is not { Length: > 0 })
+                {
+                    journal.Failure(
+                        "the pairing offer carries the certificate fingerprint to pin before the code is sent " +
+                        "(SERVER_SPEC.md § 10.1.1)",
+                        "This offer has no `certificateFingerprint`, so the code cannot be sent to a verified\n" +
+                        "peer. Pass --pin sha256:… with the fingerprint you trust, or --insecure if you accept\n" +
+                        "handing the code to whoever answers.");
+                    return journal.Summary();
+                }
+
+                options.AdoptPin(offer.Fingerprint);
+                journal.Note("pinned the fingerprint from the pairing offer before sending the code");
+            }
+
             code = offer.Code;
         }
 
-        // Connect only now: the offer above may have just told us which address to use, and the
-        // client has to be built against the final one.
+        // Connect only now: the offer above may have just told us which address to use and which
+        // fingerprint to pin, and the client has to be built against the final ones.
         using var api = Connect(options, journal);
 
         journal.Step("exchange the code for a device token");

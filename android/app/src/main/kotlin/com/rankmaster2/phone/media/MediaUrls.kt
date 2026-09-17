@@ -1,25 +1,16 @@
 package com.rankmaster2.phone.media
 
-/** Which encoding of a still to ask for. SERVER_SPEC.md § 12.3. */
+/**
+ * Which encoding of a still to ask for. SERVER_SPEC.md § 12.3.
+ *
+ * `format=webp`, always: WebP is materially smaller than JPEG at the same visual quality for
+ * photographs, and a URL that names its own format is a cache key that cannot be got wrong - the
+ * response carries no `Vary: Accept`, so every cache on the way, ours included, keys on the URL and
+ * nothing else. The server also accepts an explicit `format=jpeg` and format negotiation with no
+ * `format=` at all (§ 12.3, rule 2); this app has never had a reason to ask for either.
+ */
 enum class StillFormat(internal val query: String?) {
-
-    /**
-     * `format=webp`. The default here, for two reasons: WebP is materially smaller than JPEG at the
-     * same visual quality for photographs, and a URL that names its own format is a cache key that
-     * cannot be got wrong - the response carries no `Vary: Accept`, so every cache on the way, ours
-     * included, keys on the URL and nothing else.
-     */
     WEBP("webp"),
-
-    /** `format=jpeg`. Explicit, for the same cache-key reason. */
-    JPEG("jpeg"),
-
-    /**
-     * Send no `format=` and let the `Accept` header decide (§ 12.3, rule 2). The response then
-     * carries `Vary: Accept` and the cache has to match on that header as well. Here for
-     * completeness; [WEBP] is what this app asks for.
-     */
-    NEGOTIATE(null),
 }
 
 /**
@@ -38,8 +29,7 @@ enum class StillFormat(internal val query: String?) {
 object MediaUrls {
 
     /**
-     * [link] (a `links.still` value) with `w=` and, unless [format] is [StillFormat.NEGOTIATE], a
-     * `format=` appended.
+     * [link] (a `links.still` value) with `w=` and `format=` appended.
      *
      * @throws IllegalArgumentException if [width] is not one of the six the server accepts - which
      *   would be a `400 unsupported_width` at the other end, and is a bug here, not a server

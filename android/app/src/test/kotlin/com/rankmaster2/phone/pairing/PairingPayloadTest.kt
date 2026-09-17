@@ -383,4 +383,38 @@ class PairingPayloadTest {
             assertTrue("“$host” should be accepted", result is PayloadResult.Ok)
         }
     }
+
+    @Test
+    fun `percent-escaped fields decode, and escapes are read as bytes not characters`() {
+        // K10. The decoder gathers escapes as bytes and converts once as UTF-8. The fields this
+        // payload carries are all ASCII today - an address, a port, a fingerprint, digits - so
+        // nothing here can currently arrive non-ASCII; what this pins is that the ordinary escaped
+        // case still decodes, and that the rewrite from char-at-a-time did not break it.
+        val now = 1_789_000_000L
+        val raw = "rm2://pair?v=1&host=rank%2Dpc&port=18611&fp=${"ab".repeat(32)}&code=418250&exp=${now + 60}"
+
+        val result = PairingPayloads.parse(raw, now)
+
+        val ok = result as? PayloadResult.Ok ?: error("expected the escaped host to be accepted, got $result")
+        assertEquals("rank-pc", ok.payload.host)
+    }
+
+    @Test
+    fun `a multi-byte escape becomes one character, not two`() {
+        // The defect K10 names: %C3%A9 is one character, e-acute, encoded as two bytes. Reading
+        // each byte as a character would yield "A(c)" - two characters of mojibake - and the host
+        // check would then be judging a different string from the one the PC encoded. Whichever
+        // way the host rule falls, it must fall on the correctly decoded name.
+        val now = 1_789_000_000L
+        val raw = "rm2://pair?v=1&host=caf%C3%A9&port=18611&fp=${"ab".repeat(32)}&code=418250&exp=${now + 60}"
+
+        when (val result = PairingPayloads.parse(raw, now)) {
+            is PayloadResult.Ok -> assertEquals("café", result.payload.host)
+            is PayloadResult.Rejected -> assertEquals(
+                "a non-ASCII host must be judged as the name it really is",
+                "host",
+                (result.reason as PayloadRejection.MalformedField).field,
+            )
+        }
+    }
 }

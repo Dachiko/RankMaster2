@@ -1,8 +1,9 @@
-// AUDIT throwaway test (not production). Proves whether RankCoordinator disposes the StillLease that
-// IStillSource.Show raises for a pane that is REUSED (same id, same mediaVersion, already Ready).
-// The real StillSource.Show raises Changed for BOTH ids synchronously with a fresh lease each
-// (StillSource.RaiseChanged -> StateOfLocked -> frame.Lease()); OnStillChanged only consumes a lease
-// when the pane is Waiting/Refining. If the pane is Ready (reused), the lease is dropped on the floor.
+// H8 regression test. IStillSource.Show raises Changed for BOTH ids synchronously with a fresh
+// lease each (StillSource.RaiseChanged -> StateOfLocked -> frame.Lease()), even for a pane that is
+// REUSED (same id, same mediaVersion, already Ready) -- OnStillChanged only applies a delivery when
+// the pane is Waiting/Refining. RankCoordinator.OnStillChanged now disposes a lease it does not
+// consume, so the DecodeBudget bytes behind a reused pane's redundant delivery are freed at once
+// instead of leaking until the process exits (the finding: ~124 votes before every decode failed).
 using System.Reflection;
 using RankMaster2.Pc.Link;
 using RankMaster2.Pc.Stills;
@@ -42,7 +43,7 @@ public class AuditLeaseLeakTests
     }
 
     [Fact]
-    public async Task Reused_pane_drops_the_lease_that_Show_raises_for_it()
+    public async Task Reused_pane_disposes_the_lease_that_Show_raises_for_it()
     {
         var link = new FakeSessionLink { Snapshot = SnapshotBuilder.Ranking(leftId: "a.jpg", rightId: "b.jpg", pairSeq: 1) };
         var stills = new FakeStillSource();
@@ -85,8 +86,9 @@ public class AuditLeaseLeakTests
         Assert.Equal(PaneKind.Ready, c.Rank.Left!.Kind);     // reused, as designed
         Assert.Same(leaseA1, c.Rank.Left.Lease);             // still carries the already-disposed lease
 
-        // The finding: the lease raised by Show for the reused pane is never disposed by anyone.
-        Assert.False(IsDisposed(leaseA2), "expected the leak: the coordinator never disposes a lease raised for a Ready pane");
-        Assert.Equal(2, Refs(frameA)); // cache's own ref + the leaked lease -> the buffer can never be freed
+        // H8, fixed: nobody else owns the lease Show raised for the reused pane, so the coordinator
+        // disposes it itself -- the buffer behind it can be freed at once.
+        Assert.True(IsDisposed(leaseA2), "H8 regressed: the coordinator no longer disposes a lease raised for a Ready pane");
+        Assert.Equal(1, Refs(frameA)); // only the cache's own ref remains
     }
 }

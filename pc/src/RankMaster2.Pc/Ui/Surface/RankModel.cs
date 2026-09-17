@@ -23,7 +23,8 @@ public sealed class RankModel
 
     /// <summary><c>Esc</c> arrived while a cue was playing or a call was in flight. Checked when the
     /// cue completes (don't vote) and set immediately raises <c>QuitRequested</c> either way
-    /// (plan § 3.1, "Esc during the cue").</summary>
+    /// (plan § 3.1, "Esc during the cue"). There is no un-setting it: once quitting, always --
+    /// <see cref="IsQuitting"/> is a plain getter, not a one-shot consume (C23).</summary>
     public bool Quitting { get; private set; }
 
     public DateTimeOffset PairArrivedAt { get; private set; }
@@ -98,13 +99,10 @@ public sealed class RankModel
 
     public void RequestQuit() => Quitting = true;
 
-    /// <summary>Consumes the quitting flag, returning what it was. Called once when a cue or an
-    /// in-flight call completes, so a second completion does not re-read a stale "don't send" flag.</summary>
-    public bool TakeQuitting()
-    {
-        var was = Quitting;
-        return was;
-    }
+    /// <summary>Whether Esc has been pressed since the last time a fresh action began (C23: named as
+    /// what it is, a getter -- the earlier <c>TakeQuitting()</c> named itself a consuming read but
+    /// never cleared the flag, which is in fact the right behaviour: once quitting, always).</summary>
+    public bool IsQuitting => Quitting;
 
     public void SetSnapshot(Snapshot snapshot) => Snapshot = snapshot;
 

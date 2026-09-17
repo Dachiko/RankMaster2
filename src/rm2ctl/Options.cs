@@ -14,6 +14,16 @@ public sealed class Options
 
     /// <summary>Adopt the host and port the server published in its pairing offer.</summary>
     public void AdoptBase(string host, int port) => BaseUrl = Normalise($"{host}:{port}");
+
+    /// <summary>
+    /// Pin the fingerprint the server published in its own pairing offer (A31). The offer is read
+    /// from the server's data directory, which only the owner's OS account can write, so it is a
+    /// better source for the pin than the certificate the peer presents — and § 10.1.1 requires the
+    /// pin to be in place <b>before</b> the code is sent, because the code is a bearer secret.
+    /// An explicit <c>--pin</c> wins; <c>--insecure</c> is the only way to send a code unpinned.
+    /// </summary>
+    public void AdoptPin(string fingerprint) => Pin = fingerprint;
+
     public string? Token { get; private set; } = Environment.GetEnvironmentVariable("RM2_TOKEN");
     public string? Pin { get; private set; } = Environment.GetEnvironmentVariable("RM2_PIN");
     public bool Insecure { get; private set; }
@@ -126,7 +136,9 @@ public sealed class Options
                                    code, for a phone to scan. Opening a window is deliberately not
                                    an HTTP operation, so this reads the server's data directory —
                                    run it on the server's own machine.
-                --take             Redeem the code here and print a device token instead.
+                --take             Redeem the code here and print a device token instead. The
+                                   fingerprint in the offer is pinned before the code is sent;
+                                   --pin overrides it and --insecure is the only way to skip it.
                 --code "418 250"   Redeem this code without reading the data directory.
                 --data-dir PATH    Where the server keeps its data (default: the per-user location).
                 --name NAME        The device name recorded against the token.

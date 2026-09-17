@@ -1,7 +1,7 @@
 <Project>
   <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
   <!--
-    Part A set 2.0.0 here to override a root that still said 1.1.4. The root is 2.0.0 now, so there
+    Part A set 2.0.0 here to override a root that still said 1.1.4. The root is 3.0.0 now, so there
     is nothing left to override and a second place to edit is a second place to forget. This file
     stays only to chain the import, which pc/ needs to inherit Product and AssemblyTitle.
   -->

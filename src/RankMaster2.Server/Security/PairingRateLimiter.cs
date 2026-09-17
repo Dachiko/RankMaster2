@@ -30,7 +30,9 @@ public sealed class PairingRateLimiter
 
     public static string KeyFor(IPAddress? address)
     {
-        if (address is null) return "unknown";
+        // No address on the connection (an in-process test request is the only real case) is
+        // treated as loopback, not as a distinct "unknown" bucket everyone would share — K13.
+        if (address is null) return "loopback";
 
         // ::ffff:192.168.1.5 and 192.168.1.5 are the same host and must share one bucket.
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();

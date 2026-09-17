@@ -52,8 +52,16 @@ public sealed class MediaOptions
     public int DecodeMemoryLimitMegabytes { get; set; } = 128;
 
     /// <summary>
-    /// The server's own data directory. Not named in SERVER_SPEC.md; chosen here as the platform
-    /// per-user local application data, which is writable without elevation on every target.
+    /// SERVER_SPEC.md § 2.4: the server data directory is <c>RankMaster2/Server</c> — one spelling,
+    /// everywhere, capital <c>R</c>, <c>M</c>, <c>S</c> — and the rendered-still cache lives at
+    /// <c>&lt;data dir&gt;/cache</c> under it. <see cref="Environment.SpecialFolder.LocalApplicationData"/>
+    /// already resolves to the platform's per-user data root (<c>%LOCALAPPDATA%</c> on Windows,
+    /// <c>$XDG_DATA_HOME</c> or <c>~/.local/share</c> elsewhere), which is writable without
+    /// elevation on every target — the same root § 2.4 names for the platform default.
+    /// <para/>
+    /// C12: this used to add its own <c>still</c> subdirectory, which § 2.4 does not call for and
+    /// which put the cache one level away from where the tray, the token store and the
+    /// certificate live.
     /// </summary>
     public static string DefaultCacheDirectory()
     {
@@ -61,7 +69,7 @@ public sealed class MediaOptions
         if (string.IsNullOrEmpty(local))
             local = Path.Combine(AppContext.BaseDirectory, "data");
 
-        return Path.Combine(local, "RankMaster2", "Server", "cache", "still");
+        return Path.Combine(local, "RankMaster2", "Server", "cache");
     }
 
     public string ResolvedCacheDirectory() =>

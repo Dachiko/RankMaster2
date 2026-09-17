@@ -100,8 +100,8 @@ class Rm2VideoPlayers(
             /* bufferForPlaybackMs = */ 500,
             /* bufferForPlaybackAfterRebufferMs = */ 1_000,
         )
-        // The hard ceiling, and the number that actually matters: 6 MB a player, so two panes cost
-        // about twelve between them rather than two hundred and seventy-five.
+        // The hard ceiling, and the number that actually matters: 32 MB a player, so two panes
+        // cost sixty-four between them rather than two hundred and seventy-five.
         .setTargetBufferBytes(TARGET_BUFFER_BYTES)
         // Size wins over duration: with a 4K file, 8 seconds is far more than 6 MB, and it is the
         // megabytes that have to be obeyed.
@@ -164,6 +164,41 @@ class Rm2VideoPlayers(
         player.prepare()
         return video
     }
+
+    /**
+     * One pane's video, released before its replacement is ever built.
+     *
+     * A pane keeps one `Slot` for as long as it is on screen and calls [acquire] every time the
+     * pair changes. This is the fix for A12: Compose's own remembered-object cleanup composes the
+     * replacement first and forgets the old value afterwards, so a `remember` keyed on the pair
+     * alone had a moment - two of them, at every pair change - where the outgoing and incoming
+     * player were both alive, decoder and surface each. `acquire` runs the two steps itself, in the
+     * only safe order: release what this slot already holds, *then* build and `prepare()` the next
+     * player. There is never a moment with two.
+     */
+    inner class Slot internal constructor(
+        private val build: (MediaRef, (MediaPaneState) -> Unit) -> Rm2Video? =
+            { ref, onState -> create(ref, onState) },
+    ) {
+        private var current: Rm2Video? = null
+
+        /** Releases whatever this slot holds, then builds and prepares [ref]'s player. */
+        fun acquire(ref: MediaRef, onState: (MediaPaneState) -> Unit = {}): Rm2Video? {
+            current?.release()
+            current = null
+            current = build(ref, onState)
+            return current
+        }
+
+        /** Gives back this slot's player, if it has one, without taking a new one. */
+        fun release() {
+            current?.release()
+            current = null
+        }
+    }
+
+    /** A fresh, empty slot - one per pane, kept for as long as the pane is on screen. */
+    fun newSlot(): Slot = Slot()
 
     internal companion object {
 
@@ -346,18 +381,17 @@ class Rm2Video internal constructor(
         }
     }
 
-    /** Play. Called when the pane is on screen and settled. */
-    fun start() {
-        if (!isReleased) maybePlayer?.playWhenReady = true
-    }
-
-    /** Pause, keeping the buffer, for a pane that is still on screen but not the one in front. */
-    fun stop() {
-        if (!isReleased) maybePlayer?.playWhenReady = false
+    /**
+     * Whether this plays, applied to the player already prepared - never by tearing it down and
+     * building another. The pane calls this from a `LaunchedEffect` keyed on `playing`, so a vote
+     * that stops the panes and a resume that starts them again cost one flag each, not a decoder.
+     */
+    fun setPlaying(playing: Boolean) {
+        if (!isReleased) maybePlayer?.playWhenReady = playing
     }
 
     /**
-     * Give back the decoder and the surface. After this the player is dead and [start] does
+     * Give back the decoder and the surface. After this the player is dead and [setPlaying] does
      * nothing. A pane that scrolls away calls this; a pane that forgets is the bug this class
      * exists to make obvious.
      */

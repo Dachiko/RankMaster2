@@ -3,8 +3,11 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using RankMaster2.Pc.App;
 using RankMaster2.Pc.Link;
+using RankMaster2.Pc.Stills;
 using RankMaster2.Pc.Ui.Surface;
+using RankMaster2.Pc.Video;
 
 namespace RankMaster2.Pc.Ui.Views;
 
@@ -30,6 +33,7 @@ public partial class RankView : UserControl, IRefreshable
     private Side? _lastCueSide;
     private bool _cuePlaying;
     private DispatcherTimer? _cursorTimer;
+    private int _panesPaintedOpenSequence = -1;
 
     public RankView(RankCoordinator coordinator)
     {
@@ -57,7 +61,30 @@ public partial class RankView : UserControl, IRefreshable
         _help.SetVersion(version);
 
         PointerMoved += (_, _) => OnPointerActivity();
-        Loaded += (_, _) => Focus();
+        Loaded += (_, _) => { Focus(); UpdatePaneSize(); };
+        _left.SizeChanged += (_, _) => UpdatePaneSize();
+    }
+
+    // ---- pane size (H10): stills and video decode at the size they are actually shown at ---------
+
+    /// <summary>
+    /// Both panes are always the same size (<see cref="Ui.Views.UiRootTests"/>'s own
+    /// "Pane_widths_are_equal_and_full_height"), so the left pane's bounds stand for "the" pane size.
+    /// Multiplied by the window's render scaling because <see cref="IStillSource.SetPaneSize"/> and
+    /// <see cref="IVideoSurface.SetPaneSize"/> both want physical device pixels, not DIPs.
+    /// </summary>
+    private void UpdatePaneSize()
+    {
+        var scaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
+        var width = (int)Math.Round(_left.Bounds.Width * scaling);
+        var height = (int)Math.Round(_left.Bounds.Height * scaling);
+        if (width < 1 || height < 1) return; // not laid out yet
+
+        _coordinator.SetPaneSize(width, height);
+
+        var pixels = new PixelSize(width, height);
+        _coordinator.LeftVideoSurface?.SetPaneSize(pixels);
+        _coordinator.RightVideoSurface?.SetPaneSize(pixels);
     }
 
     public void Refresh()
@@ -78,6 +105,7 @@ public partial class RankView : UserControl, IRefreshable
         _help.SetPinned(rank.HelpPinned);
         _toast.Render(rank.Toast, Clock.UtcNow);
         _lateLine.Render(rank.Busy, rank.InFlightSince, Clock);
+        MaybeMarkPanesPainted(rank);
 
         if (rank.CueSide != _lastCueSide)
         {
@@ -94,6 +122,20 @@ public partial class RankView : UserControl, IRefreshable
     /// <summary>Real time in production; a test sets a <see cref="FakeClock"/> to check the 300 ms
     /// still-ring grace, the 300 ms late-action line and the 2.5 s toast without a real wait.</summary>
     public IClock Clock { get; set; } = SystemClock.Instance;
+
+    /// <summary>A22: marks the startup kit's <c>panes_painted</c> point (plan A-startup-and-shell.md
+    /// § 6.5) the first time both panes hold pixels for a given open of <see cref="RankCoordinator.OpenSequence"/>
+    /// -- once per folder open, even though this <see cref="RankView"/> instance outlives any one
+    /// open (UiRoot caches it).</summary>
+    private void MaybeMarkPanesPainted(RankModel rank)
+    {
+        if (_panesPaintedOpenSequence == _coordinator.OpenSequence) return;
+        if (rank.Left is not { Kind: PaneKind.Ready or PaneKind.Refining }) return;
+        if (rank.Right is not { Kind: PaneKind.Ready or PaneKind.Refining }) return;
+
+        _panesPaintedOpenSequence = _coordinator.OpenSequence;
+        StartupClock.Mark("panes_painted");
+    }
 
     // ---- cursor hiding (plan § 1, compare screen only) -----------------------------------------
 

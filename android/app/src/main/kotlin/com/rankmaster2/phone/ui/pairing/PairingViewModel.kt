@@ -199,6 +199,12 @@ class PairingViewModel(
                 title = "The PC refused",
                 body = "${outcome.message}\n\n(${outcome.code})",
             )
+
+            PairingOutcome.LoopbackHost -> PairingFailure(
+                title = "This code won't work over Wi-Fi",
+                body = "This code points at the PC itself (127.0.0.1). The server is not " +
+                    "listening on the network — see SERVER_RUNNING.md on the PC.",
+            )
         }
     }
 }

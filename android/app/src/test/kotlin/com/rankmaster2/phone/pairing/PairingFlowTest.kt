@@ -9,6 +9,8 @@ import com.rankmaster2.phone.ui.pairing.PairingFlow
 import com.rankmaster2.phone.ui.pairing.PairingOutcome
 import com.rankmaster2.phone.ui.pairing.PairingPayload
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -58,6 +60,37 @@ class PairingFlowTest {
         val (flow, client) = flow(Rm2Result.Ok(ping("sha256:$fp")))
 
         flow.pair(payload, "Pixel 8")
+
+        assertEquals(listOf("ping", "pair"), client.calls)
+    }
+
+    // A29: the tray's default bind is loopback, and a QR built from it carries `host=127.0.0.1` -
+    // an address that names the phone doing the scanning, never the PC. Caught before a client for
+    // it is even built, let alone pinged.
+    @Test
+    fun `a loopback host is refused before the ping`() = runTest {
+        val factory = PairingClientFactory { _, _, _ -> error("must not build a client for a loopback host") }
+        val flow = PairingFlow(factory, FakeCredentials())
+
+        val outcome = flow.pair(payload.copy(host = "127.0.0.1"), "Pixel 8")
+
+        assertEquals(PairingOutcome.LoopbackHost, outcome)
+    }
+
+    @Test
+    fun `localhost and the IPv6 loopback are caught the same way`() = runTest {
+        val factory = PairingClientFactory { _, _, _ -> error("must not build a client for a loopback host") }
+        val flow = PairingFlow(factory, FakeCredentials())
+
+        assertEquals(PairingOutcome.LoopbackHost, flow.pair(payload.copy(host = "localhost"), "Pixel 8"))
+        assertEquals(PairingOutcome.LoopbackHost, flow.pair(payload.copy(host = "::1"), "Pixel 8"))
+    }
+
+    @Test
+    fun `an ordinary LAN address is not mistaken for loopback`() = runTest {
+        val (flow, client) = flow(Rm2Result.Ok(ping("sha256:$fp")))
+
+        flow.pair(payload.copy(host = "192.168.1.42"), "Pixel 8")
 
         assertEquals(listOf("ping", "pair"), client.calls)
     }
@@ -150,6 +183,10 @@ class PairingFlowTest {
 
     // -- the refusals ----------------------------------------------------------------------------
 
+    // T2d: SERVER_SPEC.md § 5.1 puts `attemptsRemaining` in the envelope's `details` object,
+    // alongside a plain-text `message` - never folded into the message itself. This fixture used
+    // to fake a message the server never produces; it now fakes the shape the server actually
+    // sends.
     @Test
     fun `a wrong code comes back as invalid, with the attempts left when the server said`() = runTest {
         val (flow, _) = flow(
@@ -157,7 +194,8 @@ class PairingFlowTest {
             pairResult = Rm2Result.Refused(
                 status = 401,
                 code = ErrorCodes.INVALID_PAIRING_CODE,
-                message = """That pairing code is not valid. {"attemptsRemaining":3}""",
+                message = "That pairing code is not valid.",
+                details = buildJsonObject { put("attemptsRemaining", 3) },
             ),
         )
 
@@ -186,14 +224,17 @@ class PairingFlowTest {
         assertEquals(PairingOutcome.NotOpen, flow.pair(payload, "Pixel 8"))
     }
 
+    // Same shape as attemptsRemaining above (§ 15): `retryAfterSeconds` lives in `details`, not
+    // folded into the message.
     @Test
     fun `the rate limit is its own outcome`() = runTest {
         val (flow, _) = flow(
             Rm2Result.Ok(ping("sha256:$fp")),
             pairResult = Rm2Result.Refused(
-                429,
-                ErrorCodes.TOO_MANY_REQUESTS,
-                """Too many attempts. {"retryAfterSeconds":41}""",
+                status = 429,
+                code = ErrorCodes.TOO_MANY_REQUESTS,
+                message = "Too many attempts.",
+                details = buildJsonObject { put("retryAfterSeconds", 41) },
             ),
         )
 

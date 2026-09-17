@@ -14,11 +14,11 @@ public sealed record Notice(NoticeSurface Surface, string? Text)
     public static Notice ForStartScreen(string text) => new(NoticeSurface.StartScreen, text);
 }
 
-/// <summary>The six things <see cref="RankCoordinator"/> can ask <see cref="ISessionLink"/> for.
+/// <summary>The five things <see cref="RankCoordinator"/> can ask <see cref="ISessionLink"/> for.
 /// <see cref="Notices"/> needs this because <see cref="Snapshot.LastAction"/> does not exist for a
 /// save (it never touches the pair), so "what did we just ask for" cannot always be read back out
 /// of the result alone.</summary>
-public enum RequestedAction { Vote, Skip, Discard, Special, Undo, Save }
+public enum RequestedAction { Vote, Discard, Special, Undo, Save }
 
 /// <summary>
 /// lastAction → toast sentence; refusal/unreachable → toast, start-screen sentence, or silence
@@ -30,8 +30,8 @@ public enum RequestedAction { Vote, Skip, Discard, Special, Undo, Save }
 /// protocol" (plan § 1) itself. So this class does not re-derive English from a status code; it
 /// picks Toast vs StartScreen from <see cref="Failure.Fatal"/> and otherwise shows B's sentence
 /// unedited. What plan § 3.5 still leaves to E: which of Applied/Resynchronised/NotSent gets a
-/// toast at all (vote and skip stay silent; file actions, undo and save do not — plan § 1.2), and
-/// the exact undo sentence, which the plan itself specifies (§ 3.4) and B does not.
+/// toast at all (a vote stays silent; file actions, undo and save do not — plan § 1.2), and the
+/// exact undo sentence, which the plan itself specifies (§ 3.4) and B does not.
 /// </summary>
 public static class Notices
 {
@@ -39,11 +39,14 @@ public static class Notices
     {
         ActionResult.Applied applied => ForApplied(requested, applied.Snapshot),
 
-        // "Adopted"/"Resynchronised": three of five cases carry the truth and need nothing said
-        // (link's own doc comment on ActionResult). The one exception is LandedEarlier: B is
-        // telling us this exact request applied on an earlier, lost-response attempt, which is
-        // exactly Applied in every way that matters to the owner.
+        // "Adopted"/"Resynchronised": most reasons carry the truth and need nothing said (link's own
+        // doc comment on ActionResult). Two exceptions. LandedEarlier: B is telling us this exact
+        // request applied on an earlier, lost-response attempt, which is exactly Applied in every way
+        // that matters to the owner. SessionReplaced (A24): the folder was reopened out from under
+        // him after a 404 no_session mid-action -- silence here would hide a session count that just
+        // reset to zero for no reason he saw.
         ActionResult.Resynchronised { Why: ResyncReason.LandedEarlier } r => ForApplied(requested, r.Snapshot),
+        ActionResult.Resynchronised { Why: ResyncReason.SessionReplaced } => Notice.Toast("Folder reopened — session count restarts"),
         ActionResult.Resynchronised => Notice.Silent,
 
         ActionResult.Refused refused => ForFailure(refused.Failure),
@@ -61,7 +64,7 @@ public static class Notices
         RequestedAction.Undo => ForUndo(snapshot.LastAction),
         RequestedAction.Discard or RequestedAction.Special => ForFileAction(snapshot.LastAction),
 
-        // Vote, Skip: "Toasts no longer echo every action... no 'vote recorded', no 'skipped'" (plan § 1.2).
+        // Vote: "Toasts no longer echo every action... no 'vote recorded'" (plan § 1.2).
         _ => Notice.Silent,
     };
 
@@ -90,9 +93,13 @@ public static class Notices
         return lastAction.UndoneType switch
         {
             ActionTypes.Vote => Notice.Toast("Vote taken back"),
-            ActionTypes.Skip => Notice.Toast("Skip taken back"),
             ActionTypes.Discard => Notice.Toast($"Discard taken back{suffix}"),
             ActionTypes.Special => Notice.Toast($"Moved back out of special 1{suffix}"),
+
+            // The PC client no longer sends that action (removed from its surface, 2026-09-17), but
+            // the server still accepts it from elsewhere (rm2ctl) and a session's last action can
+            // still be one when this client opens it -- nothing to say here since there is no key
+            // for it any more.
             _ => Notice.Silent,
         };
     }

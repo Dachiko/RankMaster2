@@ -29,7 +29,19 @@ public sealed class WakingSessionLink : ISessionLink
     public Failure? LastFailure => _inner.LastFailure;
     public bool IsBusy => _inner.IsBusy;
 
-    public Task<ConnectResult> ConnectAsync(CancellationToken ct = default) => _inner.ConnectAsync(ct);
+    public async Task<ConnectResult> ConnectAsync(CancellationToken ct = default)
+    {
+        StartupClock.Mark("link_connecting");
+        var result = await _inner.ConnectAsync(ct).ConfigureAwait(false);
+        if (result is ConnectResult.Connected connected)
+        {
+            StartupClock.Mark("link_ready");
+            if (connected.StartedServer)
+                StartupClock.Mark("tray_started");
+        }
+
+        return result;
+    }
 
     public async Task<OpenResult> OpenAsync(string folder, CancellationToken ct = default)
     {

@@ -63,6 +63,13 @@ fun FullScreenViewer(
     val pages = listOf(left, right)
     val state = rememberPagerState(initialPage = if (showing == Side.LEFT) 0 else 1) { pages.size }
 
+    // K11: one page notion, `state.settledPage` - not `currentPage` (moves mid-drag, before the
+    // swipe is committed) and not a separately-tracked variable. Everything below that needs to
+    // know which page is showing - which one plays, which dot is filled, whose name is on
+    // screen, what "back" means - reads this same value, so they can never disagree with each
+    // other or with what [onShow] just told the screen behind.
+    val shownPage = state.settledPage
+
     // Tell the screen behind which one is showing, so it knows what "back" and the panes should do.
     LaunchedEffect(state) {
         snapshotFlow { state.settledPage }.collect { page ->
@@ -88,7 +95,7 @@ fun FullScreenViewer(
                 MediaPane(
                     ref = pages[page],
                     media = media,
-                    playing = state.settledPage == page,
+                    playing = shownPage == page,
                 )
             }
         }
@@ -109,16 +116,16 @@ fun FullScreenViewer(
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(bottom = 26.dp),
         ) {
-            Dot(filled = state.currentPage == 0)
+            Dot(filled = shownPage == 0)
             Box(Modifier.size(width = 8.dp, height = 1.dp))
-            Dot(filled = state.currentPage == 1)
+            Dot(filled = shownPage == 1)
         }
 
         // A media id is a filename (SERVER_SPEC.md section 11.1), and filenames from a real
         // library are long. Unbounded, this wrapped into a paragraph of grey text across the
         // bottom of the photograph it is naming.
         Text(
-            text = pages[state.currentPage].id,
+            text = pages[shownPage].id,
             color = Color(0x80ECEEF2),
             fontSize = 11.sp,
             maxLines = 1,

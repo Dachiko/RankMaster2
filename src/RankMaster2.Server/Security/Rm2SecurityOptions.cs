@@ -29,8 +29,10 @@ public sealed class Rm2SecurityOptions
 
     /// <summary>
     /// Where the certificate and the device store live. Empty means the per-user default:
-    /// <c>%LOCALAPPDATA%\RankMaster2\server</c> on Windows, <c>$XDG_DATA_HOME/rankmaster2/server</c>
-    /// (or <c>~/.local/share/rankmaster2/server</c>) elsewhere.
+    /// <c>%LOCALAPPDATA%\RankMaster2\Server</c> on Windows, <c>$XDG_DATA_HOME/RankMaster2/Server</c>
+    /// (or <c>~/.local/share/RankMaster2/Server</c>) elsewhere. SERVER_SPEC.md § 2.4: one spelling,
+    /// capital <c>R</c>, <c>M</c>, <c>S</c> — a lowercase <c>server</c> or <c>rankmaster2</c> here
+    /// silently split this server's own state across two directories on Linux (C12).
     /// </summary>
     public string DataDirectory { get; set; } = "";
 
@@ -69,6 +71,19 @@ public sealed class Rm2SecurityOptions
     public int? TokenLifetimeDays { get; set; }
 
     /// <summary>
+    /// SERVER_SPEC.md § 2.4, § 13.1: how long a choice may sit in memory before the database is
+    /// written. <c>0</c> restores the old behaviour exactly — every choice is saved before its
+    /// response leaves. Not on <c>/ping</c>; a client neither negotiates this nor needs to know it.
+    /// </summary>
+    public int SaveDelaySeconds { get; set; } = 2;
+
+    /// <summary>
+    /// SERVER_SPEC.md § 2.4, § 13.1: how many choices may sit unsaved before a write is forced,
+    /// whichever of this and <see cref="SaveDelaySeconds"/> is reached first.
+    /// </summary>
+    public int MaxUnsavedChoices { get; set; } = 5;
+
+    /// <summary>
     /// Resolves <see cref="DataDirectory"/>, honouring the <c>RM2_DATA_DIR</c> environment variable
     /// when configuration says nothing.
     /// </summary>
@@ -81,17 +96,18 @@ public sealed class Rm2SecurityOptions
         if (!string.IsNullOrWhiteSpace(fromEnv))
             return Path.GetFullPath(fromEnv.Trim());
 
+        // SERVER_SPEC.md § 2.4: one spelling everywhere, "RankMaster2/Server" — capital R, M, S.
         if (OperatingSystem.IsWindows())
         {
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(local, "RankMaster2", "server");
+            return Path.Combine(local, "RankMaster2", "Server");
         }
 
         var xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
         var home = string.IsNullOrWhiteSpace(xdg)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share")
             : xdg;
-        return Path.Combine(home, "rankmaster2", "server");
+        return Path.Combine(home, "RankMaster2", "Server");
     }
 
     /// <summary>

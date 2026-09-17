@@ -29,11 +29,15 @@ public sealed class LazinessTests : IDisposable
 
         var backend = new FakeBackend();
         using var engine = new VideoEngine(backend, new SyncUiThread());
-        var probe = new MediaProbe();
 
-        var policy = probe.Classify(_dir); // the only thing a stills session touches in Video/
+        // C22: Video/ no longer carries a second, unused MediaProbe/FolderPolicy — folder
+        // classification is Stills.MediaProbe's job (exercised by App/WakingSessionLinkTests). All
+        // this proves now is the same thing by the only means Video/ itself has: naming files by
+        // extension touches nothing native.
+        var sawVideo = Directory.EnumerateFiles(_dir)
+            .Any(f => RankMaster2.MediaExtensions.KindOf(Path.GetFileName(f)) == RankMaster2.MediaKind.Video);
 
-        Assert.Equal(FolderPolicy.Stills, policy);
+        Assert.False(sawVideo);
         Assert.Equal(0, backend.InitializeCalls);
         Assert.Equal(VideoEngineStatus.Asleep, engine.EngineStatus);
     }

@@ -70,8 +70,10 @@ public sealed class Reply
 
         if (Body.Length == 0) return "(no body)";
 
+        // Journal.Summarise, not Journal.Trim: a body carrying a device token or a pairing code must
+        // not appear here half-printed above the full copy the command prints itself (K3).
         if (ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
-            return Journal.Trim(Text.ReplaceLineEndings(" "), 110);
+            return Journal.Summarise(Text.ReplaceLineEndings(" "), 110);
 
         return $"{Body.Length} bytes of {ContentType ?? "unknown type"}";
     }

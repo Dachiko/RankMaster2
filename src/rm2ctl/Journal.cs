@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace RankMaster2.Cli;
 
 /// <summary>
@@ -37,7 +39,7 @@ public sealed class Journal(bool verbose)
     public void Request(string method, string url, string? body = null)
     {
         Console.WriteLine($"    -> {method} {url}");
-        if (body is not null && Verbose) Console.WriteLine($"       {Trim(body, 300)}");
+        if (body is not null && Verbose) Console.WriteLine($"       {Summarise(body, 300)}");
     }
 
     /// <summary>The response line, with a one-line summary of what came back.</summary>
@@ -112,4 +114,26 @@ public sealed class Journal(bool verbose)
 
     public static string Trim(string text, int limit) =>
         text.Length <= limit ? text : text[..limit] + $"... (+{text.Length - limit} chars)";
+
+    /// <summary>
+    /// A payload, shortened for one line — except that the trim never cuts a credential in half.
+    /// A device token or a pairing code is printed <b>once</b>, in full, by the command that obtained
+    /// it; a summary line that carried a truncated copy of the same token above the real one cost the
+    /// media fork a whole run of copying the wrong string (K3). So a body or a response that carries
+    /// <c>token</c> or <c>code</c> has that value replaced here, and the full value is printed by the
+    /// command itself.
+    /// </summary>
+    public static string Summarise(string text, int limit) =>
+        Trim(CarriesCredential(text) ? Redact(text) : text, limit);
+
+    /// <summary>Does this JSON payload carry a device token or a pairing code?</summary>
+    public static bool CarriesCredential(string text) =>
+        CredentialField.IsMatch(text);
+
+    private static readonly Regex CredentialField =
+        new("\"(token|code)\"\\s*:\\s*\"[^\"]*\"", RegexOptions.IgnoreCase);
+
+    private static string Redact(string text) =>
+        CredentialField.Replace(text, match =>
+            match.Value[..match.Value.IndexOf('"', 1)] + "\": \"(printed in full below)\"");
 }

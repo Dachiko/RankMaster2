@@ -5,6 +5,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Writes the reason the app died to a file, and shows it on the next launch.
@@ -20,7 +21,17 @@ object CrashLog {
 
     private const val FILE = "last-crash.txt"
 
+    /**
+     * A14: `MainActivity.onCreate` calls [install] every time the activity is (re)created - a
+     * config change, or coming back from the "pair again" flow - and each call used to wrap
+     * whatever handler the previous call had installed. After N recreates one crash was written
+     * N times, each wrapper calling the next. One process, one handler.
+     */
+    private val installed = AtomicBoolean(false)
+
     fun install(context: Context) {
+        if (!installed.compareAndSet(false, true)) return
+
         val app = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
 

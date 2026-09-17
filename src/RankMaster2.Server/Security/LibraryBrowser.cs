@@ -21,7 +21,18 @@ public sealed record BrowseEntry(
     bool HasDatabase,
     bool Accessible);
 
+/// <summary>
+/// SERVER_SPEC.md § 10.15, A5: with <c>counts=false</c> the count keys are absent from the wire
+/// altogether, not present as <c>null</c> — a root with thousands of children is bytes cheaper that
+/// way. A distinct shape rather than an attribute on <see cref="BrowseEntry"/> because the same
+/// entry type is also used, with the count fields genuinely <c>null</c>, when a child cannot be
+/// enumerated under <c>counts=true</c> — that <c>null</c> must stay on the wire.
+/// </summary>
+public sealed record BrowseEntryNoCounts(string Name, string Path, bool HasDatabase, bool Accessible);
+
 public sealed record BrowseResponse(string Path, string? Parent, IReadOnlyList<BrowseEntry> Entries);
+
+public sealed record BrowseResponseNoCounts(string Path, string? Parent, IReadOnlyList<BrowseEntryNoCounts> Entries);
 
 public enum BrowseFailure
 {
@@ -31,7 +42,13 @@ public enum BrowseFailure
     AccessDenied,
 }
 
-public sealed record BrowseResult(BrowseResponse? Response, BrowseFailure Failure);
+/// <summary>
+/// <see cref="Response"/> is a <see cref="BrowseResponse"/> or a <see cref="BrowseResponseNoCounts"/>
+/// depending on the request's <c>counts</c> flag; <c>object</c> rather than a shared base type
+/// because ASP.NET Core's JSON writer serialises a value declared as <c>object</c> by its run-time
+/// type, so the endpoint needs no branch of its own to pick a shape.
+/// </summary>
+public sealed record BrowseResult(object? Response, BrowseFailure Failure);
 
 /// <summary>
 /// <c>GET /libraries/roots</c> and <c>GET /libraries/browse</c> (SERVER_SPEC.md § 10.14, § 10.15).
@@ -201,30 +218,31 @@ public sealed class LibraryBrowser
 
         children.Sort((a, b) => string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
 
-        var entries = new List<BrowseEntry>(children.Count);
-        foreach (var child in children)
-        {
-            // One unreadable child never fails the listing (SERVER_SPEC.md § 10.15).
-            entries.Add(DescribeChild(child, counts));
-        }
+        // A5: counts=false gets a slimmer entry shape with the count keys absent, not a BrowseEntry
+        // full of nulls — the wire-size point only holds if the keys are actually gone.
+        object response = counts
+            ? new BrowseResponse(canonicalPath, PathGuard.ParentOf(canonicalPath),
+                children.Select(DescribeChildWithCounts).ToList())
+            : new BrowseResponseNoCounts(canonicalPath, PathGuard.ParentOf(canonicalPath),
+                children.Select(DescribeChildNoCounts).ToList());
 
-        var response = new BrowseResponse(canonicalPath, PathGuard.ParentOf(canonicalPath), entries);
         return new BrowseResult(response, BrowseFailure.None);
     }
 
-    private static BrowseEntry DescribeChild(string child, bool counts)
+    private static BrowseEntryNoCounts DescribeChildNoCounts(string child)
     {
-        var name = System.IO.Path.GetFileName(child);
-        if (string.IsNullOrEmpty(name)) name = child;
-
+        var name = NameOf(child);
         var hasDatabase = SafeFileExists(System.IO.Path.Combine(child, JsonCatalog.FileName));
 
-        if (!counts)
-        {
-            // counts=false still has to answer `accessible` honestly, so probe with a single
-            // directory read rather than a full enumeration.
-            return new BrowseEntry(name, child, null, null, null, hasDatabase, CanRead(child));
-        }
+        // counts=false still has to answer `accessible` honestly, so probe with a single directory
+        // read rather than a full enumeration.
+        return new BrowseEntryNoCounts(name, child, hasDatabase, CanRead(child));
+    }
+
+    private static BrowseEntry DescribeChildWithCounts(string child)
+    {
+        var name = NameOf(child);
+        var hasDatabase = SafeFileExists(System.IO.Path.Combine(child, JsonCatalog.FileName));
 
         var tally = Count(child);
         if (tally is null)
@@ -237,6 +255,12 @@ public sealed class LibraryBrowser
         // SPEC.md § Media policy: mixed folder ranks stills only; a videos-only folder ranks videos.
         var eligible = stills > 0 ? stills : videos;
         return new BrowseEntry(name, child, stills, videos, eligible >= 2, hasDatabase, Accessible: true);
+    }
+
+    private static string NameOf(string child)
+    {
+        var name = System.IO.Path.GetFileName(child);
+        return string.IsNullOrEmpty(name) ? child : name;
     }
 
     private static (int Stills, int Videos, bool Unknown)? Count(string folder)

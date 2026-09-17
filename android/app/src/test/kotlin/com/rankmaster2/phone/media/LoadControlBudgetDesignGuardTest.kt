@@ -5,8 +5,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * What a video player is allowed to hoard, in numbers, because the defaults killed this app twice.
+ * A design guard, not a behaviour test: it asserts the *arithmetic* behind the buffer constants,
+ * not that a real ExoPlayer honours them (T2c - that would need a phone).
  *
+ * What a video player is allowed to hoard, in numbers, because the defaults killed this app twice.
  * Media3's own constants: a muxed stream may buffer DEFAULT_MUXED_BUFFER_SIZE bytes and reads 50
  * seconds ahead. On the owner's phone the heap ceiling is 256 MB and the ranking screen runs two
  * players at once, so the default allowance is larger than the entire heap before a single
@@ -15,7 +17,7 @@ import org.junit.Test
  *
  * This test is the arithmetic, kept where it will fail if someone raises the ceiling again.
  */
-class LoadControlBudgetTest {
+class LoadControlBudgetDesignGuardTest {
 
     /** The heap the crash reported: `target footprint 268435456`. With largeHeap, roughly double. */
     private val heapBytes = 268_435_456L

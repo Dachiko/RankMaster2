@@ -26,6 +26,9 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.22" />
+    <!-- G-audit-remediation.md § 3.8 PC-VIDEO, T3a: LibVlcTests skips visibly (Skip.If) instead of
+         returning early when libvlc/fixtures are absent on this box. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
     <!-- § 8 test 11 (Manifest_MatchesPackage): restored for its files only, exactly like the main
          project, so the test can check plugins.keep.txt against the real package contents. -->
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" ExcludeAssets="all" GeneratePathProperty="true" />

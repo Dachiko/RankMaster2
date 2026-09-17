@@ -97,21 +97,12 @@ public sealed class PairingService
     public string RequestFilePath => Path.Combine(_dataDirectory, RequestFileName);
     public string OfferFilePath => Path.Combine(_dataDirectory, OfferFileName);
 
-    public bool IsWindowOpen(DateTimeOffset now)
-    {
-        lock (_gate) return _window is { } w && w.IsOpen(now);
-    }
-
     /// <summary>Opens a window, replacing any window already open, and publishes the offer.</summary>
     public PairingOffer OpenWindow(DateTimeOffset now)
     {
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", CultureInfo.InvariantCulture);
         var expiresAt = now.Add(_options.PairingWindow);
-        var window = new Window(
-            CodeHash: HashCode(code),
-            OpenedAt: now,
-            ExpiresAt: expiresAt,
-            AttemptsRemaining: Math.Max(1, _options.PairingWindowAttempts));
+        var window = new Window(HashCode(code), now, expiresAt);
 
         lock (_gate) _window = window;
 
@@ -132,12 +123,19 @@ public sealed class PairingService
     }
 
     /// <summary>
-    /// Redeems a code. <paramref name="rateLimitKey"/> is the source address bucket; the limit is
-    /// charged before anything about the window is revealed, so the limit applies to attackers who
-    /// are only probing for whether pairing is open.
+    /// Redeems a code. <paramref name="sourceAddress"/> is the caller's own address key (the same
+    /// key <see cref="PairingRateLimiter.KeyFor"/> produces): SERVER_SPEC.md § 10.11 gives every
+    /// address its own five-guess budget against the one open window, so a stranger who spends their
+    /// own five cannot touch anyone else's count, and the owner's own five tries are never at risk of
+    /// being burned by somebody else's guessing. An address that exhausts its own budget is refused
+    /// forever after — for that address only; the window and every other address's budget stand. The
+    /// per-minute rate limit is charged by the caller, before this runs, so it applies even to a
+    /// caller who is only probing for whether pairing is open.
     /// </summary>
-    public PairAttemptResult Redeem(string? suppliedCode, string? deviceName, DateTimeOffset now)
+    public PairAttemptResult Redeem(string? suppliedCode, string? deviceName, string sourceAddress, DateTimeOffset now)
     {
+        var addressKey = string.IsNullOrEmpty(sourceAddress) ? "unknown" : sourceAddress;
+
         lock (_gate)
         {
             var window = _window;
@@ -145,11 +143,13 @@ public sealed class PairingService
             if (window is null || now > window.ExpiresAt.Add(Grace))
                 return new PairAttemptResult(PairOutcome.NotOpen);
 
-            if (!window.IsOpen(now))
+            var remainingForAddress = window.AttemptsRemaining(addressKey, DefaultAttempts);
+
+            if (window.Consumed || now > window.ExpiresAt || remainingForAddress <= 0)
             {
-                // Spent, exhausted or expired but still remembered: the caller learns the code is
-                // no good, not whether it was ever right.
-                return new PairAttemptResult(PairOutcome.InvalidCode, AttemptsRemaining: 0);
+                // Spent (by anyone), expired, or this address's own budget is already gone: the
+                // caller learns the code is no good, not whether it was ever right.
+                return new PairAttemptResult(PairOutcome.InvalidCode, AttemptsRemaining: Math.Max(0, remainingForAddress));
             }
 
             var normalised = Normalise(suppliedCode);
@@ -157,32 +157,42 @@ public sealed class PairingService
 
             if (!matches)
             {
-                var remaining = window.AttemptsRemaining - 1;
-                _window = window with { AttemptsRemaining = remaining };
+                var remaining = remainingForAddress - 1;
+                window.SetAttemptsRemaining(addressKey, remaining);
                 if (remaining <= 0)
                 {
-                    // The budget is what makes six digits safe. Once it is gone the window is dead;
-                    // the owner opens a new one.
-                    _window = window with { AttemptsRemaining = 0, Consumed = true };
+                    // This address's own budget is what makes six digits safe against it. Once it
+                    // is gone the window is dead for this address only; every other address (in
+                    // particular the owner's own devices) keeps its own five and the code itself
+                    // still redeems. The offer file is still taken down: it is this address's own
+                    // doing, and nothing but the human-read code on the tray's screen survives it.
                     TryDelete(OfferFilePath);
                 }
 
                 return new PairAttemptResult(PairOutcome.InvalidCode, AttemptsRemaining: Math.Max(0, remaining));
             }
 
-            // Single use: the window dies here, inside the same lock that matched it, so two
-            // concurrent requests with the right code cannot both be issued a token.
-            _window = window with { Consumed = true, AttemptsRemaining = 0 };
-
             var expiresAt = _options.TokenLifetimeDays is { } days && days > 0
                 ? now.AddDays(days)
                 : (DateTimeOffset?)null;
 
+            // A32: persist before marking the window consumed, not after. TokenStore.Issue writes
+            // devices.json itself; if that throws (a full disk, a permissions problem), the window
+            // must stay valid — the caller gets 500 internal_error from the transport's generic
+            // handler and can simply try the same code again, rather than finding the window spent
+            // for a token that was never actually issued.
             var issued = _tokens.Issue(deviceName, now, expiresAt);
+
+            // Single use: only now does the window die, still inside the same lock that matched it,
+            // so two concurrent requests with the right code cannot both be issued a token.
+            _window = window with { Consumed = true };
+
             TryDelete(OfferFilePath);
             return new PairAttemptResult(PairOutcome.Paired, issued);
         }
     }
+
+    private int DefaultAttempts => Math.Max(1, _options.PairingWindowAttempts);
 
     public int? ChargeRateLimit(string key, DateTimeOffset now) => _limiter.TryAttempt(key, now);
 
@@ -274,14 +284,23 @@ public sealed class PairingService
 
     private static byte[] HashCode(string code) => SHA256.HashData(Encoding.UTF8.GetBytes(code));
 
-    private sealed record Window(
-        byte[] CodeHash,
-        DateTimeOffset OpenedAt,
-        DateTimeOffset ExpiresAt,
-        int AttemptsRemaining,
-        bool Consumed = false)
+    /// <summary>
+    /// One open window. <see cref="_attemptsBySource"/> tracks each caller's own remaining guesses
+    /// separately (SERVER_SPEC.md § 10.11); it is a mutable dictionary on an otherwise-immutable
+    /// record because every access to it happens inside <see cref="PairingService._gate"/> already —
+    /// there is no concurrency to protect it from, only bookkeeping to keep off the record's own
+    /// identity, since replacing the window (<c>with</c>) must not reset the counts.
+    /// </summary>
+    private sealed record Window(byte[] CodeHash, DateTimeOffset OpenedAt, DateTimeOffset ExpiresAt)
     {
-        public bool IsOpen(DateTimeOffset now) =>
-            !Consumed && AttemptsRemaining > 0 && now <= ExpiresAt;
+        private readonly Dictionary<string, int> _attemptsBySource = new(StringComparer.Ordinal);
+
+        public bool Consumed { get; init; }
+
+        public int AttemptsRemaining(string address, int defaultAttempts) =>
+            _attemptsBySource.TryGetValue(address, out var remaining) ? remaining : defaultAttempts;
+
+        public void SetAttemptsRemaining(string address, int remaining) =>
+            _attemptsBySource[address] = Math.Max(0, remaining);
     }
 }

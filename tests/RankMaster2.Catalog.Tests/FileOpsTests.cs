@@ -94,6 +94,53 @@ public class FileOpsTests
     private static MediaRecord Rec(string name, double mu, double sigma) =>
         new(new MediaId(name), MediaKind.Still, new Rating(mu, sigma), 0, 0, 0);
 
+    /// <summary>
+    /// The cancellable overload, on its own: a destination that is present and held open by another
+    /// program makes the move fail and be retried, and the cancel flag is noticed <b>between</b> those
+    /// retries — within one retry interval, not after the whole budget (SERVER_SPEC.md § 10.16, the
+    /// owner's slow-USB-drive reason for the Cancel button). Nothing is moved, and the source is
+    /// exactly where it was.
+    /// </summary>
+    [Fact]
+    public void MoveWithRetry_honours_a_cancel_between_retries_of_a_locked_move()
+    {
+        var dir = Temp();
+        var source = Path.Combine(dir, "shot.jpg");
+        var dest = Path.Combine(dir, "000001-7f3a.jpg");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        File.WriteAllBytes(dest, [9]);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        using (new FileStream(dest, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var polls = 0;
+            Assert.Throws<OperationCanceledException>(() =>
+                FileOps.MoveWithRetry(source, dest, () => polls++ >= 1));
+        }
+        clock.Stop();
+
+        Assert.True(clock.ElapsedMilliseconds < 500,
+            $"the cancel took {clock.ElapsedMilliseconds} ms; twenty retries of fifty are the budget it " +
+            "must not wait out.");
+        Assert.True(File.Exists(source), "a cancelled move moves nothing.");
+        Assert.Equal([9], File.ReadAllBytes(dest));
+    }
+
+    /// <summary>The desktop app's overload is untouched: no cancel flag, the whole budget, then the throw.</summary>
+    [Fact]
+    public void MoveWithRetry_without_a_cancel_flag_still_refuses_to_overwrite()
+    {
+        var dir = Temp();
+        var source = Path.Combine(dir, "shot.jpg");
+        var dest = Path.Combine(dir, "taken.jpg");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        File.WriteAllBytes(dest, [9]);
+
+        Assert.Throws<IOException>(() => FileOps.MoveWithRetry(source, dest, retries: 2));
+        Assert.True(File.Exists(source));
+        Assert.Equal([9], File.ReadAllBytes(dest));
+    }
+
     private static string Temp()
     {
         var dir = Path.Combine(Path.GetTempPath(), "rm2-ops-" + Guid.NewGuid().ToString("N"));

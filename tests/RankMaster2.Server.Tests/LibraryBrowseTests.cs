@@ -118,7 +118,7 @@ public class LibraryBrowseTests(Rm2Server server) : SessionTestBase(server)
     }
 
     [Fact]
-    public async Task Counts_false_nulls_every_count_rather_than_zeroing_it()
+    public async Task Counts_false_omits_the_count_keys_rather_than_nulling_them()
     {
         var parent = Path.Combine(Path.GetTempPath(), "rm2-tests", $"browse-nocount-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Path.Combine(parent, "child"));
@@ -133,15 +133,17 @@ public class LibraryBrowseTests(Rm2Server server) : SessionTestBase(server)
 
             var entry = response.JsonBody.GetProperty("entries").EnumerateArray().Single();
 
-            // § 10.15: "With counts=false, every count is null and rankable is null." The difference
-            // from zero is the whole point — null means unknown, 0 means counted and empty.
+            // § 10.15 (A5): "With counts=false ... the count keys are absent ... rather than emitted
+            // as null." The shorter wire is the whole point, so the keys must be gone, not merely null.
             foreach (var field in new[] { "stillCount", "videoCount", "rankable" })
-                Assert.True(entry.GetProperty(field).ValueKind == JsonValueKind.Null,
-                    $"SERVER_SPEC.md § 10.15: with counts=false, {field} is null — not zero. " +
-                    $"Got {entry.GetProperty(field)}.");
+                Assert.False(entry.TryGetProperty(field, out _),
+                    $"SERVER_SPEC.md § 10.15: with counts=false, {field} is absent from the entry — not " +
+                    "present as null. It was present.");
 
-            // hasDatabase is a single File.Exists, so it survives counts=false.
+            // name, path, hasDatabase and accessible survive counts=false.
+            Assert.Equal("child", entry.GetProperty("name").GetString());
             Assert.Equal(JsonValueKind.False, entry.GetProperty("hasDatabase").ValueKind);
+            Assert.Equal(JsonValueKind.True, entry.GetProperty("accessible").ValueKind);
         }
         finally
         {

@@ -21,7 +21,6 @@ namespace RankMaster2.Server.Security;
 /// </summary>
 internal static class SecurityMiddleware
 {
-    private const int MaxJsonBodyBytes = 65536;
     private const string ApiBase = "/api/v1";
     private const string DeviceItemKey = "rm2.device";
 
@@ -69,7 +68,7 @@ internal static class SecurityMiddleware
                 {
                     await ApiResults.WriteErrorAsync(context, ErrorCodes.PayloadTooLarge,
                         "The JSON body is larger than the 65536 byte limit.",
-                        new { maxBytes = MaxJsonBodyBytes });
+                        new { maxBytes = Limits.MaxJsonBodyBytes });
                 }
                 else
                 {
@@ -172,18 +171,18 @@ internal static class SecurityMiddleware
         if (declared is null && !chunked) return true;   // genuinely bodyless POST
         if (declared == 0) return true;
 
-        if (declared > MaxJsonBodyBytes)
+        if (declared > Limits.MaxJsonBodyBytes)
         {
             await ApiResults.WriteErrorAsync(context, ErrorCodes.PayloadTooLarge,
                 "The JSON body is larger than the 65536 byte limit.",
-                new { maxBytes = MaxJsonBodyBytes });
+                new { maxBytes = Limits.MaxJsonBodyBytes });
             return false;
         }
 
         // A chunked body declares no length, so cap it at the transport instead of trusting it.
         var sizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
         if (sizeFeature is { IsReadOnly: false })
-            sizeFeature.MaxRequestBodySize = MaxJsonBodyBytes;
+            sizeFeature.MaxRequestBodySize = Limits.MaxJsonBodyBytes;
 
         var contentType = context.Request.ContentType;
         if (expectsJson && !IsJson(contentType))

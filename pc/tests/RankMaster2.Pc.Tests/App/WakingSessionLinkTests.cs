@@ -83,6 +83,110 @@ public sealed class WakingSessionLinkTests
         Assert.Equal(1, engine.WarmUpCalls);
     }
 
+    /// <summary>G-audit-remediation.md § 3.7, A22: none of these three marks were ever emitted, so
+    /// the startup kit could never answer "how long did connecting take". <c>tray_started</c> is
+    /// conditional on <see cref="ConnectResult.Connected.StartedServer"/> — connecting to a server
+    /// that was already running must not claim it started one.</summary>
+    [Fact]
+    public async Task ConnectAsync_MarksConnecting_Ready_AndTrayStartedWhenTrue()
+    {
+        StartupClock.ResetForTests();
+        StartupClock.Start("test");
+
+        var engine = new FakeVideoSurfaceFactory();
+        var gate = NewGate(engine);
+        var probe = FakeMediaProbe.Returns(new FolderMedia(Stills: 0, Videos: 0));
+        var inner = new FakeSessionLink
+        {
+            OnConnect = _ => Task.FromResult<ConnectResult>(
+                new ConnectResult.Connected("https://127.0.0.1", Enrolled: false, StartedServer: true)),
+        };
+
+        var link = new WakingSessionLink(inner, probe, gate);
+        await link.ConnectAsync();
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"rm2-waking-{Guid.NewGuid():N}.log");
+        try
+        {
+            StartupClock.Flush(logPath);
+            var parsed = StartupClock.ParseLine(File.ReadAllLines(logPath).Last());
+            Assert.NotNull(parsed);
+            Assert.True(parsed!.Marks.ContainsKey("link_connecting"));
+            Assert.True(parsed.Marks.ContainsKey("link_ready"));
+            Assert.True(parsed.Marks.ContainsKey("tray_started"));
+        }
+        finally
+        {
+            File.Delete(logPath);
+        }
+    }
+
+    [Fact]
+    public async Task ConnectAsync_StartedServerFalse_NeverMarksTrayStarted()
+    {
+        StartupClock.ResetForTests();
+        StartupClock.Start("test");
+
+        var engine = new FakeVideoSurfaceFactory();
+        var gate = NewGate(engine);
+        var probe = FakeMediaProbe.Returns(new FolderMedia(Stills: 0, Videos: 0));
+        var inner = new FakeSessionLink
+        {
+            OnConnect = _ => Task.FromResult<ConnectResult>(
+                new ConnectResult.Connected("https://127.0.0.1", Enrolled: false, StartedServer: false)),
+        };
+
+        var link = new WakingSessionLink(inner, probe, gate);
+        await link.ConnectAsync();
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"rm2-waking-{Guid.NewGuid():N}.log");
+        try
+        {
+            StartupClock.Flush(logPath);
+            var parsed = StartupClock.ParseLine(File.ReadAllLines(logPath).Last());
+            Assert.NotNull(parsed);
+            Assert.True(parsed!.Marks.ContainsKey("link_ready"));
+            Assert.False(parsed.Marks.ContainsKey("tray_started"));
+        }
+        finally
+        {
+            File.Delete(logPath);
+        }
+    }
+
+    [Fact]
+    public async Task ConnectAsync_Failed_NeverMarksReadyOrTrayStarted()
+    {
+        StartupClock.ResetForTests();
+        StartupClock.Start("test");
+
+        var engine = new FakeVideoSurfaceFactory();
+        var gate = NewGate(engine);
+        var probe = FakeMediaProbe.Returns(new FolderMedia(Stills: 0, Videos: 0));
+        var inner = new FakeSessionLink
+        {
+            OnConnect = _ => Task.FromResult<ConnectResult>(new ConnectResult.Failed(TestSnapshots.SomeFailure)),
+        };
+
+        var link = new WakingSessionLink(inner, probe, gate);
+        await link.ConnectAsync();
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"rm2-waking-{Guid.NewGuid():N}.log");
+        try
+        {
+            StartupClock.Flush(logPath);
+            var parsed = StartupClock.ParseLine(File.ReadAllLines(logPath).Last());
+            Assert.NotNull(parsed);
+            Assert.True(parsed!.Marks.ContainsKey("link_connecting"));
+            Assert.False(parsed.Marks.ContainsKey("link_ready"));
+            Assert.False(parsed.Marks.ContainsKey("tray_started"));
+        }
+        finally
+        {
+            File.Delete(logPath);
+        }
+    }
+
     [Fact]
     public async Task ProbeThrows_DecidesNothing()
     {

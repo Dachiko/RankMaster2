@@ -209,7 +209,7 @@ class OkHttpRm2Client(
     }
 
     /**
-     * The § 4 envelope, read field by field rather than through [ErrorEnvelope] in one go.
+     * The § 4 envelope, read field by field rather than decoded as one strict-typed object.
      *
      * The reason is `error.session`: a strict decode of the whole envelope loses `code` and
      * `message` too if the embedded snapshot has anything wrong with it, and then the app cannot

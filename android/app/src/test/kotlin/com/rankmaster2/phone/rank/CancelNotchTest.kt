@@ -115,7 +115,7 @@ class CancelNotchTest {
     }
 
     @Test
-    fun `the top is about 62 percent of the base, so the slope reads as a slope`() {
+    fun `the top is about 62 percent of the base, so the slope reads as a slope (design guard)`() {
         val outline = notchOutline(along, depth, shoulder)
         val controls = outline.segments.filterIsInstance<NotchSegment.Curve>().map(NotchSegment.Curve::control)
 

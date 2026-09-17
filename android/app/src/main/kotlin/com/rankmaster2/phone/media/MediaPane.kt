@@ -39,8 +39,7 @@ import com.rankmaster2.phone.net.MediaRef
  * One pane of the ranking screen: whatever [ref] is, drawn to fit, at the right number of pixels.
  *
  * This is the whole public surface of the media layer as far as a screen is concerned. It takes a
- * `MediaRef` and a size and shows the right thing for its kind; it reports what it is showing
- * through [onState] so the screen can offer "discard this side" when a file has gone.
+ * `MediaRef` and a size and shows the right thing for its kind.
  *
  * What a tap means is not here, on purpose. This composable installs no gesture of any kind, so
  * whatever the ranking screen wraps it in is the only thing that can consume one.
@@ -55,16 +54,15 @@ fun MediaPane(
      * in the background, or both panes playing when only one is in front.
      */
     playing: Boolean = true,
-    onState: (MediaPaneState) -> Unit = {},
 ) {
     BoxWithConstraints(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         val panePx = paneLongEdgePx(constraints)
         when {
             // § 11.3: the snapshot already told us the file has left the folder. No request to
             // make, and nothing to wait for.
-            ref.isMissing -> StatusPane(MediaPaneState.Gone, onState)
-            ref.isVideo -> VideoPane(ref, media, playing, onState)
-            else -> StillPane(ref, media, panePx, onState)
+            ref.isMissing -> StatusPane(MediaPaneState.Gone)
+            ref.isVideo -> VideoPane(ref, media, playing)
+            else -> StillPane(ref, media, panePx)
         }
     }
 }
@@ -87,19 +85,13 @@ private fun StillPane(
     ref: MediaRef,
     media: Rm2Media,
     panePx: Int,
-    onState: (MediaPaneState) -> Unit,
 ) {
     val context = LocalContext.current
     val url = media.stillUrl(ref, panePx)
     var state by remember(ref.id, url) { mutableStateOf<MediaPaneState>(MediaPaneState.Loading) }
 
-    fun report(next: MediaPaneState) {
-        state = next
-        onState(next)
-    }
-
     if (url == null) {
-        StatusPane(MediaPaneState.Gone, onState)
+        StatusPane(MediaPaneState.Gone)
         return
     }
 
@@ -112,12 +104,12 @@ private fun StillPane(
         // picture. The decoded bitmap is what is laid out - never the width that was requested,
         // which the server is free to have undershot (§ 12.3).
         contentScale = ContentScale.Fit,
-        onLoading = { report(MediaPaneState.Loading) },
-        onSuccess = { report(MediaPaneState.Loaded) },
-        onError = { report(MediaFailures.stateOf(it.result.throwable)) },
+        onLoading = { state = MediaPaneState.Loading },
+        onSuccess = { state = MediaPaneState.Loaded },
+        onError = { state = MediaFailures.stateOf(it.result.throwable) },
     )
 
-    if (state !is MediaPaneState.Loaded) StatusPane(state, onState = {})
+    if (state !is MediaPaneState.Loaded) StatusPane(state)
 }
 
 @OptIn(UnstableApi::class)
@@ -126,45 +118,41 @@ private fun VideoPane(
     ref: MediaRef,
     media: Rm2Media,
     playing: Boolean,
-    onState: (MediaPaneState) -> Unit,
 ) {
     val url = media.videoUrl(ref)
     var state by remember(ref.id, url) { mutableStateOf<MediaPaneState>(MediaPaneState.Loading) }
 
     if (url == null) {
-        StatusPane(MediaPaneState.Gone, onState)
+        StatusPane(MediaPaneState.Gone)
         return
     }
 
-    // Keyed on the ref *and on whether this pane should exist at all*: `playing = false` releases
-    // the player rather than pausing it. Pausing keeps the buffer - up to megabytes of a 4K file -
-    // and the whole reason a covered pane stops is to give that memory back.
-    // Keyed on the ref: a new pair builds a new player and releases the old one in the same breath.
-    // This is the release that stops two videos on screen becoming an OutOfMemory - and it is a
-    // RememberObserver rather than a DisposableEffect so that a composition which is started and
-    // then abandoned releases its decoder too, which is the case a DisposableEffect never sees.
-    val slot = remember(ref.id, url, playing) {
-        if (!playing) {
-            VideoSlot(null)
-        } else {
-            VideoSlot(media.players.create(ref) { next ->
-                state = next
-                onState(next)
-            })
-        }
-    }
-    val video = slot.video
+    // One slot for as long as this pane is in the composition - one per side, since the ranking
+    // screen calls this composable once for the left pane and once for the right, and Compose's
+    // own per-call-site memory keeps each pane's `remember` separate from the other's. A pair
+    // change asks the *same* slot for the next player, and Rm2VideoPlayers.Slot.acquire releases
+    // what it already holds before building the next one (A12). It is a RememberObserver rather
+    // than a DisposableEffect so that a composition which is started and then abandoned releases
+    // its decoder too, which is the case a DisposableEffect never sees.
+    val holder = remember(media) { VideoSlotHolder(media.players.newSlot()) }
 
-    LaunchedEffect(video) { video?.start() }
+    // Keyed on the ref only - not on `playing` any more. Building a fresh player every time the
+    // screen pauses or resumes the panes was its own source of overlapping players; whether this
+    // plays is `setPlaying` below, on the one player this pane already has.
+    val video = remember(ref.id, url) {
+        holder.slot.acquire(ref) { next -> state = next }
+    }
+
+    LaunchedEffect(video, playing) { video?.setPlaying(playing) }
 
     if (!playing) {
-        // Stopped means gone, not paused. The pane stays black until it is in front again.
-        StatusPane(MediaPaneState.Loading, onState = {})
+        // Not in front means black, not gone: the player keeps its buffer and its place.
+        StatusPane(MediaPaneState.Loading)
         return
     }
 
     if (video == null) {
-        StatusPane(MediaPaneState.Gone, onState)
+        StatusPane(MediaPaneState.Gone)
         return
     }
 
@@ -211,7 +199,7 @@ private fun VideoPane(
         onRelease = { view -> view.player = null },
     )
 
-    if (state !is MediaPaneState.Loaded) StatusPane(state, onState = {})
+    if (state !is MediaPaneState.Loaded) StatusPane(state)
 
     // The mark. A red dot in the corner of a video that cannot hold its frame rate, so the limit
     // being hit is something the owner *sees*, on his own files, in the middle of ranking - rather
@@ -228,11 +216,11 @@ private fun VideoPane(
     }
 }
 
-/** Holds a player for exactly as long as the composition that asked for it. */
-private class VideoSlot(val video: Rm2Video?) : RememberObserver {
+/** Keeps one pane's video slot alive for exactly as long as the composition that asked for it. */
+private class VideoSlotHolder(val slot: Rm2VideoPlayers.Slot) : RememberObserver {
     override fun onRemembered() = Unit
-    override fun onForgotten() { video?.release() }
-    override fun onAbandoned() { video?.release() }
+    override fun onForgotten() = slot.release()
+    override fun onAbandoned() = slot.release()
 }
 
 /**
@@ -243,9 +231,7 @@ private class VideoSlot(val video: Rm2Video?) : RememberObserver {
  * buried in a pane the user is about to tap.
  */
 @Composable
-private fun StatusPane(state: MediaPaneState, onState: (MediaPaneState) -> Unit) {
-    LaunchedEffect(state) { onState(state) }
-
+private fun StatusPane(state: MediaPaneState) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when (state) {
             is MediaPaneState.Loading -> CircularProgressIndicator(color = Color(0xFF6B7280))

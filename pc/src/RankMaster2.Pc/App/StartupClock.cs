@@ -153,6 +153,32 @@ public static class StartupClock
         }
     }
 
+    /// <summary>G-audit-remediation.md A21: appends one free-form diagnostic line — not a launch's
+    /// marks line — to the same log file and under the same last-200-lines cap as
+    /// <see cref="Flush"/>. For failures that must never block whatever is happening (a blanket
+    /// <c>catch</c> that used to discard them) but are still worth a line in the owner's only
+    /// debugging channel. Never throws.</summary>
+    public static void AppendNote(string text, string? path = null)
+    {
+        path ??= DefaultLogPath();
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+
+            var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : new List<string>();
+            lines.Add($"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ} note {text}");
+            if (lines.Count > 200)
+                lines = lines.Skip(lines.Count - 200).ToList();
+            File.WriteAllLines(path, lines);
+        }
+        catch
+        {
+            // The log is a diagnostic aid, not load-bearing; never let this take anything down.
+        }
+    }
+
     private static bool LinesShareLaunch(string previous, string current)
     {
         var pTimestamp = previous.Split(' ', 2).FirstOrDefault();

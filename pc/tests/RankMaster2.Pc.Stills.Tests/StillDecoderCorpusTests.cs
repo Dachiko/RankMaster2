@@ -23,12 +23,12 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
             : (codec.Info.Width, codec.Info.Height);
     }
 
-    [Fact]
+    [SkippableFact]
     public void The_bomb_is_decoded_inside_a_small_budget()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "bomb_40mp.jpg");
-        if (!File.Exists(path)) { output.WriteLine("skipped: bomb_40mp.jpg not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "bomb_40mp.jpg");
+        Skip.If(!File.Exists(path), "bomb_40mp.jpg not in the corpus");
 
         var budget = new DecodeBudget(32L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -47,12 +47,12 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         Assert.Equal(0, budget.LiveBytes);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("landscape")]
     [InlineData("portrait")]
     public void All_eight_orientations_of_one_shape_give_one_displayed_size(string shape)
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, "corpus not built");
 
         var budget = new DecodeBudget(128L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -60,7 +60,7 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
 
         for (var orientation = 1; orientation <= 8; orientation++)
         {
-            var path = Path.Combine(Stills, $"exif_{shape}_{orientation}.jpg");
+            var path = Path.Combine(Stills!, $"exif_{shape}_{orientation}.jpg");
             if (!File.Exists(path)) continue;
 
             var result = decoder.Decode(path, 960, 1080);
@@ -70,7 +70,7 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
             frame.Release();
         }
 
-        if (seen.Count == 0) { output.WriteLine($"skipped: no exif_{shape}_* files in the corpus"); return; }
+        Skip.If(seen.Count == 0, $"no exif_{shape}_* files in the corpus");
         Assert.Equal(8, seen.Count);
 
         var distinctSizes = seen.Select(s => (s.W, s.H)).Distinct().ToArray();
@@ -85,15 +85,15 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         Assert.Equal(expectedSource, distinctSources[0]);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("landscape")]
     [InlineData("portrait")]
     public void Orientation_is_applied_to_the_pixels_not_just_the_size(string shape)
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, "corpus not built");
 
-        var basePath = Path.Combine(Stills, $"exif_{shape}_1.jpg");
-        if (!File.Exists(basePath)) { output.WriteLine($"skipped: exif_{shape}_1.jpg not in the corpus"); return; }
+        var basePath = Path.Combine(Stills!, $"exif_{shape}_1.jpg");
+        Skip.If(!File.Exists(basePath), $"exif_{shape}_1.jpg not in the corpus");
 
         var budget = new DecodeBudget(128L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -106,7 +106,7 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         {
             for (var orientation = 2; orientation <= 8; orientation++)
             {
-                var path = Path.Combine(Stills, $"exif_{shape}_{orientation}.jpg");
+                var path = Path.Combine(Stills!, $"exif_{shape}_{orientation}.jpg");
                 if (!File.Exists(path)) continue;
 
                 var result = decoder.Decode(path, 960, 1080);
@@ -146,13 +146,13 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         yield return ["wide_gamut.jpg"];
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(RealEncodings))]
     public void Every_real_encoding_gives_a_frame_of_the_expected_size(string name)
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, name);
-        if (!File.Exists(path)) { output.WriteLine($"skipped: {name} not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, name);
+        Skip.If(!File.Exists(path), $"{name} not in the corpus");
 
         AssertExpectedSize(path, name);
     }
@@ -192,14 +192,14 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         Assert.Equal(0, budget.LiveBytes);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("tiny.png", 320, 240)]
     [InlineData("wide_gamut.jpg", 600, 400)]
     public void A_small_image_is_delivered_at_source_size(string name, int expectedW, int expectedH)
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, name);
-        if (!File.Exists(path)) { output.WriteLine($"skipped: {name} not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, name);
+        Skip.If(!File.Exists(path), $"{name} not in the corpus");
 
         var budget = new DecodeBudget(64L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -215,12 +215,12 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         frame.Release();
     }
 
-    [Fact]
+    [SkippableFact]
     public void A_png_decodes_at_full_size_then_downscales()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "interlaced.png");
-        if (!File.Exists(path)) { output.WriteLine("skipped: interlaced.png not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "interlaced.png");
+        Skip.If(!File.Exists(path), "interlaced.png not in the corpus");
 
         var budget = new DecodeBudget(16L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -237,12 +237,12 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         frame.Release();
     }
 
-    [Fact]
+    [SkippableFact]
     public void The_first_frame_of_an_animated_gif_is_used()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "animated.gif");
-        if (!File.Exists(path)) { output.WriteLine("skipped: animated.gif not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "animated.gif");
+        Skip.If(!File.Exists(path), "animated.gif not in the corpus");
 
         var budget = new DecodeBudget(16L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -265,12 +265,12 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
     private static void AssertNear(int expected, int actual, int tolerance) =>
         Assert.True(Math.Abs(expected - actual) <= tolerance, $"expected {expected:x2} +/- {tolerance}, got {actual:x2}");
 
-    [Fact]
+    [SkippableFact]
     public void Alpha_is_premultiplied()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "lossless.webp");
-        if (!File.Exists(path)) { output.WriteLine("skipped: lossless.webp not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "lossless.webp");
+        Skip.If(!File.Exists(path), "lossless.webp not in the corpus");
 
         var budget = new DecodeBudget(16L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -291,12 +291,12 @@ public class StillDecoderCorpusTests(ITestOutputHelper output)
         frame.Release();
     }
 
-    [Fact]
+    [SkippableFact]
     public void A_pane_change_is_honoured_at_the_next_decode()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "photo_large.jpg");
-        if (!File.Exists(path)) { output.WriteLine("skipped: photo_large.jpg not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "photo_large.jpg");
+        Skip.If(!File.Exists(path), "photo_large.jpg not in the corpus");
 
         var budget = new DecodeBudget(64L * 1024 * 1024);
         var decoder = new StillDecoder(budget);

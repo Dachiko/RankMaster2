@@ -46,10 +46,4 @@ public sealed class SecurityState
     /// except <c>/ping</c> answers <c>503 server_shutting_down</c>.
     /// </summary>
     public volatile bool Ready;
-
-    /// <summary>
-    /// True once Kestrel was actually told to serve TLS with the pinned certificate. False under the
-    /// in-memory test server, where there is no transport to configure.
-    /// </summary>
-    public bool TlsConfigured { get; set; }
 }

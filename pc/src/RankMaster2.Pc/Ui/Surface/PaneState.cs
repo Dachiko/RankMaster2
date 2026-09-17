@@ -16,8 +16,9 @@ public enum PaneKind
     Ready,
 
     /// <summary>
-    /// A still preview is shown and the full decode is pending (SPEC.md: "paint the first decodable
-    /// image as soon as one exists; refine in place"). Accepts everything, same as Ready.
+    /// Reserved (C26). A still preview is shown and the full decode is pending (SPEC.md: "paint the
+    /// first decodable image as soon as one exists; refine in place"). Accepts everything, same as
+    /// Ready.
     /// <para/>
     /// The real <see cref="IStillSource"/> this plan was built against (pc/src/RankMaster2.Pc/Stills)
     /// delivers one decode per id — <see cref="StillState.Ready"/> or <see cref="StillState.Failed"/>,
@@ -33,7 +34,7 @@ public enum PaneKind
     Gone,
 
     /// <summary>The file is there but will not decode/play. Accepts this side's discard or special,
-    /// skip, and a vote for the *other* side. Not a vote for this side.</summary>
+    /// and a vote for the *other* side. Not a vote for this side.</summary>
     Undecodable,
 
     /// <summary>D's engine is <c>Unavailable</c>/<c>Failed</c>. Same acceptance as Undecodable.</summary>
@@ -125,8 +126,8 @@ public sealed record PaneState
             PaneKind.Waiting => false,
             PaneKind.Ready or PaneKind.Refining => true,
             PaneKind.Gone => intent == mine,
-            PaneKind.Undecodable => intent == mine || intent == mineSpecial || intent == Intent.Skip || intent == otherVote,
-            PaneKind.NoVideoEngine => intent == mine || intent == mineSpecial || intent == Intent.Skip,
+            PaneKind.Undecodable => intent == mine || intent == mineSpecial || intent == otherVote,
+            PaneKind.NoVideoEngine => intent == mine || intent == mineSpecial,
             _ => false,
         };
     }

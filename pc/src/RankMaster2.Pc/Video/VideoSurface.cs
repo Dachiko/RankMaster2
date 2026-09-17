@@ -17,6 +17,11 @@ public sealed class VideoSurface : IVideoSurface, IPlayerCallbacks
 {
     private static readonly VideoStats EmptyStats = new(0, 0, "", 0, 0, 0.0, false, TimeSpan.Zero);
 
+    // A22/§ 6.5: the "D" mark the startup kit needs to answer the owner's own question about what
+    // annoys him at launch. Once per process — the first frame of the first surface any pane ever
+    // shows, not once per surface.
+    private static int _firstVideoFrameMarked;
+
     private readonly VideoEngine _engine;
     private readonly IPlayerBackend _backend;
     private readonly IUiThread _ui;
@@ -329,6 +334,9 @@ public sealed class VideoSurface : IVideoSurface, IPlayerCallbacks
             State = VideoSurfaceState.Playing;
             StateChanged?.Invoke(this);
         }
+
+        if (Interlocked.CompareExchange(ref _firstVideoFrameMarked, 1, 0) == 0)
+            RankMaster2.Pc.App.StartupClock.Mark("first_video_frame");
 
         FrameChanged?.Invoke(this);
     }

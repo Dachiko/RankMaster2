@@ -72,4 +72,55 @@ class Rm2VideoPlayersTest {
         val error = PlaybackException("no", null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
         assertTrue(Rm2VideoPlayers.stateOf(error) is MediaPaneState.Unavailable)
     }
+
+    // -- A12: a slot never holds two players at once ---------------------------------------
+
+    @Test
+    fun `acquiring twice for one pane releases the old player before the new one is built`() {
+        // A12: the old code let Compose build the replacement player before it forgot the one it
+        // replaced, so a single pane could hold two live players for a frame - four, across both
+        // panes, at every pair change. Slot.acquire does the two steps itself, in the safe order:
+        // release what it already holds, then build. This proves the order without a real player,
+        // by having the build side of the *second* acquire look at whether the first one is
+        // already released.
+        lateinit var previous: Rm2Video
+        var previousWasReleasedBeforeSecondBuild = false
+        var calls = 0
+
+        val ref = MediaFixtures.video("a.mp4")
+        val slot = players().Slot { _, _ ->
+            calls++
+            if (calls == 2) previousWasReleasedBeforeSecondBuild = previous.isReleased
+            Rm2VideoPlayers.testVideo().also { previous = it }
+        }
+
+        val first = slot.acquire(ref)
+        requireNotNull(first)
+        assertTrue(!first.isReleased)
+
+        val second = slot.acquire(ref)
+        requireNotNull(second)
+
+        assertTrue(
+            "the previous player must be released before the next one is built",
+            previousWasReleasedBeforeSecondBuild,
+        )
+        assertTrue(first.isReleased)
+        assertTrue(!second.isReleased)
+    }
+
+    @Test
+    fun `a slot releases its player on release, and a second release is a no-op`() {
+        val video = Rm2VideoPlayers.testVideo()
+        val slot = players().Slot { _, _ -> video }
+
+        val acquired = slot.acquire(MediaFixtures.video("a.mp4"))
+        assertEquals(video, acquired)
+        assertTrue(!video.isReleased)
+
+        slot.release()
+        assertTrue(video.isReleased)
+
+        slot.release() // must not throw, and must not touch an already-released video again
+    }
 }

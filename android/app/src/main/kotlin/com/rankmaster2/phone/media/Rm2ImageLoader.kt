@@ -63,8 +63,9 @@ object Rm2ImageLoader {
                 MemoryCache.Builder(context)
                     // Two panes of a full-screen photograph, plus the pair behind them.
                     // 15%, not 25%. A quarter of the heap in decoded photographs is a luxury
-                    // when two video players are competing for the same 256 MB - and the disk
-                    // cache, not this, is what makes a photograph instant on second sight.
+                    // when two video players are competing for the same heap - `largeHeap` gives
+                    // this app about 512 MB, not the 256 MB a phone hands out by default - and the
+                    // disk cache, not this, is what makes a photograph instant on second sight.
                     .maxSizePercent(0.15)
                     .build()
             }

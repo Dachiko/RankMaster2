@@ -40,7 +40,6 @@ public class PaneStateTests
     [InlineData(Side.Left, Intent.DiscardLeft, true)]
     [InlineData(Side.Left, Intent.VoteLeft, false)]
     [InlineData(Side.Left, Intent.VoteRight, false)] // "not a vote for either side"
-    [InlineData(Side.Left, Intent.Skip, false)]
     [InlineData(Side.Left, Intent.SpecialLeft, false)]
     [InlineData(Side.Left, Intent.DiscardRight, false)]
     [InlineData(Side.Right, Intent.DiscardRight, true)]
@@ -54,7 +53,6 @@ public class PaneStateTests
     [Theory]
     [InlineData(Intent.DiscardLeft, true)]
     [InlineData(Intent.SpecialLeft, true)]
-    [InlineData(Intent.Skip, true)]
     [InlineData(Intent.VoteRight, true)]  // vote for the OTHER side
     [InlineData(Intent.VoteLeft, false)]  // not a vote for THIS side
     public void Undecodable_left_accepts_per_table(Intent intent, bool expected)
@@ -66,7 +64,6 @@ public class PaneStateTests
     [Theory]
     [InlineData(Intent.DiscardRight, true)]
     [InlineData(Intent.SpecialRight, true)]
-    [InlineData(Intent.Skip, true)]
     [InlineData(Intent.VoteLeft, true)]
     [InlineData(Intent.VoteRight, false)]
     public void Undecodable_right_accepts_per_table(Intent intent, bool expected)
@@ -78,7 +75,6 @@ public class PaneStateTests
     [Theory]
     [InlineData(Intent.DiscardLeft, true)]
     [InlineData(Intent.SpecialLeft, true)]
-    [InlineData(Intent.Skip, true)]
     [InlineData(Intent.VoteLeft, false)]
     [InlineData(Intent.VoteRight, false)]
     public void NoVideoEngine_left_accepts_per_table(Intent intent, bool expected)
@@ -155,7 +151,7 @@ public class PaneStateTests
 
     private static IEnumerable<Intent> AllPairIntents() =>
     [
-        Intent.VoteLeft, Intent.VoteRight, Intent.Skip,
+        Intent.VoteLeft, Intent.VoteRight,
         Intent.DiscardLeft, Intent.DiscardRight, Intent.SpecialLeft, Intent.SpecialRight,
     ];
 }

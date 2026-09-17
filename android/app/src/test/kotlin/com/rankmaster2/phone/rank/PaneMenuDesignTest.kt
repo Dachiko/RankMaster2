@@ -128,7 +128,7 @@ class PaneMenuDesignTest {
     }
 
     @Test
-    fun `the menu is short enough that there is always somewhere to put it`() {
+    fun `the menu is short enough that there is always somewhere to put it (design guard)`() {
         // It opens under the thumb and flips above the press when there is no room below, so it
         // only ever needs half the screen minus wherever the thumb was. Under half of a small
         // phone's 640 dp leaves that always true.
@@ -136,7 +136,7 @@ class PaneMenuDesignTest {
     }
 
     @Test
-    fun `every row is a real touch target`() {
+    fun `every row is a real touch target (design guard)`() {
         assertTrue("single-line row is $RowHeight", RowHeight >= 48.dp)
         assertTrue("two-line row is $RowHeightWithDetail", RowHeightWithDetail >= 48.dp)
     }

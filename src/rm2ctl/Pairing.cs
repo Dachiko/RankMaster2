@@ -16,12 +16,22 @@ public static class Pairing
 {
     public const string RequestFileName = "pair.request";
 
-    /// <summary>Names a server may publish the open window under.</summary>
-    public static readonly string[] OfferFileNames = { "pairing.json", "pair.offer", "pairing.offer.json" };
+    /// <summary>
+    /// The name the server publishes the open window under. Normative, and exactly one name:
+    /// SERVER_SPEC.md § 10.1.1 fixes it because three clients had each guessed differently, and a
+    /// client that also accepts a name the server never writes turns "the server published nothing"
+    /// into "something published something" (C24).
+    /// </summary>
+    public const string OfferFileName = "pairing.json";
 
     public sealed record Offer(string Code, string CodeDisplay, string? Payload, string? Fingerprint, string? ExpiresAt, string? Host, int? Port);
 
-    /// <summary>Where the server keeps its certificate, device store and pairing offer.</summary>
+    /// <summary>
+    /// Where the server keeps its certificate, device store and pairing offer. One spelling,
+    /// everywhere: <c>RankMaster2/Server</c>, capital R, capital M, capital S (SERVER_SPEC.md § 2.4).
+    /// A lowercase copy is not a cosmetic difference — on Linux it is a second directory, so the
+    /// tool looks for the offer in a folder the server never writes to (C12).
+    /// </summary>
     public static string DefaultDataDirectory()
     {
         var explicitPath = Environment.GetEnvironmentVariable("RM2_DATA_DIR");
@@ -29,13 +39,13 @@ public static class Pairing
 
         if (OperatingSystem.IsWindows())
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                                "RankMaster2", "server");
+                                "RankMaster2", "Server");
 
         var xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
         return string.IsNullOrWhiteSpace(xdg)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                           ".local", "share", "rankmaster2", "server")
-            : Path.Combine(xdg, "rankmaster2", "server");
+                           ".local", "share", "RankMaster2", "Server")
+            : Path.Combine(xdg, "RankMaster2", "Server");
     }
 
     /// <summary>
@@ -83,16 +93,8 @@ public static class Pairing
         return stale;
     }
 
-    private static Offer? CurrentOffer(string dataDirectory)
-    {
-        foreach (var name in OfferFileNames)
-        {
-            var offer = TryRead(Path.Combine(dataDirectory, name));
-            if (offer is not null) return offer;
-        }
-
-        return null;
-    }
+    private static Offer? CurrentOffer(string dataDirectory) =>
+        TryRead(Path.Combine(dataDirectory, OfferFileName));
 
     private static string? FromPayload(string? payload, string key)
     {

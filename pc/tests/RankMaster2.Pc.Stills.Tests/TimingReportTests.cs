@@ -24,10 +24,10 @@ public class TimingReportTests(ITestOutputHelper output)
         "exif_portrait_6.jpg",
     ];
 
-    [Fact]
+    [SkippableFact]
     public void Timing_report()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, "corpus not built");
 
         output.WriteLine($"{"file",-24} {"pane",-11} {"ms",6} {"peak MB",8}");
 

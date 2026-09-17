@@ -20,6 +20,7 @@ public partial class UiRoot : UserControl, IUiThread
     private StartView? _startView;
     private RankView? _rankView;
     private AppScreen? _renderedScreen;
+    private DispatcherTimer? _repaintTimer;
 
     /// <summary>Raised by <c>Esc</c> (plan § 2.2). A fires <c>DELETE /session</c> with a short
     /// timeout and exits; this control does not touch process lifetime.</summary>
@@ -37,6 +38,14 @@ public partial class UiRoot : UserControl, IUiThread
         _coordinator = coordinator;
         _coordinator.Changed += OnCoordinatorChanged;
         _coordinator.QuitRequested += () => QuitRequested?.Invoke();
+
+        // A20: nothing else repaints on a clock -- Render() only runs from Changed, which nothing
+        // raises while a toast is quietly expiring or the late-action line's 300 ms is elapsing.
+        // Tick() itself decides whether anything actually changed.
+        _repaintTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _repaintTimer.Tick += (_, _) => _coordinator.Tick();
+        _repaintTimer.Start();
+
         Render();
     }
 

@@ -23,13 +23,13 @@ public class StillDecoderBrokenTests(ITestOutputHelper output)
         yield return ["truncated.jpg"];
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(BrokenFiles))]
     public void Broken_files_are_refused_cleanly_and_do_not_poison_the_decoder(string name)
     {
-        if (Broken is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Broken, name);
-        if (!File.Exists(path)) { output.WriteLine($"skipped: {name} not in the corpus"); return; }
+        Skip.If(Broken is null, "corpus not built");
+        var path = Path.Combine(Broken!, name);
+        Skip.If(!File.Exists(path), $"{name} not in the corpus");
 
         var budget = new DecodeBudget(64L * 1024 * 1024);
         var decoder = new StillDecoder(budget);
@@ -67,12 +67,12 @@ public class StillDecoderBrokenTests(ITestOutputHelper output)
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void A_video_wearing_a_jpg_extension_is_refused_cleanly()
     {
-        if (Broken is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var source = Path.Combine(Broken, "truncated.mp4");
-        if (!File.Exists(source)) { output.WriteLine("skipped: truncated.mp4 not in the corpus"); return; }
+        Skip.If(Broken is null, "corpus not built");
+        var source = Path.Combine(Broken!, "truncated.mp4");
+        Skip.If(!File.Exists(source), "truncated.mp4 not in the corpus");
 
         var tempDir = Directory.CreateTempSubdirectory("rm2-stills-broken-");
         try
@@ -121,22 +121,14 @@ public class StillDecoderBrokenTests(ITestOutputHelper output)
         Assert.Equal(StillFailure.Missing, inMissingFolder.Failure);
     }
 
-    [Fact]
+    [SkippableFact]
     public void An_unreadable_file_is_Unreadable()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            output.WriteLine("skipped: this test's chmod 000 trick is Linux-only");
-            return;
-        }
-        if (Environment.UserName == "root" || geteuid() == 0)
-        {
-            output.WriteLine("skipped: running as root, which ignores file permissions");
-            return;
-        }
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var source = Path.Combine(Stills, "photo_cat.jpg");
-        if (!File.Exists(source)) { output.WriteLine("skipped: photo_cat.jpg not in the corpus"); return; }
+        Skip.If(!OperatingSystem.IsLinux(), "this test's chmod 000 trick is Linux-only");
+        Skip.If(Environment.UserName == "root" || geteuid() == 0, "running as root, which ignores file permissions");
+        Skip.If(Stills is null, "corpus not built");
+        var source = Path.Combine(Stills!, "photo_cat.jpg");
+        Skip.If(!File.Exists(source), "photo_cat.jpg not in the corpus");
 
         var tempDir = Directory.CreateTempSubdirectory("rm2-stills-unreadable-");
         try
@@ -163,12 +155,12 @@ public class StillDecoderBrokenTests(ITestOutputHelper output)
     [DllImport("libc")]
     private static extern uint geteuid();
 
-    [Fact]
+    [SkippableFact]
     public void Too_large_for_the_ceiling_is_TooLarge()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "bomb_40mp.jpg");
-        if (!File.Exists(path)) { output.WriteLine("skipped: bomb_40mp.jpg not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "bomb_40mp.jpg");
+        Skip.If(!File.Exists(path), "bomb_40mp.jpg not in the corpus");
 
         var budget = new DecodeBudget(4L * 1024 * 1024);
         var decoder = new StillDecoder(budget);

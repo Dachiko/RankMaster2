@@ -13,10 +13,11 @@ namespace RankMaster2.Server.Tests.Media;
 /// someone thought to emit; a camera emits a progressive scan, a CMYK JPEG, an interlaced PNG and
 /// an 8000 × 5000 image in 612 KB, and those are where a decoder swap actually shows.
 /// <para/>
-/// The corpus is git-ignored and built by <c>tests/corpus/build-corpus.sh</c>. Every test here
-/// returns early and says so when it is absent, so a clone without ffmpeg still runs the suite.
-/// (xunit 2.9 has no dynamic skip and the suite does not reference <c>SkippableFact</c>; adding a
-/// package to another folder's project file for this would not be worth it.)
+/// The corpus is git-ignored and built by <c>tests/corpus/build-corpus.sh</c>. T1c: every test
+/// here is a <c>[SkippableFact]</c>/<c>[SkippableTheory]</c> and calls <see cref="Skip.If(bool, string)"/>
+/// when the corpus (or one file of it) is absent, so a clone without ffmpeg still runs the suite —
+/// and the run says, counted, that it skipped, rather than reporting a green result for nothing
+/// exercised.
 /// </summary>
 public class StillRendererCorpusTests(ITestOutputHelper output)
 {
@@ -47,12 +48,12 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     /// server's whole budget. Decoded at the target size it is a rounding error, and the ceiling
     /// is there to make the difference impossible to get wrong by accident.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TheFortyMegapixelBombIsServedWithoutBlowingTheBudget()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, Corpus.Missing);
         var path = Path.Combine(Stills!, "bomb_40mp.jpg");
-        if (!(File.Exists(path))) { output.WriteLine("skipped: bomb_40mp.jpg not in the corpus"); return; }
+        Skip.IfNot(File.Exists(path), "bomb_40mp.jpg not in the corpus");
 
         using var renderer = NewRenderer(ceilingMegabytes: 32);
         using var rendered = Render(renderer, path, 1080, out var peak);
@@ -70,12 +71,12 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     /// built for exactly this purpose, and the numbers in the filenames are the ground truth: an
     /// orientation of 5-8 displays transposed, whatever the pixels are stored as.
     /// </summary>
-    [Theory]
+    [SkippableTheory]
     [InlineData("landscape")]
     [InlineData("portrait")]
     public void RealExifOrientationsAllDisplayTheSameWayUp(string shape)
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, Corpus.Missing);
 
         using var renderer = NewRenderer();
         var seen = new List<(int Orientation, int Width, int Height)>();
@@ -106,7 +107,7 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
             seen.Add((orientation, rendered.Width, rendered.Height));
         }
 
-        if (seen.Count == 0) { output.WriteLine($"skipped: no exif_{shape}_* files in the corpus"); return; }
+        Skip.If(seen.Count == 0, $"no exif_{shape}_* files in the corpus");
 
         // The whole point of the orientation tag: all eight encode the same picture, so all eight
         // must come out at the same displayed size. A renderer that ignores the tag gives the
@@ -123,7 +124,7 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     /// image at the requested size; the point is that none of them throws, hangs or returns
     /// something that is not an image.
     /// </summary>
-    [Theory]
+    [SkippableTheory]
     [InlineData("progressive.jpg")]
     [InlineData("grayscale.jpg")]
     [InlineData("cmyk.jpg")]
@@ -137,9 +138,9 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     [InlineData("wide_gamut.jpg")]
     public void EveryRealEncodingRendersToTheRequestedSize(string name)
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, Corpus.Missing);
         var path = Path.Combine(Stills!, name);
-        if (!(File.Exists(path))) { output.WriteLine($"skipped: {name} not in the corpus"); return; }
+        Skip.IfNot(File.Exists(path), $"{name} not in the corpus");
 
         using var renderer = NewRenderer();
         var identified = renderer.Identify(path);
@@ -168,12 +169,12 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     /// The real wide-gamut photograph, not a synthesised one. Rendering it must change its pixels,
     /// because its numbers are not sRGB numbers.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TheRealWideGamutPhotographIsConverted()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, Corpus.Missing);
         var path = Path.Combine(Stills!, "wide_gamut.jpg");
-        if (!(File.Exists(path))) { output.WriteLine("skipped: wide_gamut.jpg not in the corpus"); return; }
+        Skip.IfNot(File.Exists(path), "wide_gamut.jpg not in the corpus");
 
         using var renderer = NewRenderer();
         using var converted = Render(renderer, path, 360, out _);
@@ -187,8 +188,8 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
 
         output.WriteLine($"wide_gamut.jpg embedded profile: {(codec.Info.ColorSpace is null ? "none parsed" : codec.Info.ColorSpace.IsSrgb ? "sRGB" : "wide gamut")}");
 
-        if (codec.Info.ColorSpace is null) { output.WriteLine("skipped: Skia did not parse this profile; see the report on LUT-based profiles"); return; }
-        if (codec.Info.ColorSpace!.IsSrgb) { output.WriteLine("skipped: the corpus file's profile is sRGB, so there is nothing to convert"); return; }
+        Skip.If(codec.Info.ColorSpace is null, "Skia did not parse this profile; see the report on LUT-based profiles");
+        Skip.If(codec.Info.ColorSpace!.IsSrgb, "the corpus file's profile is sRGB, so there is nothing to convert");
 
         var difference = MeanDifference(converted, ignored);
         output.WriteLine($"mean channel difference, converted vs stored numbers: {difference:F1}/255");
@@ -204,7 +205,7 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     /// it — SPEC.md § Media policy: "Unreadable / corrupt files are skipped for that pair. The
     /// session does not crash."
     /// </summary>
-    [Theory]
+    [SkippableTheory]
     [InlineData("empty.jpg")]
     [InlineData("header_only.jpg")]
     [InlineData("noise.jpg")]
@@ -212,9 +213,9 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
     [InlineData("truncated.jpg")]
     public void BrokenFilesAreRefusedCleanly(string name)
     {
-        if (Broken is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Broken is null, Corpus.Missing);
         var path = Path.Combine(Broken!, name);
-        if (!(File.Exists(path))) { output.WriteLine($"skipped: {name} not in the corpus"); return; }
+        Skip.IfNot(File.Exists(path), $"{name} not in the corpus");
 
         using var renderer = NewRenderer();
         using var rendered = new MemoryStream();
@@ -265,6 +266,9 @@ public class StillRendererCorpusTests(ITestOutputHelper output)
 /// <summary>Locates <c>tests/corpus/media</c>, which is git-ignored and may not be built.</summary>
 internal static class Corpus
 {
+    /// <summary>The reason printed by <c>Skip.If</c> when the corpus was never built at all.</summary>
+    public const string Missing = "corpus not built — run tests/corpus/build-corpus.sh";
+
     private static readonly Lazy<string?> Root = new(Find);
 
     public static string? Directory(string group)

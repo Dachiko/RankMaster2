@@ -13,7 +13,6 @@ public class NoticesTests
 
     [Theory]
     [InlineData("vote", "Vote taken back")]
-    [InlineData("skip", "Skip taken back")]
     [InlineData("discard", "Discard taken back")]
     [InlineData("special", "Moved back out of special 1")]
     public void Undo_sentence_by_undoneType(string undoneType, string expected)
@@ -22,6 +21,17 @@ public class NoticesTests
         var notice = Notices.ForResult(RequestedAction.Undo, new ActionResult.Applied(snapshot));
         Assert.Equal(NoticeSurface.Toast, notice.Surface);
         Assert.Equal(expected, notice.Text);
+    }
+
+    [Fact]
+    public void Undo_of_an_action_this_client_no_longer_offers_is_silent()
+    {
+        // The PC client's surface no longer has a key for it (removed 2026-09-17), but the server
+        // still accepts it from elsewhere (rm2ctl) and a session opened here can still report one as
+        // its last action's undoneType. There is no sentence for it any more; the client says nothing.
+        var snapshot = SnapshotBuilder.Ranking(lastAction: SnapshotBuilder.Action("undo", id: "a.jpg", undoneType: "skip"));
+        var notice = Notices.ForResult(RequestedAction.Undo, new ActionResult.Applied(snapshot));
+        Assert.Equal(Notice.Silent, notice);
     }
 
     [Fact]
@@ -55,13 +65,6 @@ public class NoticesTests
     {
         var snapshot = SnapshotBuilder.Ranking(lastAction: SnapshotBuilder.Action("vote"));
         Assert.Equal(Notice.Silent, Notices.ForResult(RequestedAction.Vote, new ActionResult.Applied(snapshot)));
-    }
-
-    [Fact]
-    public void Skip_applied_is_silent()
-    {
-        var snapshot = SnapshotBuilder.Ranking(lastAction: SnapshotBuilder.Action("skip"));
-        Assert.Equal(Notice.Silent, Notices.ForResult(RequestedAction.Skip, new ActionResult.Applied(snapshot)));
     }
 
     [Fact]
@@ -109,7 +112,6 @@ public class NoticesTests
     [InlineData(ResyncReason.TokenSpentByOwnEarlierRequest)]
     [InlineData(ResyncReason.PairMovedElsewhere)]
     [InlineData(ResyncReason.OutcomeUnknownAfterRestart)]
-    [InlineData(ResyncReason.SessionReplaced)]
     [InlineData(ResyncReason.UndoAlreadyDone)]
     [InlineData(ResyncReason.NoCurrentPair)]
     public void Every_other_resync_reason_is_silent(ResyncReason why)
@@ -117,6 +119,18 @@ public class NoticesTests
         var snapshot = SnapshotBuilder.Ranking();
         var result = new ActionResult.Resynchronised(snapshot, why);
         Assert.Equal(Notice.Silent, Notices.ForResult(RequestedAction.Vote, result));
+    }
+
+    [Fact]
+    public void SessionReplaced_toasts_that_the_folder_reopened()
+    {
+        // A24: 404 no_session mid-action makes the PC reopen the same folder silently under him; the
+        // count resetting to zero with no line said is the finding (A24). Now it says something.
+        var snapshot = SnapshotBuilder.Ranking();
+        var result = new ActionResult.Resynchronised(snapshot, ResyncReason.SessionReplaced);
+        var notice = Notices.ForResult(RequestedAction.Vote, result);
+        Assert.Equal(NoticeSurface.Toast, notice.Surface);
+        Assert.Equal("Folder reopened — session count restarts", notice.Text);
     }
 
     [Fact]

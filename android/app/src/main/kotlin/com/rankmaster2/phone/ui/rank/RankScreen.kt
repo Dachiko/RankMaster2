@@ -83,7 +83,12 @@ fun RankScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(Color.Black)) {
         when {
             snapshot == null -> Centred("Opening the folder…")
-            state.exhausted -> Exhausted(onLeave = onLeave)
+            state.exhausted -> Exhausted(
+                canCancel = state.canCancel,
+                busy = state.busy,
+                onCancel = onCancel,
+                onLeave = onLeave,
+            )
             state.left != null && state.right != null ->
                 Pair(state, media, onVote) { side, at ->
                     pressedAt = at
@@ -332,8 +337,16 @@ private fun Pane(ref: MediaRef, media: Rm2Media, playing: Boolean, modifier: Mod
     }
 }
 
+/**
+ * A17: "exhausted" does not mean the owner has seen everything — it means the engine cannot build a
+ * pair from what is left, which on a small or heavily-discarded folder is often just one file. The
+ * old copy ("every pair has been seen") told him a story that was not true and pointed him only at
+ * "pick another folder", when the documented way back into *this* one is undo. So: the honest
+ * sentence, and undo offered first when there is one to take back — leaving is still here, second,
+ * for when there genuinely is nowhere further to go.
+ */
 @Composable
-private fun Exhausted(onLeave: () -> Unit) {
+private fun Exhausted(canCancel: Boolean, busy: Boolean, onCancel: () -> Unit, onLeave: () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
@@ -342,13 +355,18 @@ private fun Exhausted(onLeave: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Nothing left to rank here", color = Color(0xFFECEEF2), textAlign = TextAlign.Center)
+        Text("Fewer than two files left to compare", color = Color(0xFFECEEF2), textAlign = TextAlign.Center)
         Text(
-            "Every pair in this folder has been seen. Everything is saved.",
+            "Everything ranked so far is saved.",
             color = Color(0xFF9AA3B2),
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
         )
+        if (canCancel) {
+            TextButton(onClick = onCancel, enabled = !busy) {
+                Text("Take back the last choice", color = Color(0xFF2ECC71))
+            }
+        }
         TextButton(onClick = onLeave) { Text("Pick another folder", color = Color(0xFF2ECC71)) }
     }
 }

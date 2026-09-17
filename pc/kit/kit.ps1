@@ -4,6 +4,13 @@
 # Downloads the measurement kit, extracts it, copies the owner's real libvlc\ beside old-r2r (so
 # the "320 plugins, no cache" number is his actual shipped set, not a fresh download of it), runs
 # Measure-Startup.ps1, and opens the result in Notepad.
+#
+# Phase A0 runs before the real client exists, so this block has nothing from startup.log yet.
+# Once the client is installed (install.ps1, Phase A3), its report block's "startup.log (pc): ..."
+# line is the same file's tail and should carry all five marks of § 6.5: link_connecting,
+# link_ready, tray_started (part B, via WakingSessionLink.ConnectAsync), panes_painted (part E,
+# after both panes have pixels) and first_video_frame (part D, first frame of a video pair). If the
+# block pasted after install.ps1 stops at `snapshot`, one of those five is not firing.
 [CmdletBinding()]
 param(
     [switch]$Cold,

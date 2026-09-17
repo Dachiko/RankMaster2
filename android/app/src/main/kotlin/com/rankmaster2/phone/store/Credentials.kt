@@ -27,6 +27,10 @@ interface Credentials {
 
     fun save(identity: ServerIdentity)
 
-    /** Forgets everything. Used by "forget this device" after the token is revoked. */
+    /**
+     * Forgets everything. Used by "forget this device", after a best-effort attempt to revoke the
+     * token (`Rm2App.kt`'s `onPairAgain`) - the credentials are cleared either way, so a revoke
+     * that fails because the PC is asleep or unreachable does not trap the owner here.
+     */
     fun clear()
 }

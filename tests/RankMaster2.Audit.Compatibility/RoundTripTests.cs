@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Security.Cryptography;
 using RankMaster2.Audit.Compatibility.Support;
 using RankMaster2.Catalog;
 using RankMaster2.Server.Tests.Harness;
@@ -213,5 +215,110 @@ public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
 
         foreach (var id in voted)
             Assert.DoesNotContain(id, rows.Keys);   // the old names are gone; the ratings are not
+    }
+
+    /// <summary>
+    /// The owner's own folder, from G-audit-remediation § 0.2: Rank Master 2's rename produces
+    /// exactly <c>000001.jpg …</c>, so his folders very likely hold those names already. This proves
+    /// they are ordinary input — the server renames them in one pass, every rating stays on the same
+    /// bytes, and the file it leaves behind is still a v1 database the frozen desktop app opens
+    /// (§ 0.2's hard constraint: the schema does not change).
+    /// </summary>
+    [Fact]
+    public async Task A_folder_already_named_by_Rank_Master_2_renames_cleanly()
+    {
+        using var folder = Scratch.New("rm2-names");
+
+        // The folder as Rank Master 2 left it: six files named by rank, and a v1 database keyed by
+        // those names, with ratings that put them in a different order than their names suggest.
+        var seeded = new (string Name, double Mu, double Sigma, int Matches, int Impressions, long LastPlayed)[]
+        {
+            ("000001.jpg", 31.5, 3.10, 21, 30, 1_700_000_000_000),
+            ("000002.jpg", 28.25, 3.55, 18, 26, 1_700_000_000_001),
+            ("000003.jpg", 26.00, 4.00, 15, 22, 1_700_000_000_002),
+            ("000004.jpg", 24.75, 4.45, 12, 18, 1_700_000_000_003),
+            ("000005.jpg", 22.50, 4.90, 9, 14, 1_700_000_000_004),
+            ("000006.jpg", 19.25, 5.35, 6, 10, 1_700_000_000_005),
+        };
+
+        for (var i = 0; i < seeded.Length; i++)
+            folder.Jpeg(seeded[i].Name, 200 + (i * 11), 150 + (i * 7));   // distinct bytes per picture
+
+        var images = string.Join(",\n", seeded.Select(s => $$"""
+                "{{s.Name}}": {
+                  "filename": "{{s.Name}}",
+                  "rating": { "mu": {{s.Mu.ToString(CultureInfo.InvariantCulture)}}, "sigma": {{s.Sigma.ToString(CultureInfo.InvariantCulture)}} },
+                  "matches": {{s.Matches}},
+                  "impressions": {{s.Impressions}},
+                  "lastPlayed": {{s.LastPlayed}}
+                }
+            """));
+        folder.WriteText(Db.FileName, "{\n  \"version\": 1,\n  \"lastUpdated\": 1700000000000,\n  \"images\": {\n" + images + "\n  }\n}\n");
+        Db.RequireV1Schema(folder.Path, "the folder Rank Master 2 left behind is a v1 database");
+
+        var client = await ClientAsync();
+        var snapshot = await OpenAsync(folder.Path);
+
+        for (var i = 0; i < 4 && snapshot.IsRanking; i++)
+            snapshot = (await client.VoteAsync(snapshot.RequireToken("ranking"), i % 2 == 0 ? "left" : "right"))
+                .ShouldBeSnapshot(200, "POST /session/vote (SERVER_SPEC.md § 10.6)");
+
+        // Which rating sits on which picture, keyed by the picture's own bytes — the only identity a
+        // rename cannot change.
+        var before = RatingByBytes(folder.Path);
+        Assert.Equal(6, before.Count);
+
+        (await client.StartRenameAsync()).ShouldHaveStatus(202, "POST /session/rename (SERVER_SPEC.md § 10.16)");
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        string? state;
+        while (true)
+        {
+            var poll = await client.GetRenameAsync();
+            poll.ShouldHaveStatus(200, "GET /session/rename while polling");
+            state = poll.JsonBody.GetProperty("state").GetString();
+            if (state is "succeeded" or "cancelled" or "failed")
+                break;
+            if (DateTime.UtcNow > deadline)
+                throw poll.Failure("the rename did not reach a terminal state within 30s");
+            await Task.Delay(20);
+        }
+
+        Assert.Equal("succeeded", state);
+        await CloseAsync();
+
+        // Every name is a new name of one run: no 000001.jpg survived, and nothing accumulated a
+        // second suffix (000001-7f3a-b91c.jpg would match no pattern the owner sorts by).
+        var loaded = new JsonCatalog().Scan(folder.Path).ToDictionary(r => r.Filename, StringComparer.Ordinal);
+        Assert.Equal(6, loaded.Count);
+        Assert.All(loaded.Keys, key => Assert.Matches(@"^\d{6}-[0-9a-f]{4}\.[^.]+$", key));
+        Assert.Single(loaded.Keys.Select(k => k.Split('-')[1]).Distinct());
+
+        // The schema is frozen (§ 0.2): the desktop app must still open this file.
+        Db.RequireV1Schema(folder.Path, "a folder renamed out of Rank Master 2's names is still v1");
+        foreach (var (key, row) in Db.Rows(folder.Path))
+            Assert.Equal(key, row.Filename);
+
+        // And every rating is still on the picture it was measured against.
+        var after = RatingByBytes(folder.Path);
+        Assert.Equal(before, after);
+    }
+
+    /// <summary>
+    /// Every rating in the folder, keyed by the SHA-256 of the picture's bytes. A rename changes every
+    /// name, so the bytes are the only handle on "did this rating stay with this picture".
+    /// </summary>
+    private static Dictionary<string, (double Mu, double Sigma, int Matches, int Impressions, long LastPlayed)>
+        RatingByBytes(string folder)
+    {
+        var result = new Dictionary<string, (double, double, int, int, long)>(StringComparer.Ordinal);
+        foreach (var (key, row) in Db.Rows(folder))
+        {
+            var bytes = File.ReadAllBytes(Path.Combine(folder, key));
+            result[Convert.ToHexString(SHA256.HashData(bytes))] =
+                (row.Mu, row.Sigma, row.Matches, row.Impressions, row.LastPlayed);
+        }
+
+        return result;
     }
 }

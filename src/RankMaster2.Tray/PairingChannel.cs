@@ -27,6 +27,13 @@ internal static class PairingChannel
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(8);
 
     /// <summary>
+    /// Where the offer this window is showing lives. The security layer deletes this file the
+    /// moment a window's guess budget is exhausted (SERVER_SPEC.md § 10.11) — <see
+    /// cref="PairingForm"/> polls for exactly that (A30).
+    /// </summary>
+    public static string OfferPath(string dataDirectory) => Path.Combine(dataDirectory, OfferFile);
+
+    /// <summary>
     /// Requests a fresh window and waits for the offer that answers it. The wait is for an offer
     /// strictly newer than whatever was already published, so a stale <c>pairing.json</c> from an
     /// earlier window is never mistaken for the answer to this request.

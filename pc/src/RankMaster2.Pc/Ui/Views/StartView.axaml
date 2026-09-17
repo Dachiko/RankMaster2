@@ -12,7 +12,7 @@
 
     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,80,0,0" Spacing="4">
       <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-        <TextBlock Text="Rank Master 2" FontSize="48" FontWeight="Black">
+        <TextBlock Text="Rank Master 3" FontSize="48" FontWeight="Black">
           <TextBlock.Foreground>
             <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
               <GradientStop Color="#60A5FA" Offset="0" />

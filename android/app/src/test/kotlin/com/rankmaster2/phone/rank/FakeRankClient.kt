@@ -23,6 +23,13 @@ data class SentAction(val token: String, val requestId: String, val extra: Strin
  * Recording the token and the request id is the whole point: the test that matters asserts that a
  * retry carried the *same* pair of values, which is what makes it one logical action rather than
  * two.
+ *
+ * T2b: an unqueued call is a test bug, not a green test. The old default - a canned `Ok` when the
+ * queue ran dry - let a test pass while asserting nothing about what the server actually said for
+ * whichever call it forgot to queue; the fix that mattered upstream (H6, A15) would have shown up as
+ * the same silent green either way. So every queue-backed call now throws when it is asked for an
+ * answer it was not given one for, and every test that relied on the old default queues what it
+ * means instead.
  */
 class FakeRankClient : Rm2Client {
 
@@ -51,36 +58,38 @@ class FakeRankClient : Rm2Client {
     override suspend fun vote(pairToken: String, winner: String, clientRequestId: String): Rm2Result<Snapshot> {
         votes += SentAction(pairToken, clientRequestId, winner)
         if (holdVote) return forever.await()
-        return voteResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        return voteResults.removeFirstOrNull() ?: unqueued("vote")
     }
 
     override suspend fun skip(pairToken: String, clientRequestId: String): Rm2Result<Snapshot> {
         skips += SentAction(pairToken, clientRequestId)
-        return skipResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        return skipResults.removeFirstOrNull() ?: unqueued("skip")
     }
 
     override suspend fun discard(pairToken: String, side: String, clientRequestId: String): Rm2Result<Snapshot> {
         discards += SentAction(pairToken, clientRequestId, side)
-        return moveResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        return moveResults.removeFirstOrNull() ?: unqueued("discard")
     }
 
     override suspend fun special(pairToken: String, side: String, clientRequestId: String): Rm2Result<Snapshot> {
         specials += SentAction(pairToken, clientRequestId, side)
-        return moveResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        return moveResults.removeFirstOrNull() ?: unqueued("special")
     }
 
     override suspend fun cancel(clientRequestId: String): Rm2Result<Snapshot> {
         cancels += clientRequestId
-        return cancelResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        return cancelResults.removeFirstOrNull() ?: unqueued("cancel")
     }
 
     override suspend fun save(): Rm2Result<Snapshot> =
-        saveResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        saveResults.removeFirstOrNull() ?: unqueued("save")
 
     override suspend fun session(): Rm2Result<Snapshot> {
         sessionReads++
-        return sessionResults.removeFirstOrNull() ?: Rm2Result.Ok(RankFixtures.ranking())
+        return sessionResults.removeFirstOrNull() ?: unqueued("session")
     }
+
+    private fun unqueued(call: String): Nothing = throw IllegalStateException("unqueued $call")
 
     // -- not used by the ranking screen ------------------------------------------------------------
 

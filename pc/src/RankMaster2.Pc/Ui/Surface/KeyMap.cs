@@ -15,8 +15,8 @@ public static class KeyMap
     {
         var ctrl = (modifiers & UiModifiers.Control) != 0;
 
-        // Ctrl changes the meaning of exactly these two keys; check them first so Ctrl+S can never
-        // fall through to Skip and Ctrl+Z can never fall through to nothing.
+        // Ctrl changes the meaning of exactly this one key on the compare screen; check it first so
+        // Ctrl+S can never fall through to something else and Ctrl+Z can never fall through to nothing.
         if (key == UiKey.S && ctrl) return Intent.Save;
         if (key == UiKey.Z) return ctrl ? Intent.Undo : Intent.None;
 
@@ -24,8 +24,10 @@ public static class KeyMap
         {
             UiKey.Left => Intent.VoteLeft,
             UiKey.Right => Intent.VoteRight,
-            UiKey.Down => Intent.Skip,
-            UiKey.S => Intent.Skip,
+            // Down and S alone used to skip the pair; removed from the PC client's surface by the
+            // owner's ruling (2026-09-17, "I really don't use skip") -- SPEC.md § Keys, the phone
+            // already dropped it. The server keeps POST /session/skip and every test of it; nothing
+            // here calls it.
             UiKey.D1 or UiKey.NumPad1 => Intent.DiscardLeft,
             UiKey.D2 or UiKey.NumPad2 => Intent.DiscardRight,
             UiKey.D4 or UiKey.NumPad4 => Intent.SpecialLeft,

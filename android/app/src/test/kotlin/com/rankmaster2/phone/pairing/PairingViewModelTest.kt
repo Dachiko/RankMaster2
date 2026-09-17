@@ -14,6 +14,8 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -103,6 +105,22 @@ class PairingViewModelTest {
         assertFalse(vm.state.value.failure!!.fatal)
     }
 
+    // A29: the tray defaults to `127.0.0.1`, and a QR built from it carries that as `host` - an
+    // address that names the phone, never the PC. Caught before a client for it is even built.
+    @Test
+    fun `a loopback host is refused before it reaches the PC`() = runTest(dispatcher) {
+        val factory = PairingClientFactory { _, _, _ -> error("must not build a client for a loopback host") }
+        val vm = PairingViewModel(PairingFlow(factory, credentials), "Pixel 8") { now }
+
+        vm.onPayloadScanned("rm2://pair?v=1&host=127.0.0.1&port=18611&fp=$fp&code=418250&exp=${now + 240}")
+        advanceUntilIdle()
+
+        val failure = vm.state.value.failure!!
+        assertEquals("This code won't work over Wi-Fi", failure.title)
+        assertTrue(failure.body.contains("127.0.0.1"))
+        assertFalse(failure.fatal)
+    }
+
     @Test
     fun `a certificate mismatch is fatal and cannot be dismissed`() = runTest(dispatcher) {
         val client = client(pingFingerprint = "sha256:$other")
@@ -123,14 +141,17 @@ class PairingViewModelTest {
         assertNull(credentials.current())
     }
 
+    // A19/T2d: `attemptsRemaining` is structured `details`, never folded into `message` - the
+    // server never sends it that way.
     @Test
     fun `a wrong code can be tried again`() = runTest(dispatcher) {
         val vm = viewModel(
             client(
                 pairResult = Rm2Result.Refused(
-                    401,
-                    ErrorCodes.INVALID_PAIRING_CODE,
-                    """no. {"attemptsRemaining":2}""",
+                    status = 401,
+                    code = ErrorCodes.INVALID_PAIRING_CODE,
+                    message = "no.",
+                    details = buildJsonObject { put("attemptsRemaining", 2) },
                 )
             )
         )

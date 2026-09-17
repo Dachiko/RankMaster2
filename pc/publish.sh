@@ -23,8 +23,11 @@ say() { printf '%s\n' "$*"; }
 fail() { printf 'publish.sh: FATAL: %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 1-2: version and sha
-VERSION="$(grep -oP '(?<=<Version>)[^<]+' pc/Directory.Build.props | head -1)"
-[ -n "$VERSION" ] || fail "could not read <Version> from pc/Directory.Build.props"
+# G-audit-remediation.md § 1 (K2): pc/Directory.Build.props stopped overriding <Version> once the
+# root caught up (a second place to edit is a second place to forget) — it only chains the import
+# now — so the one place this number lives is the root's Directory.Build.props.
+VERSION="$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -1)"
+[ -n "$VERSION" ] || fail "could not read <Version> from Directory.Build.props"
 
 SHA="nogit"
 if [ "$NO_SHA" -eq 0 ]; then

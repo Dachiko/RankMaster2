@@ -3,16 +3,16 @@ using Xunit;
 
 namespace RankMaster2.Pc.Ui.Tests.Surface;
 
-/// <summary>Plan § 6.1 "KeyMap": every row of § 1.1 including numpad; Ctrl+S is save and never
-/// skip; S alone is skip; unknown keys → None; the start-screen map differs from the compare map
-/// exactly as § 1.1 says.</summary>
+/// <summary>Plan § 6.1 "KeyMap": every row of § 1.1 including numpad; Ctrl+S is save; unknown keys
+/// (including Down and S alone, since the owner's ruling removed the pair action they used to mean,
+/// 2026-09-17) → None; the start-screen map differs from the compare map exactly as § 1.1 says.</summary>
 public class KeyMapTests
 {
     [Theory]
     [InlineData(UiKey.Left, Intent.VoteLeft)]
     [InlineData(UiKey.Right, Intent.VoteRight)]
-    [InlineData(UiKey.Down, Intent.Skip)]
-    [InlineData(UiKey.S, Intent.Skip)]
+    [InlineData(UiKey.Down, Intent.None)]
+    [InlineData(UiKey.S, Intent.None)]
     [InlineData(UiKey.D1, Intent.DiscardLeft)]
     [InlineData(UiKey.NumPad1, Intent.DiscardLeft)]
     [InlineData(UiKey.D2, Intent.DiscardRight)]
@@ -34,14 +34,13 @@ public class KeyMapTests
         Assert.Equal(expected, KeyMap.MapCompare(key, UiModifiers.None));
 
     [Fact]
-    public void Ctrl_S_is_save_never_skip()
+    public void Ctrl_S_is_save()
     {
         Assert.Equal(Intent.Save, KeyMap.MapCompare(UiKey.S, UiModifiers.Control));
-        Assert.NotEqual(Intent.Skip, KeyMap.MapCompare(UiKey.S, UiModifiers.Control));
     }
 
     [Fact]
-    public void S_alone_is_skip() => Assert.Equal(Intent.Skip, KeyMap.MapCompare(UiKey.S, UiModifiers.None));
+    public void S_alone_is_nothing() => Assert.Equal(Intent.None, KeyMap.MapCompare(UiKey.S, UiModifiers.None));
 
     [Fact]
     public void Ctrl_Z_is_undo_but_Z_alone_is_nothing()
@@ -51,11 +50,11 @@ public class KeyMapTests
     }
 
     [Fact]
-    public void Shift_does_not_change_vote_or_skip()
+    public void Shift_does_not_change_vote_or_the_now_unmapped_S()
     {
         Assert.Equal(Intent.VoteRight, KeyMap.MapCompare(UiKey.Right, UiModifiers.Shift));
         Assert.Equal(Intent.VoteLeft, KeyMap.MapCompare(UiKey.Left, UiModifiers.Shift | UiModifiers.Alt));
-        Assert.Equal(Intent.Skip, KeyMap.MapCompare(UiKey.S, UiModifiers.Shift));
+        Assert.Equal(Intent.None, KeyMap.MapCompare(UiKey.S, UiModifiers.Shift));
     }
 
     [Fact]
@@ -84,8 +83,6 @@ public class KeyMapTests
     [Theory]
     [InlineData(UiKey.Left)]
     [InlineData(UiKey.Right)]
-    [InlineData(UiKey.Down)]
-    [InlineData(UiKey.S)]
     [InlineData(UiKey.D1)]
     [InlineData(UiKey.D2)]
     [InlineData(UiKey.D4)]
@@ -94,7 +91,18 @@ public class KeyMapTests
     {
         // These mean something on the compare screen but nothing on the start screen -- Enter/Space
         // reach a focused button through Avalonia's own behaviour, never through KeyMap (plan § 3.7).
+        // Down and S alone are excluded here: since the owner's ruling removed the pair action they
+        // used to mean, both screens now map them to None -- they no longer differ.
         Assert.Equal(Intent.None, KeyMap.MapStart(key, UiModifiers.None));
         Assert.NotEqual(Intent.None, KeyMap.MapCompare(key, UiModifiers.None));
+    }
+
+    [Theory]
+    [InlineData(UiKey.Down)]
+    [InlineData(UiKey.S)]
+    public void Down_and_S_mean_nothing_on_either_screen(UiKey key)
+    {
+        Assert.Equal(Intent.None, KeyMap.MapStart(key, UiModifiers.None));
+        Assert.Equal(Intent.None, KeyMap.MapCompare(key, UiModifiers.None));
     }
 }

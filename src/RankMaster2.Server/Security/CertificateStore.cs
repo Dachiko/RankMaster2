@@ -23,11 +23,10 @@ public sealed class CertificateStore
     private const string FileName = "certificate.pfx";
     private static readonly TimeSpan Lifetime = TimeSpan.FromDays(3653); // ~10 years
 
-    public CertificateStore(X509Certificate2 certificate, string fingerprint, bool generated)
+    public CertificateStore(X509Certificate2 certificate, string fingerprint)
     {
         Certificate = certificate;
         Fingerprint = fingerprint;
-        WasGenerated = generated;
     }
 
     public X509Certificate2 Certificate { get; }
@@ -37,8 +36,6 @@ public sealed class CertificateStore
 
     /// <summary>The form SERVER_SPEC.md § 14 puts on the wire: <c>sha256:</c> + 64 lowercase hex.</summary>
     public string FingerprintHeaderValue => "sha256:" + Fingerprint;
-
-    public bool WasGenerated { get; }
 
     public static CertificateStore LoadOrCreate(string dataDirectory, IPAddress listenAddress)
     {
@@ -54,7 +51,7 @@ public sealed class CertificateStore
                     loaded.NotBefore.ToUniversalTime() <= DateTime.UtcNow &&
                     loaded.HasPrivateKey)
                 {
-                    return new CertificateStore(loaded, FingerprintOf(loaded), generated: false);
+                    return new CertificateStore(loaded, FingerprintOf(loaded));
                 }
 
                 loaded.Dispose();
@@ -68,7 +65,7 @@ public sealed class CertificateStore
 
         var created = Create(listenAddress);
         Persist(path, created);
-        return new CertificateStore(created, FingerprintOf(created), generated: true);
+        return new CertificateStore(created, FingerprintOf(created));
     }
 
     public static string FingerprintOf(X509Certificate2 certificate) =>

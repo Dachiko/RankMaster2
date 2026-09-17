@@ -57,6 +57,42 @@ public static class FileOps
         throw last ?? new IOException("Move failed: " + source);
     }
 
+    /// <summary>
+    /// The same move, with a cancel flag polled <b>between the retries</b>: the moment
+    /// <paramref name="shouldStop"/> returns true the wait ends with an
+    /// <see cref="OperationCanceledException"/> instead of running out the retry budget.
+    ///
+    /// <para>This exists for the rename's Cancel button (SERVER_SPEC.md § 10.16, "Why there is a bar
+    /// and a cancel"). The owner's reason for that button is a slow USB drive: he wants to stop the
+    /// run the moment it looks wrong. A move whose destination or source is briefly held by another
+    /// program is retried for a full second; without this poll, a cancel that arrives during that
+    /// wait is a button that appears frozen. The parameterless overload above is the desktop app's
+    /// path and is deliberately unchanged.</para>
+    /// </summary>
+    public static void MoveWithRetry(string source, string dest, Func<bool> shouldStop, int retries = 20)
+    {
+        IOException? last = null;
+        for (var i = 0; i < retries; i++)
+        {
+            if (shouldStop())
+                throw new OperationCanceledException(
+                    "Cancelled while waiting to move " + Path.GetFileName(source) + ".");
+
+            try
+            {
+                File.Move(source, dest);
+                return;
+            }
+            catch (IOException ex)
+            {
+                last = ex;
+                Thread.Sleep(50);
+            }
+        }
+
+        throw last ?? new IOException("Move failed: " + source);
+    }
+
     public static string BackupLibrary(string folder, DateTimeOffset now)
     {
         var name = BackupPrefix + now.ToString("yyyyMMdd_HHmmss");

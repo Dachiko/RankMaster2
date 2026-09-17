@@ -21,7 +21,10 @@ import com.rankmaster2.phone.store.ServerIdentity
  *
  * ```
  * PairingClientFactory { host, port, fingerprint ->
- *     Rm2HttpClient("https://$host:$port/api/v1", Rm2Http.pairingClient(fingerprint))
+ *     OkHttpRm2Client(
+ *         baseUrl = "https://$host:$port/api/v1",
+ *         http = Rm2Http.pairingClient(fingerprint),
+ *     )
  * }
  * ```
  *
@@ -69,6 +72,16 @@ sealed interface PairingOutcome {
 
     /** The server answered with a code this screen has nothing specific to say about. */
     data class Refused(val code: String, val message: String) : PairingOutcome
+
+    /**
+     * A29. The payload's `host` is a loopback address (`127.0.0.1`, `::1`, `localhost`) - the tray
+     * binds there by default, and the QR it shows then carries that address whether or not the PC
+     * is reachable on the LAN at all. Reported before the ping is even attempted: on a phone,
+     * `127.0.0.1` names the phone itself, so the connection would either fail (nothing answers, and
+     * the phone's own failure text would blame Wi-Fi for a problem that is on the PC) or - if the
+     * phone happens to run something on that port - answer for a completely different machine.
+     */
+    data object LoopbackHost : PairingOutcome
 }
 
 /**
@@ -94,6 +107,11 @@ class PairingFlow(
 ) {
 
     suspend fun pair(payload: PairingPayload, deviceName: String): PairingOutcome {
+        // A29: caught before anything is sent, not after a ping that was never going to answer.
+        // `host=127.0.0.1` on the QR means the tray is bound to loopback, which is on the PC and
+        // never reachable from the phone that just scanned it.
+        if (isLoopback(payload.host)) return PairingOutcome.LoopbackHost
+
         // 1. Pinned before anything is sent. No token: there is none yet.
         val client = clients.create(payload.host, payload.port, payload.fingerprint)
 
@@ -148,14 +166,20 @@ class PairingFlow(
         }
     }
 
+    /**
+     * A19. `attemptsRemaining` and `retryAfterSeconds` are structured payload (§ 5, § 5.1, § 15),
+     * not text folded into [Rm2Result.Refused.message] - the server never puts them there, so a
+     * regex over the message read nothing on the real wire and this screen never showed "N attempts
+     * left". `Rm2Result.Refused.detailInt` reads `details` by name, which is where they actually are.
+     */
     private fun refusal(refused: Rm2Result.Refused): PairingOutcome = when (refused.code) {
         ErrorCodes.INVALID_PAIRING_CODE ->
-            PairingOutcome.InvalidCode(PairingDetails.attemptsRemaining(refused.message))
+            PairingOutcome.InvalidCode(refused.detailInt("attemptsRemaining"))
 
         ErrorCodes.PAIRING_NOT_OPEN -> PairingOutcome.NotOpen
 
         ErrorCodes.TOO_MANY_REQUESTS ->
-            PairingOutcome.RateLimited(PairingDetails.retryAfterSeconds(refused.message))
+            PairingOutcome.RateLimited(refused.detailInt("retryAfterSeconds"))
 
         else -> PairingOutcome.Refused(refused.code, refused.message)
     }
@@ -163,26 +187,16 @@ class PairingFlow(
     /** `/ping` reports `sha256:<hex>`; the QR carries bare `<hex>`. Compare like with like. */
     private fun normalise(fingerprint: String): String =
         fingerprint.trim().lowercase().removePrefix("sha256:")
-}
 
-/**
- * `Rm2Result.Refused` carries `code`, `message`, `requestId` and a snapshot - but not `details`,
- * and `details.attemptsRemaining` (§ 5.1) is a number worth showing: it is the difference between
- * "try again" and "one more wrong try and the window closes".
- *
- * So: read it out of the message when an implementation has folded it in, and otherwise say nothing
- * rather than guess. A count invented on the phone would be wrong the moment the PC or another
- * device makes an attempt, and the budget is counted across all source addresses.
- */
-internal object PairingDetails {
-
-    private val ATTEMPTS = Regex("""attemptsRemaining"?\s*[:=]\s*"?(\d+)""", RegexOption.IGNORE_CASE)
-    private val RETRY_AFTER = Regex("""retryAfterSeconds"?\s*[:=]\s*"?(\d+)""", RegexOption.IGNORE_CASE)
-
-    fun attemptsRemaining(message: String?): Int? = find(ATTEMPTS, message)
-
-    fun retryAfterSeconds(message: String?): Int? = find(RETRY_AFTER, message)
-
-    private fun find(pattern: Regex, message: String?): Int? =
-        message?.let { pattern.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+    /**
+     * A29. `127.0.0.1`, `::1` (and its zero-compressed and bracketed forms) and `localhost` all
+     * name "this machine" - which, read from a QR code on a phone, means the phone, never the PC
+     * that showed it. [PairingPayloads] already trims and lower-cases `host`, but this is cheap
+     * enough not to depend on that.
+     */
+    private fun isLoopback(host: String): Boolean {
+        val h = host.trim().trim('[', ']').lowercase()
+        return h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "0:0:0:0:0:0:0:1" ||
+            h.startsWith("127.")
+    }
 }

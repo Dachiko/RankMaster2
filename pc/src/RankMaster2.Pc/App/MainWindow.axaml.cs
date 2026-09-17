@@ -3,9 +3,9 @@ namespace RankMaster2.Pc.App;
 using Avalonia.Controls;
 
 /// <summary>
-/// A-startup-and-shell.md § 3.1, § 3.4. The shell: full screen, black, hosts part E's root (a
-/// <see cref="Seams.PlaceholderRoot"/> until Ui/ lands). Handles no keys itself — Esc is E's
-/// <c>UiRoot.QuitRequested</c>, wired by <see cref="Composition"/>.
+/// A-startup-and-shell.md § 3.1, § 3.4. The shell: full screen, black, hosts part E's root
+/// (<see cref="RankMaster2.Pc.Ui.Views.UiRoot"/>, now that Ui/ has landed). Handles no keys itself
+/// — Esc is E's <c>UiRoot.QuitRequested</c>, wired by <see cref="Composition"/>.
 /// </summary>
 public partial class MainWindow : Window
 {

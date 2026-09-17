@@ -52,6 +52,37 @@ public sealed class AppLifetimeTests
         File.Delete(logPath);
     }
 
+    /// <summary>G-audit-remediation.md § 3.7, A21: the old blanket <c>catch { }</c> around
+    /// <c>ISessionLink.CloseAsync</c> hid a genuinely failing close as readily as an expected
+    /// timeout. Esc still ends the process regardless (this test calls <c>PrepareQuitAsync</c>
+    /// directly, exactly as the others in this file do, so the test host survives) — the exception's
+    /// type and message now land in the startup log rather than nowhere.</summary>
+    [Fact]
+    public async Task CloseFailure_IsWrittenToTheStartupLog()
+    {
+        var link = new FakeSessionLink
+        {
+            OnClose = _ => throw new InvalidOperationException("the link refused to close"),
+        };
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"rm2-lifetime-closefail-{Guid.NewGuid():N}.log");
+        var lifetime = new AppLifetime(link, logPath);
+
+        try
+        {
+            await lifetime.PrepareQuitAsync();
+
+            var text = await File.ReadAllTextAsync(logPath);
+            Assert.Contains("close_failed", text);
+            Assert.Contains(nameof(InvalidOperationException), text);
+            Assert.Contains("the link refused to close", text);
+        }
+        finally
+        {
+            File.Delete(logPath);
+        }
+    }
+
     [Fact]
     public async Task Esc_PrepareQuit_CapsAt500ms()
     {

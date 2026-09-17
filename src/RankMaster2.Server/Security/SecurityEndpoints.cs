@@ -68,7 +68,7 @@ public static class SecurityEndpoints
 
         DataDirectory.Ensure(dataDirectory);
         var certificates = CertificateStore.LoadOrCreate(dataDirectory, listenAddress);
-        var tokens = TokenStore.Open(dataDirectory);
+        var tokens = TokenStore.Open(dataDirectory, logger);
         var limiter = new PairingRateLimiter(options.PairingAttemptsPerMinute);
         var pairing = new PairingService(
             options, tokens, limiter, dataDirectory, certificates.Fingerprint,
@@ -120,7 +120,6 @@ public static class SecurityEndpoints
             kestrel.Limits.MaxRequestHeadersTotalSize = 32 * 1024;
             kestrel.Limits.MaxRequestLineSize = 16 * 1024;
 
-            state.TlsConfigured = true;
             logger.LogInformation("Listening on https://{Address}:{Port}{Base}",
                 state.ListenAddress, state.Options.Port, ApiBase);
         }
@@ -128,7 +127,6 @@ public static class SecurityEndpoints
         {
             // The in-memory test server has no Kestrel to configure. A real deployment that cannot
             // configure TLS must be loud about it rather than silently serving plaintext.
-            state.TlsConfigured = false;
             logger.LogWarning(e,
                 "Kestrel was not configured by the security layer; TLS is not being served by it.");
         }
@@ -143,7 +141,10 @@ public static class SecurityEndpoints
         {
             state.Ready = true;
 
-            if (state.Options.AutoOpenPairingWhenUnenrolled && state.Tokens.ActiveDeviceCount == 0)
+            // H12: auto-open only on a genuinely fresh install (no devices.json at all), never
+            // because the store turned out to be unreadable — a damaged store must not double as a
+            // way to force a new pairing window open.
+            if (state.Options.AutoOpenPairingWhenUnenrolled && state.Tokens.WasAbsentAtLoad)
                 OpenPairingWindow(state, logger, "no device is enrolled");
 
             if (state.Options.WatchPairRequestFile)
@@ -188,12 +189,12 @@ public static class SecurityEndpoints
     {
         var offer = state.Pairing.OpenWindow(DateTimeOffset.UtcNow);
 
-        // The code is printed because printing it to the owner's own console is the entire point of
-        // an out-of-band channel. The QR payload is not printed: it is written to the offer file
-        // with owner-only permissions, so the full credential does not end up in a log pipeline.
+        // K4: the code itself is never written to the log, at any level — a log file is not the
+        // "out of band" channel SERVER_SPEC.md § 10.11 means. It goes only to the offer file, with
+        // owner-only permissions; rm2ctl and the tray read the code from there.
         logger.LogInformation(
-            "Pairing window open ({Reason}). Code {Code}, valid until {ExpiresAt:O}. QR payload written to {OfferFile}.",
-            reason, offer.CodeDisplay, offer.ExpiresAt, state.Pairing.OfferFilePath);
+            "Pairing window open ({Reason}), valid until {ExpiresAt:O}. QR payload written to {OfferFile}.",
+            reason, offer.ExpiresAt, state.Pairing.OfferFilePath);
     }
 
     // ---------------------------------------------------------------- /ping
@@ -223,7 +224,7 @@ public static class SecurityEndpoints
                 Limits: new PingLimits(
                     StillWidths: [360, 540, 720, 1080, 1440, 2160],
                     ThumbWidth: 320,
-                    MaxJsonBodyBytes: 65536,
+                    MaxJsonBodyBytes: Limits.MaxJsonBodyBytes,
                     SessionLockTimeoutSeconds: 5),
 
                 // Null in the public subset. A client that has not paired learns the fingerprint it
@@ -292,7 +293,8 @@ public static class SecurityEndpoints
                 return;
             }
 
-            var result = state.Pairing.Redeem(code, deviceName, DateTimeOffset.UtcNow);
+            var sourceAddress = PairingRateLimiter.KeyFor(context.Connection.RemoteIpAddress);
+            var result = state.Pairing.Redeem(code, deviceName, sourceAddress, DateTimeOffset.UtcNow);
 
             switch (result.Outcome)
             {

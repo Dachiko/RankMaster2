@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace RankMaster2.Server.Security;
 
@@ -60,17 +62,30 @@ public sealed class TokenStore
 
     private readonly object _gate = new();
     private readonly string _path;
+    private readonly ILogger? _logger;
     private readonly Dictionary<string, Entry> _byDeviceId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Entry> _byTokenId = new(StringComparer.Ordinal);
     private readonly byte[] _decoySalt = RandomNumberGenerator.GetBytes(SaltBytes);
     private readonly byte[] _decoyHash = RandomNumberGenerator.GetBytes(32);
 
-    private TokenStore(string path) => _path = path;
+    private TokenStore(string path, ILogger? logger)
+    {
+        _path = path;
+        _logger = logger;
+    }
 
-    public static TokenStore Open(string dataDirectory)
+    /// <summary>
+    /// True when there was no <c>devices.json</c> at all the moment this store loaded — a genuinely
+    /// fresh install. False both when the file loaded fine and when it existed but could not be
+    /// read: SERVER_SPEC.md's fix for H12 auto-opens pairing on the former only, never the latter,
+    /// so a damaged store cannot be used to force a new window open by itself.
+    /// </summary>
+    public bool WasAbsentAtLoad { get; private set; }
+
+    public static TokenStore Open(string dataDirectory, ILogger? logger = null)
     {
         DataDirectory.Ensure(dataDirectory);
-        var store = new TokenStore(Path.Combine(dataDirectory, FileName));
+        var store = new TokenStore(Path.Combine(dataDirectory, FileName), logger);
         store.Load();
         return store;
     }
@@ -86,14 +101,6 @@ public sealed class TokenStore
                 return _byDeviceId.Values.Count(e =>
                     e.Device.RevokedAt is null && (e.Device.ExpiresAt is null || e.Device.ExpiresAt > now));
             }
-        }
-    }
-
-    public IReadOnlyList<DeviceRecord> Devices
-    {
-        get
-        {
-            lock (_gate) return _byDeviceId.Values.Select(e => e.Device).ToList();
         }
     }
 
@@ -215,7 +222,11 @@ public sealed class TokenStore
 
     private void Load()
     {
-        if (!File.Exists(_path)) return;
+        if (!File.Exists(_path))
+        {
+            WasAbsentAtLoad = true;
+            return;
+        }
 
         try
         {
@@ -235,12 +246,46 @@ public sealed class TokenStore
                 _byTokenId[d.TokenId] = entry;
             }
         }
-        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
+        catch (JsonException)
         {
-            // A device file that will not parse must not brick the server, and must not silently
-            // become an empty allow-list either: nothing is trusted, so every device re-pairs.
+            // H12: a devices.json that will not parse must not brick the server, and must not
+            // silently become an empty allow-list either: nothing is trusted, so every device
+            // re-pairs. But the damaged file is not discarded — it is moved aside, loudly, so the
+            // owner learns his devices were dropped instead of just noticing his phone stopped
+            // working. It is never treated the same as a genuinely fresh install: WasAbsentAtLoad
+            // stays false, so this alone must not auto-open a pairing window.
             _byDeviceId.Clear();
             _byTokenId.Clear();
+            Quarantine();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Could not even be read (permissions, a lock). Not corruption — nothing to move aside,
+            // and moving a file out from under whatever holds it would likely just fail too.
+            _byDeviceId.Clear();
+            _byTokenId.Clear();
+        }
+    }
+
+    /// <summary>Moves an unparsable <c>devices.json</c> aside so it is never silently emptied.</summary>
+    private void Quarantine()
+    {
+        var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        var quarantined = _path + ".corrupt-" + stamp;
+
+        try
+        {
+            if (File.Exists(quarantined)) File.Delete(quarantined);
+            File.Move(_path, quarantined);
+            _logger?.LogError(
+                "{DevicesFile} could not be parsed and was moved aside to {QuarantinedFile}; every " +
+                "device on it must re-pair.", _path, quarantined);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _logger?.LogError(e,
+                "{DevicesFile} could not be parsed and could not be moved aside either; treating it " +
+                "as empty. Every device must re-pair.", _path);
         }
     }
 

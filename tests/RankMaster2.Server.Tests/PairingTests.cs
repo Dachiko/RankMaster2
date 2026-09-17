@@ -74,16 +74,19 @@ public class PairingTests(Rm2Server server)
     }
 
     /// <summary>
-    /// § 10.11: each pairing window carries a budget of five attempts in total, counted across all
-    /// source addresses; on reaching zero the window is destroyed.
+    /// § 10.11: each pairing window carries a budget of five attempts <b>per source address</b>; on
+    /// one address reaching zero, that address alone is refused thereafter (a different unit test,
+    /// <c>RankMaster2.Audit.Security.PairingWindowSecurityTests</c>, proves another address's own
+    /// budget and the window itself are untouched — this harness's requests all share one
+    /// connection, so there is only one address to observe here).
     ///
     /// The per-address rate limit alone is walked straight through by an attacker holding several
-    /// LAN addresses, which is why the spec makes the per-window budget normative and separate. The
-    /// suite has already paired by the time this runs (see <see cref="Harness.Rm2Server"/>), so
-    /// spending the window here costs nothing.
+    /// LAN addresses, which is why the spec makes the per-address guess budget normative and
+    /// separate. The suite has already paired by the time this runs (see <see cref="Harness.Rm2Server"/>),
+    /// so spending the window here costs nothing.
     /// </summary>
     [Fact]
-    public async Task A_window_has_a_total_attempt_budget_not_just_a_rate_limit()
+    public async Task A_window_has_a_per_address_attempt_budget_not_just_a_rate_limit()
     {
         // A window with its budget intact, so this does not depend on which pairing test ran first.
         var fresh = await TestAuth.RequestFreshWindowAsync(server.DataDirectory, TimeSpan.FromSeconds(15));
@@ -121,25 +124,27 @@ public class PairingTests(Rm2Server server)
             "details.attemptsRemaining. Not one attempt reported a budget.");
 
         Assert.True(budgets[0] <= 5,
-            "SERVER_SPEC.md § 10.11: a window's total budget is five attempts, counted across all source " +
-            $"addresses. The first wrong guess against a fresh window reported {budgets[0]} remaining.");
+            "SERVER_SPEC.md § 10.11: this address's own budget is five attempts. The first wrong " +
+            $"guess against a fresh window reported {budgets[0]} remaining.");
 
         Assert.True(budgets.Zip(budgets.Skip(1)).All(pair => pair.Second <= pair.First),
-            "SERVER_SPEC.md § 10.11: the per-window budget never rises. It went " +
+            "SERVER_SPEC.md § 10.11: this address's own budget never rises. It went " +
             $"[{string.Join(", ", budgets)}].");
 
         Assert.True(budgets.Count < 2 || budgets[^1] < budgets[0],
-            "SERVER_SPEC.md § 10.11: each wrong guess costs the window an attempt — a per-address rate limit " +
-            "alone is walked straight through by an attacker holding several LAN addresses. The budget did " +
-            $"not move: [{string.Join(", ", budgets)}].");
+            "SERVER_SPEC.md § 10.11: each wrong guess costs this address's own budget an attempt — a " +
+            "per-minute rate limit alone is walked straight through by an attacker holding several LAN " +
+            $"addresses. The budget did not move: [{string.Join(", ", budgets)}].");
 
-        // Once the budget is gone the window is destroyed, and the correct code is refused thereafter.
+        // Once this address's own budget is gone it is refused even the correct code — this harness
+        // has only the one address to observe; PairingWindowSecurityTests proves a second address's
+        // budget and the window survive the first's exhaustion.
         if (budgets[^1] == 0)
         {
-            var spent = await server.Anonymous.PairAsync(fresh, "the correct code, after the budget is gone");
+            var spent = await server.Anonymous.PairAsync(fresh, "the correct code, after this address's budget is gone");
             Assert.True(spent.StatusCode != 201,
-                "SERVER_SPEC.md § 10.11: on reaching zero the window is destroyed and the correct code is " +
-                "refused thereafter. It was accepted.\n" + spent.Describe());
+                "SERVER_SPEC.md § 10.11: once an address's own budget reaches zero it is refused even the " +
+                "correct code. It was accepted.\n" + spent.Describe());
         }
     }
 

@@ -153,7 +153,6 @@ public class RankCoordinatorTests
 
     [Theory]
     [InlineData("vote", "Vote taken back")]
-    [InlineData("skip", "Skip taken back")]
     [InlineData("discard", "Discard taken back")]
     [InlineData("special", "Moved back out of special 1")]
     public async Task Undo_toasts_exactly_what_it_undid(string undoneType, string expectedToast)
@@ -358,7 +357,7 @@ public class RankCoordinatorTests
     }
 
     [Fact]
-    public async Task At_most_two_video_surfaces_ever_exist_and_quit_releases_them()
+    public async Task At_most_two_video_surfaces_ever_exist_and_quit_stops_both_without_waiting_to_dispose_them()
     {
         var (c, link, _, video, clock, _) = Build();
         var snapshot = SnapshotBuilder.Ranking(leftId: "l.mp4", rightId: "r.mp4", kind: "video");
@@ -372,8 +371,13 @@ public class RankCoordinatorTests
         c.QuitRequested += () => quit = true;
         await c.OnCompareKeyDown(UiKey.Escape, UiModifiers.None);
 
+        // A21: Esc quits immediately. It asks both surfaces to stop but -- unlike the pre-move path
+        // (ReleaseHandlesBeforeMove), which does wait, bounded -- it does not wait for or dispose
+        // them; nobody needs the file handles released before the process exits.
         Assert.True(quit);
-        Assert.Equal(0, video.LiveSurfaces);
+        Assert.Equal(2, video.LiveSurfaces);
+        Assert.All(video.Created, s => Assert.Equal(1, s.StopCalls));
+        Assert.All(video.Created, s => Assert.False(s.Disposed));
     }
 
     // ---- exhausted and failure escalation (plan § 3.5, § 4.1) --------------------------------------
@@ -388,7 +392,7 @@ public class RankCoordinatorTests
         var exhausted = SnapshotBuilder.Exhausted(folder: snapshot.Folder, folderName: snapshot.FolderName, undoAvailable: true);
         link.ActionResults.Enqueue(new ActionResult.Applied(exhausted));
 
-        await c.OnCompareKeyDown(UiKey.Down, UiModifiers.None); // skip
+        await c.OnCompareKeyDown(UiKey.D1, UiModifiers.None); // discard left: any action that reaches ApplyResult
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.True(c.Start.ExhaustedSessionOpen);
@@ -405,7 +409,7 @@ public class RankCoordinatorTests
         var fatal = new Failure(FailureKind.PairingLost, "This PC is no longer paired", "Restart the server.", "token_revoked", null, Fatal: true);
         link.ActionResults.Enqueue(new ActionResult.Refused(fatal, null));
 
-        await c.OnCompareKeyDown(UiKey.Down, UiModifiers.None);
+        await c.OnCompareKeyDown(UiKey.D1, UiModifiers.None);
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.Contains("no longer paired", c.Start.BoxText);
@@ -421,14 +425,41 @@ public class RankCoordinatorTests
         var unreachable = new Failure(FailureKind.Unreachable, "The server did not answer", "Press the key again.", "client_unreachable", null, Fatal: false);
 
         link.ActionResults.Enqueue(new ActionResult.Unknown(unreachable));
-        await c.OnCompareKeyDown(UiKey.Down, UiModifiers.None);
+        await c.OnCompareKeyDown(UiKey.D1, UiModifiers.None);
         Assert.Equal(AppScreen.Rank, c.Screen); // first one: toast only
 
-        c.OnCompareKeyUp(UiKey.Down);
+        c.OnCompareKeyUp(UiKey.D1);
         clock.Advance(Timings.ArrivalGuardMs + TimeSpan.FromMilliseconds(1));
         link.ActionResults.Enqueue(new ActionResult.Unknown(unreachable));
-        await c.OnCompareKeyDown(UiKey.Down, UiModifiers.None);
+        await c.OnCompareKeyDown(UiKey.D1, UiModifiers.None);
 
+        Assert.Equal(AppScreen.Start, c.Screen);
+    }
+
+    // ---- H9's second gap: Ctrl+Z from the exhausted start screen -----------------------------------
+
+    [Fact]
+    public async Task A_throwing_UndoAsync_from_the_exhausted_start_screen_returns_the_start_screen_to_its_buttons()
+    {
+        var (c, link, _, _, clock, delay) = Build();
+        var snapshot = SnapshotBuilder.Ranking(pairSeq: 1);
+        await EnterReadyCompareScreen(c, link, clock, snapshot);
+
+        var exhausted = SnapshotBuilder.Exhausted(folder: snapshot.Folder, folderName: snapshot.FolderName, undoAvailable: true);
+        link.Snapshot = exhausted;
+        link.ActionResults.Enqueue(new ActionResult.Applied(exhausted));
+        await c.OnCompareKeyDown(UiKey.D1, UiModifiers.None);
+        Assert.True(c.Start.ExhaustedSessionOpen);
+
+        // TryUndoFromStartAsync's own guard reads link.Snapshot.UndoAvailable, which is true here --
+        // so the call is actually attempted, and the link's busy gate throws (plan's exact scenario:
+        // the startup connect still running when Ctrl+Z is pressed here).
+        link.UndoThrows = new InvalidOperationException("busy");
+
+        await c.TryUndoFromStartAsync();
+
+        Assert.False(c.Start.Opening);
+        Assert.Contains("Could not open the folder", c.Start.BoxText);
         Assert.Equal(AppScreen.Start, c.Screen);
     }
 
@@ -480,5 +511,124 @@ public class RankCoordinatorTests
         Assert.Equal(1, video.Created[0].StopCalls);
         Assert.Equal(0, video.Created[1].StopCalls); // the untouched side is never stopped
         Assert.Equal(1, link.CallCount(nameof(link.DiscardAsync)));
+    }
+
+    // ---- A21: Esc must not block on a video surface releasing -------------------------------------
+
+    [Fact]
+    public async Task Quit_returns_quickly_even_when_a_video_surfaces_Dispose_would_block()
+    {
+        var (c, link, _, video, _, _) = Build();
+        var snapshot = SnapshotBuilder.Ranking(leftId: "l.mp4", rightId: "r.mp4", kind: "video");
+        link.Snapshot = snapshot;
+        link.OpenResults.Enqueue(new OpenResult.Opened(snapshot, false));
+        await c.OpenFolderAsync(snapshot.Folder);
+        foreach (var surface in video.Created) surface.DisposeBlocks = true;
+
+        var quit = false;
+        c.QuitRequested += () => quit = true;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await c.OnCompareKeyDown(UiKey.Escape, UiModifiers.None);
+        sw.Stop();
+
+        Assert.True(quit);
+        Assert.True(sw.ElapsedMilliseconds < 50, $"Quit took {sw.ElapsedMilliseconds} ms -- it must never wait on Dispose (A21).");
+        Assert.All(video.Created, s => Assert.False(s.Disposed)); // Stop() is asked for; Dispose is not
+        Assert.All(video.Created, s => Assert.Equal(1, s.StopCalls));
+    }
+
+    // ---- A27: Esc while a dialog is open is the picker's, not ours --------------------------------
+
+    [Fact]
+    public void Esc_on_the_start_screen_does_nothing_while_the_folder_picker_is_open()
+    {
+        var (c, _, _, _, _, _) = Build();
+        c.BeginDialog(); // on the start screen: Start.DialogOpen = true
+
+        var quit = false;
+        c.QuitRequested += () => quit = true;
+        c.OnStartKeyDown(UiKey.Escape, UiModifiers.None);
+
+        Assert.False(quit);
+    }
+
+    [Fact]
+    public async Task Esc_on_the_compare_screen_does_nothing_while_the_folder_picker_is_open()
+    {
+        var (c, link, _, _, clock, delay) = Build();
+        await EnterReadyCompareScreen(c, link, clock, SnapshotBuilder.Ranking());
+        c.BeginDialog(); // on the compare screen: Rank.DialogOpen = true
+
+        var quit = false;
+        c.QuitRequested += () => quit = true;
+        await c.OnCompareKeyDown(UiKey.Escape, UiModifiers.None);
+
+        Assert.False(quit);
+    }
+
+    // ---- A20: the 250 ms repaint tick ---------------------------------------------------------------
+
+    [Fact]
+    public async Task Tick_clears_an_expired_toast_and_raises_Changed()
+    {
+        var (c, link, _, _, clock, delay) = Build();
+        await EnterReadyCompareScreen(c, link, clock, SnapshotBuilder.Ranking());
+        c.Rank.SetToast("Discarded a.jpg", clock);
+        Assert.NotNull(c.Rank.Toast);
+
+        var raised = false;
+        c.Changed += () => raised = true;
+
+        clock.Advance(Timings.ToastMs + TimeSpan.FromMilliseconds(1));
+        c.Tick();
+
+        Assert.Null(c.Rank.Toast);
+        Assert.True(raised);
+    }
+
+    [Fact]
+    public void Tick_before_anything_expired_raises_nothing()
+    {
+        var (c, _, _, _, _, _) = Build();
+
+        var raised = false;
+        c.Changed += () => raised = true;
+        c.Tick();
+
+        Assert.False(raised);
+    }
+
+    [Fact]
+    public async Task Tick_raises_Changed_exactly_once_when_an_in_flight_call_crosses_the_late_action_threshold()
+    {
+        var (c, link, _, _, clock, delay) = Build();
+        await EnterReadyCompareScreen(c, link, clock, SnapshotBuilder.Ranking());
+
+        var task = c.OnCompareKeyDown(UiKey.Right, UiModifiers.None); // begins the cue, then VoteAsync -- stays in flight
+        Assert.True(c.Rank.Busy);
+
+        var raises = 0;
+        c.Changed += () => raises++;
+
+        clock.Advance(Timings.LateActionLineAfterMs + TimeSpan.FromMilliseconds(1));
+        c.Tick(); // crosses the threshold: one Changed
+        c.Tick(); // still late, nothing new: no Changed
+
+        Assert.Equal(1, raises);
+
+        delay.Release();
+        await task;
+    }
+
+    // ---- H10: pane size forwarded to the still source -----------------------------------------------
+
+    [Fact]
+    public void SetPaneSize_forwards_to_the_still_source()
+    {
+        var (c, _, stills, _, _, _) = Build();
+        c.SetPaneSize(1920, 2160);
+        Assert.Equal(1920, stills.PaneWidth);
+        Assert.Equal(2160, stills.PaneHeight);
     }
 }

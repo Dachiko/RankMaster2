@@ -33,8 +33,20 @@ public sealed class AppLifetime
 
     private async Task SafeCloseAsync(CancellationToken ct)
     {
-        try { await _link.CloseAsync(ct).ConfigureAwait(false); }
-        catch { /* Esc ends the process regardless; nothing is written on close (SERVER_SPEC.md § 10.4) */ }
+        try
+        {
+            await _link.CloseAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // A21: Esc ends the process regardless of what happens here — SPEC.md says Esc quits
+            // immediately, and nothing is written on close (SERVER_SPEC.md § 10.4) so there is
+            // nothing to roll back. The old blanket `catch { }` hid a genuinely failing close as
+            // readily as an expected timeout; this is the only debugging channel from the owner's
+            // PC, so the failure goes there instead of nowhere.
+            try { StartupClock.AppendNote($"close_failed {ex.GetType().Name}: {ex.Message}", _startupLogPath); }
+            catch { /* the process is ending either way */ }
+        }
     }
 
     /// <summary>Runs <see cref="PrepareQuitAsync"/> then ends the process. Not used by tests (they

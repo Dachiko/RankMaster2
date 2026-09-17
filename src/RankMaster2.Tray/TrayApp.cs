@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using RankMaster2.Server.Security;
 using RankMaster2.Server.Sessions;
 
@@ -16,31 +18,51 @@ namespace RankMaster2.Tray;
 internal sealed class TrayApp : IDisposable
 {
     private readonly string _dataDirectory;
+    private readonly ILogger _logger;
     private readonly NotifyIcon _icon;
+    private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _status;
     private readonly ToolStripMenuItem _session;
+    private readonly ToolStripMenuItem _deviceWarning;
     private readonly System.Windows.Forms.Timer _poll;
     private readonly string _listenAddress;
     private readonly int _port;
     private readonly string _fingerprint;
+    private int _refreshInFlight;
     private PairingForm? _pairing;
 
     public TrayApp(WebApplication app, string dataDirectory)
     {
         _dataDirectory = dataDirectory;
+        _logger = app.Logger;
 
         var options = new Rm2SecurityOptions();
         app.Configuration.GetSection(Rm2SecurityOptions.SectionName).Bind(options);
-        _listenAddress = options.ResolveListenAddress().ToString();
+        var listenAddress = options.ResolveListenAddress();
+        _listenAddress = listenAddress.ToString();
         _port = options.Port;
         _fingerprint = ReadFingerprint(dataDirectory);
 
-        _status = new ToolStripMenuItem($"Listening on {_listenAddress}:{_port}") { Enabled = false };
+        // A loopback bind is by design (SERVER_RUNNING.md), but the QR it produces carries
+        // host=127.0.0.1 and a phone that tries it fails with a Wi-Fi-looking error (A29). Say so
+        // here, where the owner is looking when something is wrong.
+        var statusText = IPAddress.IsLoopback(listenAddress)
+            ? $"Listening on {_listenAddress}:{_port} — this PC only; phones cannot connect (see SERVER_RUNNING.md)"
+            : $"Listening on {_listenAddress}:{_port}";
+
+        _status = new ToolStripMenuItem(statusText) { Enabled = false };
         _session = new ToolStripMenuItem("No folder open") { Enabled = false };
+        _deviceWarning = new ToolStripMenuItem("Device list was unreadable — pair the phone again")
+        {
+            Enabled = false,
+            Visible = false,
+        };
 
         var menu = new ContextMenuStrip();
+        _menu = menu;
         menu.Items.Add(_status);
         menu.Items.Add(_session);
+        menu.Items.Add(_deviceWarning);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Show pairing QR…", null, (_, _) => ShowPairing());
         menu.Items.Add("Copy certificate fingerprint", null, (_, _) => CopyFingerprint());
@@ -59,7 +81,8 @@ internal sealed class TrayApp : IDisposable
         };
         _icon.DoubleClick += (_, _) => ShowPairing();
 
-        // One second is imperceptible for a status line and cheap: it reads one lock-free field.
+        // One second is imperceptible for a status line. The read usually costs one lock-free
+        // field, but its rare contended path can block, so it runs off this thread (A34).
         _poll = new System.Windows.Forms.Timer { Interval = 1000 };
         _poll.Tick += (_, _) => RefreshSession();
         _poll.Start();
@@ -105,9 +128,10 @@ internal sealed class TrayApp : IDisposable
         {
             Process.Start(new ProcessStartInfo(_dataDirectory) { UseShellExecute = true });
         }
-        catch (Exception e)
+        catch (Exception)
         {
-            Balloon("Could not open the data folder: " + e.Message);
+            Balloon($"The server's data folder could not be opened ({_dataDirectory}). " +
+                "Check that the folder exists and is writable.");
         }
     }
 
@@ -123,12 +147,75 @@ internal sealed class TrayApp : IDisposable
         Application.ExitThread();
     }
 
+    /// <summary>
+    /// Reads the shared session and the device store off the UI thread. <see
+    /// cref="SessionRegistry.CurrentForMedia"/> is usually a lock-free field read, but its
+    /// contended fallback can wait up to five seconds and then throw <see
+    /// cref="TimeoutException"/> (A34) — on the timer tick that would freeze the whole menu for
+    /// as long as it took. A poll already in flight is skipped rather than piled up.
+    /// </summary>
     private void RefreshSession()
     {
-        var view = SessionRegistry.Shared.CurrentForMedia;
-        _session.Text = view is null
-            ? "No folder open"
-            : "Ranking: " + FolderLabel(view.Folder);
+        if (Interlocked.Exchange(ref _refreshInFlight, 1) == 1)
+            return;
+
+        Task.Run(() =>
+        {
+            string? sessionText = null;
+            try
+            {
+                var view = SessionRegistry.Shared.CurrentForMedia;
+                sessionText = view is null ? "No folder open" : "Ranking: " + FolderLabel(view.Folder);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Reading the ranking session for the tray failed; keeping the previous status.");
+            }
+
+            var deviceStoreCorrupt = HasCorruptDeviceStore();
+
+            PostToUi(() =>
+            {
+                if (sessionText is not null)
+                    _session.Text = sessionText;
+                _deviceWarning.Visible = deviceStoreCorrupt;
+            });
+
+            Volatile.Write(ref _refreshInFlight, 0);
+        });
+    }
+
+    /// <summary>H12: a device store the last load could not parse is moved aside by the security
+    /// layer as <c>devices.json.corrupt-&lt;timestamp&gt;</c>, never silently emptied. The tray
+    /// says so rather than leave it to the log.</summary>
+    private bool HasCorruptDeviceStore()
+    {
+        try
+        {
+            return Directory.Exists(_dataDirectory) &&
+                Directory.EnumerateFiles(_dataDirectory, "devices.json.corrupt-*").Any();
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private void PostToUi(Action action)
+    {
+        try
+        {
+            if (_menu.IsHandleCreated)
+                _menu.BeginInvoke(action);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The tray is shutting down.
+        }
+        catch (InvalidOperationException)
+        {
+            // The handle went away between the check and the call.
+        }
     }
 
     private void Balloon(string text)

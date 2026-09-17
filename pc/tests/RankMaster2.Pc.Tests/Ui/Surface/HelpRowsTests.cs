@@ -21,10 +21,11 @@ public class HelpRowsTests
     }
 
     [Fact]
-    public void Ten_rows_in_the_old_apps_order()
+    public void Nine_rows_in_the_old_apps_order_with_skip_removed()
     {
-        Assert.Equal(10, HelpRows.Compare.Count);
+        Assert.Equal(9, HelpRows.Compare.Count);
         Assert.Equal("Select Left", HelpRows.Compare[0].Label);
         Assert.Equal("Exit", HelpRows.Compare[^1].Label);
+        Assert.DoesNotContain(HelpRows.Compare, row => row.Label.Contains("Skip", StringComparison.Ordinal));
     }
 }

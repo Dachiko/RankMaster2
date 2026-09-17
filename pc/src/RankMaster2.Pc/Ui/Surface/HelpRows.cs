@@ -13,7 +13,6 @@ public static class HelpRows
     [
         new("Select Left", "←", Intent.VoteLeft),
         new("Select Right", "→", Intent.VoteRight),
-        new("Skip", "↓ / S", Intent.Skip),
         new("Discard", "1 / 2", Intent.DiscardLeft), // one row covers both discard keys, as the old app did
         new("Special", "4 / 5", Intent.SpecialLeft), // one row covers both special keys
         new("Open", "O", Intent.OpenFolder),

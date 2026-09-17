@@ -28,17 +28,13 @@ public class StillSourceCorpusTests(ITestOutputHelper output)
         return false;
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task A_real_pair_becomes_Ready_within_a_second()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, "corpus not built");
         var left = "photo_large.jpg";
         var right = "exif_portrait_6.jpg";
-        if (!File.Exists(Path.Combine(Stills, left)) || !File.Exists(Path.Combine(Stills, right)))
-        {
-            output.WriteLine("skipped: corpus files missing");
-            return;
-        }
+        Skip.If(!File.Exists(Path.Combine(Stills!, left)) || !File.Exists(Path.Combine(Stills!, right)), "corpus files missing");
 
         await using var source = new StillSource(new DecodeBudget(256L * 1024 * 1024));
         source.SetPaneSize(960, 1080);
@@ -66,16 +62,12 @@ public class StillSourceCorpusTests(ITestOutputHelper output)
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Warm_pairs_make_the_next_Show_instant()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
+        Skip.If(Stills is null, "corpus not built");
         string[] names = ["photo_cat.jpg", "photo_large.jpg", "exif_landscape_6.jpg", "lossless.webp"];
-        if (names.Any(n => !File.Exists(Path.Combine(Stills, n))))
-        {
-            output.WriteLine("skipped: corpus files missing");
-            return;
-        }
+        Skip.If(names.Any(n => !File.Exists(Path.Combine(Stills!, n))), "corpus files missing");
 
         await using var source = new StillSource(new DecodeBudget(256L * 1024 * 1024));
         source.SetPaneSize(960, 1080);
@@ -111,13 +103,13 @@ public class StillSourceCorpusTests(ITestOutputHelper output)
         Assert.True(sw.Elapsed.TotalMilliseconds < 5, $"expected the warmed Show() call to take < 5 ms, took {sw.Elapsed.TotalMilliseconds:F2} ms");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task A_broken_file_in_a_pair_does_not_stop_the_other()
     {
-        if (Stills is null || Broken is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var noisePath = Path.Combine(Broken, "noise.jpg");
-        var catPath = Path.Combine(Stills, "photo_cat.jpg");
-        if (!File.Exists(noisePath) || !File.Exists(catPath)) { output.WriteLine("skipped: corpus files missing"); return; }
+        Skip.If(Stills is null || Broken is null, "corpus not built");
+        var noisePath = Path.Combine(Broken!, "noise.jpg");
+        var catPath = Path.Combine(Stills!, "photo_cat.jpg");
+        Skip.If(!File.Exists(noisePath) || !File.Exists(catPath), "corpus files missing");
 
         var tempDir = Directory.CreateTempSubdirectory("rm2-stills-source-broken-");
         try
@@ -143,13 +135,13 @@ public class StillSourceCorpusTests(ITestOutputHelper output)
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task A_vanished_file_is_Missing_and_Release_still_succeeds()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var catPath = Path.Combine(Stills, "photo_cat.jpg");
-        var largePath = Path.Combine(Stills, "photo_large.jpg");
-        if (!File.Exists(catPath) || !File.Exists(largePath)) { output.WriteLine("skipped: corpus files missing"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var catPath = Path.Combine(Stills!, "photo_cat.jpg");
+        var largePath = Path.Combine(Stills!, "photo_large.jpg");
+        Skip.If(!File.Exists(catPath) || !File.Exists(largePath), "corpus files missing");
 
         var tempDir = Directory.CreateTempSubdirectory("rm2-stills-source-vanish-");
         try

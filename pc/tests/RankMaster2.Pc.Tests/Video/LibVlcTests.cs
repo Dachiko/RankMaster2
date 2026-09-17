@@ -1,7 +1,6 @@
 namespace RankMaster2.Pc.Tests.Video;
 
 using System.Diagnostics;
-using Avalonia.Headless.XUnit;
 using RankMaster2.Pc.Video;
 using RankMaster2.Pc.Video.Backend;
 using Xunit;
@@ -9,10 +8,17 @@ using Xunit;
 /// <summary>
 /// D-video.md § 6.2: real LibVLC, run only in the Debian container <c>pc/tests/run-video-linux.sh</c>
 /// spins up (LibVLC is not installed on the build box, and the plan does not ask for it to be).
-/// Every test is <c>[Trait("Category", "LibVlc")]</c> and begins by checking
-/// <see cref="LibVlcProbe.Available"/>; when <c>Core.Initialize</c>/<c>new LibVLC</c> fails (i.e. not
-/// running in the container), the test returns at once instead of failing, so plain <c>dotnet test</c>
-/// on the host stays green.
+/// Every test is <c>[Trait("Category", "LibVlc")]</c> and begins with
+/// <c>Skip.If(!LibVlcProbe.Available, ...)</c> (G-audit-remediation.md § 3.8 PC-VIDEO, T3a): when
+/// <c>Core.Initialize</c>/<c>new LibVLC</c> fails (i.e. not running in the container), the test is
+/// reported as *skipped*, with a reason, rather than returning early and being counted as a pass — a
+/// clean checkout's <c>dotnet test</c> on the host reports these as skips, not silent passes. The two
+/// theories' <c>MemberData</c> sources yield one skipping row, rather than none, when their fixtures
+/// are absent, so an empty data set is a visible skip rather than "No data found". Combining the
+/// dynamic skip with Avalonia's headless dispatch (needed once a test's <see cref="VideoSurface"/>
+/// creates a real <c>WriteableBitmap</c>) is what <see cref="AvaloniaSkippableFactAttribute"/> /
+/// <see cref="AvaloniaSkippableTheoryAttribute"/> are for — see that file's header for why the two
+/// off-the-shelf attributes don't simply stack.
 /// </summary>
 [Trait("Category", "LibVlc")]
 public sealed class LibVlcTests : IDisposable
@@ -34,11 +40,12 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 1: each corpus video plays ----
 
-    [AvaloniaTheory]
+    [AvaloniaSkippableTheory]
     [MemberData(nameof(CorpusAndFixtureVideos))]
-    public async Task Corpus_video_reaches_Playing_with_frames(string path)
+    public async Task Corpus_video_reaches_Playing_with_frames(string? path)
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(path is null, "no fixtures — run pc/tests/make-video-fixtures.sh");
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
 
         using var engine = NewEngine();
         var surface = (VideoSurface)engine.Create("left");
@@ -55,16 +62,27 @@ public sealed class LibVlcTests : IDisposable
         Assert.NotEqual("", surface.Stats.Codec);
     }
 
-    public static IEnumerable<object[]> CorpusAndFixtureVideos() =>
-        Fixtures.AllVideos().Select(f => new object[] { f });
+    public static IEnumerable<object[]> CorpusAndFixtureVideos()
+    {
+        var videos = Fixtures.AllVideos();
+        if (videos.Count == 0)
+        {
+            yield return new object?[] { null }!; // one skipping row, not zero rows ("No data found")
+            yield break;
+        }
+
+        foreach (var f in videos)
+            yield return new object[] { f };
+    }
 
     // ---- row 2: broken/generated fixtures fail with the right kind ----
 
-    [AvaloniaTheory]
+    [AvaloniaSkippableTheory]
     [MemberData(nameof(BrokenFixtures))]
-    public async Task Broken_fixture_fails_with_the_expected_kind(string path, VideoFailureKind[] acceptable)
+    public async Task Broken_fixture_fails_with_the_expected_kind(string? path, VideoFailureKind[] acceptable)
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(path is null, "no fixtures — run pc/tests/make-video-fixtures.sh");
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
 
         using var engine = NewEngine();
         var surface = (VideoSurface)engine.Create("left");
@@ -80,16 +98,22 @@ public sealed class LibVlcTests : IDisposable
     public static IEnumerable<object[]> BrokenFixtures()
     {
         var broken = Fixtures.BrokenVideos();
+        if (broken.Count == 0)
+        {
+            yield return new object?[] { null, Array.Empty<VideoFailureKind>() }!;
+            yield break;
+        }
+
         foreach (var (path, kinds) in broken)
             yield return new object[] { path, kinds };
     }
 
     // ---- row 3: Missing never touches the backend ----
 
-    [AvaloniaFact]
+    [AvaloniaSkippableFact]
     public async Task Missing_file_fails_without_a_backend_call()
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
 
         using var engine = NewEngine();
         var surface = (VideoSurface)engine.Create("left");
@@ -101,10 +125,10 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 4: a forced failure's Detail is non-empty (proves --quiet still yields log lines) ----
 
-    [AvaloniaFact]
+    [AvaloniaSkippableFact]
     public async Task A_forced_failure_carries_a_non_empty_Detail()
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
 
         // Measured finding (this container, libvlc 3.0.23), reported in the phase writeup: NONE of
         // empty.mp4/truncated.mp4/text_pretending.mp4/audio_only.mp4 produce a non-empty Detail, even
@@ -133,7 +157,7 @@ public sealed class LibVlcTests : IDisposable
                 withDetail.Add(Path.GetFileName(path));
         }
 
-        if (attempted == 0) return; // no fixtures — nothing to assert
+        Skip.If(attempted == 0, "no fixtures — run pc/tests/make-video-fixtures.sh");
         Console.WriteLine(withDetail.Count == 0
             ? "no broken fixture produced a non-empty Failure.Detail on this libvlc build"
             : $"Detail was non-empty for: {string.Join(", ", withDetail)}");
@@ -141,12 +165,12 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 5: StopAsync releases the file (Linux: no /proc/self/fd entry) ----
 
-    [AvaloniaFact]
+    [AvaloniaSkippableFact]
     public async Task StopAsync_releases_the_file()
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
         var path = Fixtures.AllVideos().FirstOrDefault();
-        if (path is null) return;
+        Skip.If(path is null, "no fixtures — run pc/tests/make-video-fixtures.sh");
 
         using var engine = NewEngine();
         var surface = (VideoSurface)engine.Create("left");
@@ -183,12 +207,12 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 6: 100x play/stop, then 20x create/play/dispose — no leak ----
 
-    [AvaloniaFact]
+    [AvaloniaSkippableFact]
     public async Task Repeated_play_stop_and_create_dispose_does_not_leak()
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
         var path = Fixtures.AllVideos().FirstOrDefault();
-        if (path is null) return;
+        Skip.If(path is null, "no fixtures — run pc/tests/make-video-fixtures.sh");
 
         using var engine = NewEngine();
         var surface = (VideoSurface)engine.Create("left");
@@ -227,12 +251,12 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 7: two 4K AV1 surfaces both reach Playing (informational numbers) ----
 
-    [AvaloniaFact]
+    [AvaloniaSkippableFact]
     public async Task Two_4K_AV1_surfaces_both_reach_Playing()
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
         var clip = Fixtures.Fixture("av1_4k_8bit.mp4");
-        if (clip is null) return;
+        Skip.If(clip is null, "no fixtures — run pc/tests/make-video-fixtures.sh");
 
         using var engine = NewEngine();
         var left = (VideoSurface)engine.Create("left");
@@ -254,12 +278,12 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 8: ForceAlternate puts the pair into the ladder with a real paused player ----
 
-    [AvaloniaFact]
+    [AvaloniaSkippableFact]
     public async Task ForceAlternate_holds_one_surface_and_swaps()
     {
-        if (!LibVlcProbe.Available) return;
+        Skip.If(!LibVlcProbe.Available, "libvlc is not installed on this box; run pc/tests/run-video-linux.sh");
         var clip = Fixtures.AllVideos().FirstOrDefault();
-        if (clip is null) return;
+        Skip.If(clip is null, "no fixtures — run pc/tests/make-video-fixtures.sh");
 
         using var engine = NewEngine(Options with
         {
@@ -289,7 +313,7 @@ public sealed class LibVlcTests : IDisposable
 
     // ---- row 9: laziness, for real ----
 
-    [Fact]
+    [SkippableFact]
     public void Constructing_the_engine_does_not_load_libvlc()
     {
         // Meaningful only when nothing earlier in this same process already called
@@ -299,8 +323,7 @@ public sealed class LibVlcTests : IDisposable
         // this row is reliable run alone (`--filter FullyQualifiedName~Constructing_the_engine_does_not_load_libvlc`,
         // measured to pass) and best-effort as part of the full Category=LibVlc run — the unconditional,
         // order-independent half of this proof is § 6.1 test 9's FakeBackend version.
-        if (!OperatingSystem.IsLinux())
-            return;
+        Skip.IfNot(OperatingSystem.IsLinux(), "/proc/self/maps is Linux-only");
 
         var backend = new LibVlcBackend();
         var engine = new VideoEngine(backend, new SyncUiThread());

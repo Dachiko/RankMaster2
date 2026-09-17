@@ -64,8 +64,8 @@ class MediaUrlsTest {
 
     @Test
     fun `w and format are appended after the v the server already put there`() {
-        val url = MediaUrls.still("/api/v1/media/x.jpg/still?v=abc", 1440, StillFormat.JPEG)
-        assertEquals("/api/v1/media/x.jpg/still?v=abc&w=1440&format=jpeg", url)
+        val url = MediaUrls.still("/api/v1/media/x.jpg/still?v=abc", 1440, StillFormat.WEBP)
+        assertEquals("/api/v1/media/x.jpg/still?v=abc&w=1440&format=webp", url)
     }
 
     @Test
@@ -74,12 +74,6 @@ class MediaUrlsTest {
             "/api/v1/media/x.jpg/still?w=1080&format=webp",
             MediaUrls.still("/api/v1/media/x.jpg/still", 1080),
         )
-    }
-
-    @Test
-    fun `negotiating the format sends no format parameter`() {
-        val url = MediaUrls.still("/api/v1/media/x.jpg/still?v=abc", 1080, StillFormat.NEGOTIATE)
-        assertEquals("/api/v1/media/x.jpg/still?v=abc&w=1080", url)
     }
 
     @Test

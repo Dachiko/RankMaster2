@@ -73,7 +73,7 @@ fun noticeFor(action: LastAction?): String? = when {
         else -> "Taken back"
     }
     action.type == "discard" -> "Discarded ${action.id.orEmpty()}"
-    action.type == "special" -> "Moved to special"
+    action.type == "special" -> "Moved ${action.id.orEmpty()} to special"
     action.type == "drop_missing" -> "${action.id.orEmpty()} is gone from the folder"
     else -> null
 }

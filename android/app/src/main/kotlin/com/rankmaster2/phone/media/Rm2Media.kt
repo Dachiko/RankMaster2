@@ -52,11 +52,6 @@ class Rm2Media internal constructor(
         imageLoader.memoryCache?.clear()
     }
 
-    /** For a handle that is finished with: stops the loader as well as emptying it. */
-    fun shutdown() {
-        imageLoader.shutdown()
-    }
-
     companion object {
 
         /**

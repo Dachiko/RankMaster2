@@ -6,15 +6,26 @@ using Xunit.Abstractions;
 
 namespace RankMaster2.Catalog.Tests;
 
-/// <summary>AUDIT THROWAWAY. What one vote costs on disk for a large library (SPEC says 20k is fine).</summary>
-public class Audit_SaveCostTests(ITestOutputHelper output)
+/// <summary>
+/// What one vote costs on disk, measured rather than guessed (A2). <see cref="JsonCatalog.Save"/>
+/// re-reads, re-parses, re-lists the folder, re-serialises and fsyncs on every choice, and SPEC.md
+/// says a 20 000-file library is fine — it is fine, and it is not free. The number is what the
+/// bounded write-behind (SERVER_SPEC.md § 13.1) is judged against.
+///
+/// <para>This prints; it never asserts a time. A wall-clock threshold on a shared build box fails for
+/// reasons that have nothing to do with the product, and a test that fails for the wrong reason is
+/// worse than no test. Run it on its own with
+/// <c>dotnet test --filter Category=Benchmark -l "console;verbosity=detailed"</c>.</para>
+/// </summary>
+public class SaveCostBenchmark(ITestOutputHelper output)
 {
     [Theory]
+    [Trait("Category", "Benchmark")]
     [InlineData(2_000)]
     [InlineData(20_000)]
     public void Cost_of_one_save(int n)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "rm2audit-" + Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(Path.GetTempPath(), "rm2-save-cost-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var records = new List<MediaRecord>(n);
         for (var i = 0; i < n; i++)

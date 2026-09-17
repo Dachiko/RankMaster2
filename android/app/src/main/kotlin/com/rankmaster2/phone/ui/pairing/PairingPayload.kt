@@ -1,5 +1,7 @@
 package com.rankmaster2.phone.ui.pairing
 
+import java.io.ByteArrayOutputStream
+
 /**
  * What the pairing QR code carries, once it has been believed.
  *
@@ -246,22 +248,39 @@ object PairingPayloads {
         return out
     }
 
-    /** Percent-decoding, by hand: `java.net.URLDecoder` is not on the phone's critical path. */
+    /**
+     * Percent-decoding, by hand: `java.net.URLDecoder` is not on the phone's critical path.
+     *
+     * Escapes are gathered as **bytes** and decoded as UTF-8 once at the end, rather than turned
+     * into characters one at a time. A percent-escape encodes a byte, and any character outside
+     * ASCII is several of them, so appending each byte as a char would read UTF-8 as Latin-1 and
+     * mangle every non-ASCII folder name — `%C3%A9` would become `Ã©` instead of `é`. Literal runs
+     * are encoded whole so a surrogate pair is never split across two conversions.
+     *
+     * Today's payload carries only an address, a port, a fingerprint and digits, so nothing in it
+     * can currently be non-ASCII. That is a fact about the fields, not about this function, and it
+     * is not a reason to leave a decoder that would be wrong the moment one of them carries a name.
+     */
     private fun decode(value: String): String {
         if (!value.contains('%') && !value.contains('+')) return value
-        val out = StringBuilder(value.length)
+        val bytes = ByteArrayOutputStream(value.length)
         var i = 0
         while (i < value.length) {
             val c = value[i]
+            val hex = if (c == '%' && i + 2 < value.length) value.substring(i + 1, i + 3).toIntOrNull(16) else null
             when {
-                c == '+' -> { out.append(' '); i++ }
-                c == '%' && i + 2 < value.length -> {
-                    val hex = value.substring(i + 1, i + 3).toIntOrNull(16)
-                    if (hex == null) { out.append(c); i++ } else { out.append(hex.toChar()); i += 3 }
+                c == '+' -> { bytes.write(' '.code); i++ }
+                hex != null -> { bytes.write(hex); i += 3 }
+                else -> {
+                    // This character verbatim, plus the literal run following it. A '%' that opens
+                    // no valid escape lands here too, and is kept as itself.
+                    val start = i
+                    i++
+                    while (i < value.length && value[i] != '%' && value[i] != '+') i++
+                    bytes.write(value.substring(start, i).toByteArray(Charsets.UTF_8))
                 }
-                else -> { out.append(c); i++ }
             }
         }
-        return out.toString()
+        return String(bytes.toByteArray(), Charsets.UTF_8)
     }
 }

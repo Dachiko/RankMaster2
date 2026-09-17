@@ -166,19 +166,11 @@ public class MediaProbeTests(ITestOutputHelper output)
         Assert.Equal(new FolderMedia(0, 0), media);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task An_unreadable_folder_throws()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            output.WriteLine("skipped: this test's chmod 000 trick is Linux-only");
-            return;
-        }
-        if (Environment.UserName == "root")
-        {
-            output.WriteLine("skipped: running as root, which ignores directory permissions");
-            return;
-        }
+        Skip.If(!OperatingSystem.IsLinux(), "this test's chmod 000 trick is Linux-only");
+        Skip.If(Environment.UserName == "root", "running as root, which ignores directory permissions");
 
         var folder = NewTempFolder();
         try

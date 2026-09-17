@@ -283,29 +283,20 @@ class BrowseViewModel(
     }
 
     /**
-     * Opens a folder, and resolves a session left open elsewhere **without asking**.
-     *
-     * There is one user. He is either holding the phone or sitting at the PC, never both, so a
-     * folder still open is always this phone's own doing - a crash, or Android reclaiming the app
-     * while it was in the background. Neither is something he did, and neither is something he can
-     * act on: the old message sent him looking for a window that was not running.
+     * Opens a folder. § 10.1 is explicit that the server will not close a session left open
+     * elsewhere on its own - "the client MUST `DELETE /session` first" - and neither does this:
+     * `session_already_open` comes back through [refusalToFailure] as an ordinary
+     * [OpenFailure.AlreadyOpen], the same as any other refusal. The only thing that ever calls
+     * `DELETE /session` is the owner tapping "Close it and open this" ([closeOtherSessionAndRetry]).
+     * A folder left open elsewhere may be a half-finished ranking run on the PC, and nothing here
+     * is allowed to throw that away behind his back (H7).
      *
      * `423 folder_locked` is a different claim and a real one - something *other* than this server
      * holds the folder - and it keeps its message, because that is the one case where the owner has
      * to go and do something.
      */
-    private suspend fun attemptOpen(path: String, alreadyRetried: Boolean = false) {
-        val first = client.openSession(path)
-        if (first is Rm2Result.Refused &&
-            first.code == ErrorCodes.SESSION_ALREADY_OPEN &&
-            !alreadyRetried
-        ) {
-            client.closeSession()
-            attemptOpen(path, alreadyRetried = true)
-            return
-        }
-
-        when (val result = first) {
+    private suspend fun attemptOpen(path: String) {
+        when (val result = client.openSession(path)) {
             is Rm2Result.Ok -> {
                 val snapshot = result.value
                 // The server's own spelling of both, from the snapshot - so the remembered path is
@@ -352,10 +343,11 @@ class BrowseViewModel(
             serverMessage = refused.message,
             openFolder = refused.detailText("openFolder"),
         )
-        // § 4 says branch on the code, and `folder_locked` is the code § 10.1 step 4 produces. It
-        // is not in `ErrorCodes`, so the status is the reliable half here: 423 is Locked and
-        // nothing else in this API returns it.
-        refused.status == LOCKED || refused.code == FOLDER_LOCKED -> OpenFailure.Locked(path, refused.message)
+        // § 4 says branch on the code, and `folder_locked` is the code § 10.1 step 4 produces.
+        // The status is kept as a second route to the same answer: 423 is Locked and nothing else
+        // in this API returns it.
+        refused.status == LOCKED || refused.code == ErrorCodes.FOLDER_LOCKED ->
+            OpenFailure.Locked(path, refused.message)
         else -> OpenFailure.Refused(path, refused.status, refused.code, refused.message)
     }
 
@@ -377,7 +369,19 @@ class BrowseViewModel(
                 is Rm2Result.Refused -> _state.update {
                     it.copy(
                         openingPath = null,
-                        openFailure = OpenFailure.Refused(path, closed.status, closed.code, closed.message),
+                        openFailure = OpenFailure.Refused(
+                            path,
+                            closed.status,
+                            closed.code,
+                            // H14: the PC refuses `DELETE /session` while it is mid-rename with
+                            // `409 rename_in_progress`. The server's own message is about the
+                            // session endpoint; this says what the owner can actually do about it.
+                            if (closed.code == ErrorCodes.RENAME_IN_PROGRESS) {
+                                "The PC is renaming that folder; try again when it has finished"
+                            } else {
+                                closed.message
+                            },
+                        ),
                     )
                 }
 
@@ -415,7 +419,6 @@ class BrowseViewModel(
 
     companion object {
         private const val LOCKED = 423
-        private const val FOLDER_LOCKED = "folder_locked"
 
         fun factory(
             client: Rm2Client,

@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import androidx.compose.ui.unit.sp
@@ -178,7 +180,26 @@ private fun BrowseGate(
             onOpened = onOpened,
         ),
     )
-    BrowseRoute(viewModel = viewModel, onPairAgain = onPairAgain)
+    val scope = rememberCoroutineScope()
+    BrowseRoute(
+        viewModel = viewModel,
+        onPairAgain = {
+            // A18: revoke this phone's own token before forgetting it, so a stale, never-expiring
+            // token does not sit in the PC's `devices.json` after the phone has re-paired under a
+            // new one. Best-effort: the credentials are cleared either way - a revoke that fails
+            // because the PC is asleep or unreachable must not trap the owner on this screen with
+            // no way back to pairing.
+            val deviceId = identity.deviceId
+            if (deviceId == null) {
+                onPairAgain()
+            } else {
+                scope.launch {
+                    runCatching { client.revoke(deviceId) }
+                    onPairAgain()
+                }
+            }
+        },
+    )
 }
 
 @Composable

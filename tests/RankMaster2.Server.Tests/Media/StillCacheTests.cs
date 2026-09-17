@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using RankMaster2.Server.Media;
 using Xunit;
@@ -16,8 +17,18 @@ public class StillCacheTests : IDisposable
 
     public StillCacheTests() => Directory.CreateDirectory(_mediaFolder);
 
-    private StillCache NewCache(long maxBytes = 1024 * 1024, string? root = null) =>
-        new(new MediaOptions { CacheDirectory = root ?? _root, CacheMaxBytes = maxBytes }, NullLogger<StillCache>.Instance);
+    /// <summary>
+    /// A6 moved the initial disk scan onto a background task (see <see cref="StillCache.WhenScanned"/>).
+    /// Every test below except the two that exist specifically to prove that behaviour wants a
+    /// cache that is already indexed, the same as before it became asynchronous — so this waits
+    /// for it once, here, rather than making every one of them a race against the thread pool.
+    /// </summary>
+    private StillCache NewCache(long maxBytes = 1024 * 1024, string? root = null)
+    {
+        var cache = new StillCache(new MediaOptions { CacheDirectory = root ?? _root, CacheMaxBytes = maxBytes }, NullLogger<StillCache>.Instance);
+        cache.WhenScanned.GetAwaiter().GetResult();
+        return cache;
+    }
 
     private static Func<Stream, Task> Writes(byte[] payload) =>
         async stream => await stream.WriteAsync(payload);
@@ -165,6 +176,101 @@ public class StillCacheTests : IDisposable
         Assert.Null(result);
         Assert.False(Directory.Exists(insideMedia));
         Assert.Empty(Directory.GetFileSystemEntries(_mediaFolder));
+    }
+
+    /// <summary>
+    /// A6: the first still after a restart must not wait for a synchronous scan of the whole cache
+    /// directory. A gated fake enumerator stands in for "a scan that is still walking tens of
+    /// thousands of files" — while it is gated open, a render must return promptly, uncached
+    /// (§ 3.2's fallback for "served this one time without the cache"), never blocked on the scan.
+    /// </summary>
+    [Fact]
+    public async Task ARenderDuringTheInitialScan_IsServedUncached_NeverBlockedOnTheScan()
+    {
+        Directory.CreateDirectory(_root);
+        using var enumerationStarted = new SemaphoreSlim(0);
+        using var releaseEnumeration = new SemaphoreSlim(0);
+
+        IEnumerable<string> GatedEnumerate(string root)
+        {
+            enumerationStarted.Release();
+            releaseEnumeration.Wait(TimeSpan.FromSeconds(5));
+            yield break;
+        }
+
+        using var cache = new StillCache(
+            new MediaOptions { CacheDirectory = _root },
+            NullLogger<StillCache>.Instance,
+            GatedEnumerate);
+
+        Assert.True(await enumerationStarted.WaitAsync(TimeSpan.FromSeconds(5)), "the scan never started");
+        Assert.False(cache.IsScanned);
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = await cache.GetOrAddAsync("aa" + new string('0', 30), "jpg", _mediaFolder, Writes(new byte[8]), default);
+        stopwatch.Stop();
+
+        Assert.Null(result); // bypassed, not cached, while the scan is still running
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"GetOrAddAsync waited {stopwatch.Elapsed} for the background scan");
+        Assert.False(cache.IsScanned);
+
+        releaseEnumeration.Release();
+        await cache.WhenScanned;
+        Assert.True(cache.IsScanned);
+
+        // Once the scan has finished, the cache is live again.
+        var cached = await cache.GetOrAddAsync("aa" + new string('0', 30), "jpg", _mediaFolder, Writes(new byte[8]), default);
+        Assert.NotNull(cached);
+    }
+
+    /// <summary>
+    /// K9: <see cref="StillCache.Dispose"/> must not dispose a per-key semaphore a render is still
+    /// holding. A render is held open on a gate until after <see cref="StillCache.Dispose"/> has
+    /// been called from another thread; <c>Dispose</c> must still be waiting for it, and the
+    /// render must complete — releasing and removing its own semaphore — without throwing.
+    /// </summary>
+    [Fact]
+    public async Task Dispose_WaitsForAnInFlightRender_BeforeDisposingItsSemaphore()
+    {
+        var cache = NewCache();
+        using var renderStarted = new SemaphoreSlim(0);
+        using var releaseRender = new SemaphoreSlim(0);
+
+        var renderTask = cache.GetOrAddAsync("bb" + new string('0', 30), "jpg", _mediaFolder, async stream =>
+        {
+            renderStarted.Release();
+            // A synchronous Wait() here would block the calling thread before GetOrAddAsync's
+            // Task is even handed back — Task.Yield forces a genuine suspension so the test can
+            // observe the render as still in flight and race Dispose against it for real.
+            await Task.Yield();
+            Assert.True(await releaseRender.WaitAsync(TimeSpan.FromSeconds(5)));
+            await stream.WriteAsync(new byte[16]);
+        }, default);
+
+        Assert.True(await renderStarted.WaitAsync(TimeSpan.FromSeconds(5)), "the render never started");
+
+        var disposeTask = Task.Run(() => cache.Dispose());
+        await Task.Delay(100); // Dispose must still be blocked on the in-flight render
+        Assert.False(disposeTask.IsCompleted, "Dispose returned while a render was still holding its semaphore");
+
+        releaseRender.Release();
+
+        var result = await renderTask; // must complete cleanly, not throw ObjectDisposedException
+        await disposeTask;
+
+        Assert.NotNull(result);
+    }
+
+    /// <summary>A call that arrives after Dispose has started is refused rather than started.</summary>
+    [Fact]
+    public async Task GetOrAddAsync_AfterDispose_IsRefused()
+    {
+        var cache = NewCache();
+        cache.Dispose();
+
+        var result = await cache.GetOrAddAsync("cc" + new string('0', 30), "jpg", _mediaFolder, Writes(new byte[8]), default);
+
+        Assert.Null(result);
     }
 
     [Fact]

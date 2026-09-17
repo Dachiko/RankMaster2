@@ -118,9 +118,12 @@ internal static class OfferChannel
 
             return new Offer(host, port.Value, fingerprint, code, expiresAt);
         }
-        catch (Exception e) when (e is IOException or JsonException or FormatException or KeyNotFoundException)
+        catch (Exception e) when (e is IOException or JsonException or FormatException or KeyNotFoundException
+                                        or InvalidOperationException)
         {
-            // A half-written file, or one being replaced underneath us. The caller polls.
+            // A half-written file, one being replaced underneath us, or one whose fields are not the
+            // strings expected (GetString() throws InvalidOperationException for a wrong JSON kind,
+            // e.g. a hand-edited or truncated pairing.json — A33). The caller polls.
             return null;
         }
     }

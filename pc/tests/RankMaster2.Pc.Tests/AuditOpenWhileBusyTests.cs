@@ -1,7 +1,7 @@
-// AUDIT throwaway test (not production). RankCoordinator.OpenFolderAsync has no catch: when the link
-// throws (the real SessionLink throws InvalidOperationException from its busy gate whenever a call
-// overlaps another — e.g. MainWindow's startup ConnectAsync still running when the owner presses
-// Open/Resume), the start screen is left in Opening=true with both buttons disabled, forever.
+// H9 regression test. RankCoordinator.OpenFolderAsync wraps the link call: when it throws (the real
+// SessionLink throws InvalidOperationException from its busy gate whenever a call overlaps another
+// — e.g. MainWindow's startup ConnectAsync still running when the owner presses Open/Resume), the
+// start screen must get its buttons back and a message, not be left wedged in Opening=true forever.
 using RankMaster2.Pc.Link;
 using RankMaster2.Pc.Ui.Surface;
 using RankMaster2.Pc.Ui.Tests.Fakes;
@@ -12,7 +12,7 @@ namespace RankMaster2.Pc.Tests.Audit;
 public class AuditOpenWhileBusyTests
 {
     [Fact]
-    public async Task A_throwing_OpenAsync_leaves_the_start_screen_stuck_in_Opening()
+    public async Task A_throwing_OpenAsync_returns_the_start_screen_to_its_buttons()
     {
         // FakeSessionLink.OpenAsync throws InvalidOperationException when it has no scripted result
         // and no Snapshot — the same exception type the real link's busy gate throws.
@@ -21,11 +21,12 @@ public class AuditOpenWhileBusyTests
             new FakeClock(), new SynchronousUiThread(), new ImmediateDelay(),
             new LastFolderStore(Path.Combine(Path.GetTempPath(), "rm2-audit-" + Guid.NewGuid().ToString("N"), "last-folder.txt")));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => c.OpenFolderAsync("/some/folder"));
+        var ok = await c.OpenFolderAsync("/some/folder");
 
-        Assert.True(c.Start.Opening, "expected the wedge: Opening stays true after the throw");
-        Assert.Equal("/some/folder", c.Start.OpeningFolder);
-        Assert.Null(c.Start.BoxText); // and nothing is said to the owner
+        Assert.False(ok);
+        Assert.False(c.Start.Opening, "H9 regressed: Opening stayed true after the throw");
+        Assert.Null(c.Start.OpeningFolder);
+        Assert.Contains("Could not open the folder", c.Start.BoxText); // said, not swallowed silently
         Assert.Equal(AppScreen.Start, c.Screen);
     }
 }

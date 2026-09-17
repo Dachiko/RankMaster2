@@ -48,5 +48,12 @@ docker run --rm -v "$REPO":/src -w /src mcr.microsoft.com/dotnet/sdk:8.0 bash -c
     fi
   fi
 
-  dotnet test pc/tests/RankMaster2.Pc.Tests --filter Category=LibVlc
+  echo "row 9 (Constructing_the_engine_does_not_load_libvlc) alone first: its own comment says why --"
+  echo "once any other LibVlc-category test in this process has touched LibVlcProbe.Available or played"
+  echo "a real clip, libvlc.so is mapped for the rest of the process and this row will (truthfully) find"
+  echo "it, though for a reason unrelated to what it proves. Run before anything else has loaded it:"
+  dotnet test pc/tests/RankMaster2.Pc.Tests --filter "FullyQualifiedName~Constructing_the_engine_does_not_load_libvlc"
+
+  echo "the rest of Category=LibVlc:"
+  dotnet test pc/tests/RankMaster2.Pc.Tests --filter "Category=LibVlc&FullyQualifiedName!~Constructing_the_engine_does_not_load_libvlc"
 '

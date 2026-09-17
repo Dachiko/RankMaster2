@@ -19,6 +19,11 @@ public sealed class FakeSessionLink : ISessionLink
     public Queue<ConnectResult> ConnectResults { get; } = new();
     public Queue<OpenResult> OpenResults { get; } = new();
 
+    /// <summary>Set to make the next <see cref="UndoAsync"/> call throw instead of returning (H9
+    /// coverage: <c>TryUndoFromStartAsync</c> must not wedge the start screen when the link's busy
+    /// gate throws, the same gap <see cref="OpenAsync"/>'s no-scripted-result throw covers).</summary>
+    public Exception? UndoThrows { get; set; }
+
     /// <summary>Shared by Vote/Skip/Discard/Special/Undo/Save/Refresh -- dequeued in call order.
     /// Defaults to Applied(Snapshot) (or a NotSent(NoSession) if Snapshot is null) when empty.</summary>
     public Queue<ActionResult> ActionResults { get; } = new();
@@ -64,6 +69,7 @@ public sealed class FakeSessionLink : ISessionLink
     public Task<ActionResult> UndoAsync(CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(UndoAsync), null, null));
+        if (UndoThrows is { } ex) throw ex;
         return Task.FromResult(NextActionResult());
     }
 

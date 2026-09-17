@@ -32,6 +32,13 @@ public sealed class RankCoordinator
 
     private readonly HashSet<UiKey> _startConsumed = new();
     private int _consecutiveUnreachable;
+    private bool _lastActionLate;
+
+    /// <summary>Increments every time a folder is (re)entered from the start screen (Open, Resume,
+    /// or Ctrl+Z bringing the exhausted screen back to ranking). Views uses it to know when to reset
+    /// per-open state, such as the <c>panes_painted</c> startup mark (plan § A22), without needing a
+    /// fresh <c>RankView</c> instance for every open.</summary>
+    public int OpenSequence { get; private set; }
 
     public RankModel Rank { get; } = new();
     public StartModel Start { get; } = new();
@@ -89,6 +96,29 @@ public sealed class RankCoordinator
         RaiseChanged();
     }
 
+    /// <summary>Plan § 2.4 (A20): a 250 ms tick from Views. Clears an expired toast and notices when
+    /// the late-action line's visibility just crossed its threshold, raising <see cref="Changed"/>
+    /// only when one of those actually changed -- most ticks repaint nothing.</summary>
+    public void Tick()
+    {
+        var hadToast = Rank.Toast is not null;
+        Rank.ClearToastIfExpired(_clock);
+        var toastChanged = hadToast && Rank.Toast is null;
+
+        var wasLate = _lastActionLate;
+        _lastActionLate = Rank.Busy && Rank.InFlightSince is { } since
+            && _clock.UtcNow - since >= Timings.LateActionLineAfterMs;
+
+        if (toastChanged || _lastActionLate != wasLate) RaiseChanged();
+    }
+
+    /// <summary>H10: the physical size of one pane, in device pixels -- forwarded to the still
+    /// source so stills decode at the size they are actually shown at instead of the constructor
+    /// default. Views calls this from layout (Loaded/SizeChanged); the matching call for video,
+    /// <c>IVideoSurface.SetPaneSize</c>, is Avalonia-typed and made by Views directly against
+    /// <see cref="LeftVideoSurface"/>/<see cref="RightVideoSurface"/> (see the class doc).</summary>
+    public void SetPaneSize(int widthPx, int heightPx) => _stills.SetPaneSize(widthPx, heightPx);
+
     // ---- start screen ----------------------------------------------------------------------------
 
     public void BeginDialog()
@@ -108,7 +138,23 @@ public sealed class RankCoordinator
         Start.BeginOpening(folder);
         RaiseChanged();
 
-        var result = await _link.OpenAsync(folder, ct).ConfigureAwait(false);
+        OpenResult result;
+        try
+        {
+            result = await _link.OpenAsync(folder, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // H9: the link's busy gate throws (InvalidOperationException) when a call overlaps
+            // another -- e.g. the startup ConnectAsync is still running when the owner's first press
+            // is Open/Resume. Uncaught, this left Opening=true forever with both buttons disabled and
+            // nothing said. Caught here, the start screen gets its buttons back and a reason.
+            Start.EndOpening();
+            Start.ShowMessage($"Could not open the folder: {ex.Message}");
+            RaiseChanged();
+            return false;
+        }
+
         switch (result)
         {
             case OpenResult.Opened opened:
@@ -136,7 +182,21 @@ public sealed class RankCoordinator
         if (!Start.ExhaustedSessionOpen) return;
         if (_link.Snapshot?.UndoAvailable != true) return; // quiet no-op, same rule as the compare screen
 
-        var result = await _link.UndoAsync(ct).ConfigureAwait(false);
+        ActionResult result;
+        try
+        {
+            result = await _link.UndoAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // H9, same gap as OpenFolderAsync: a thrown busy-gate exception must not wedge the
+            // start screen's buttons.
+            Start.EndOpening();
+            Start.ShowMessage($"Could not open the folder: {ex.Message}");
+            RaiseChanged();
+            return;
+        }
+
         var snapshot = SnapshotOf(result);
         var notice = Notices.ForResult(RequestedAction.Undo, result);
 
@@ -164,6 +224,7 @@ public sealed class RankCoordinator
         Start.ClearBox();
         Rank.ClearToast();
         _consecutiveUnreachable = 0;
+        OpenSequence++;
         ApplySnapshotSync(snapshot);
     }
 
@@ -187,7 +248,12 @@ public sealed class RankCoordinator
         switch (intent)
         {
             case Intent.None: return;
-            case Intent.Quit: Quit(); return;
+            case Intent.Quit:
+                // A27: whether or not Avalonia routes Esc out of the native folder picker, a dialog
+                // being open means Esc is the picker's to handle, not ours.
+                if (Start.DialogOpen) return;
+                Quit();
+                return;
             case Intent.ToggleHelp: Rank.HelpPinned = !Rank.HelpPinned; RaiseChanged(); return;
             case Intent.OpenFolder:
                 if (!Start.DialogOpen) OpenFolderRequested?.Invoke();
@@ -210,6 +276,9 @@ public sealed class RankCoordinator
                 return Task.CompletedTask;
 
             case Intent.Quit:
+                // A27: same rule as the start screen -- a dialog open on this screen means Esc is
+                // the picker's, not ours.
+                if (Rank.DialogOpen) return Task.CompletedTask;
                 Quit();
                 return Task.CompletedTask;
 
@@ -233,8 +302,13 @@ public sealed class RankCoordinator
 
     private void Quit()
     {
+        // A21: SPEC says Esc quits immediately. ReleaseVideoSurfaces() calls IVideoSurface.Dispose,
+        // which blocks waiting for the file to release (up to 4 s across both surfaces) -- fine
+        // before a move, wrong here, since nobody is about to move a file. Stop() is asked for and
+        // not waited on; the process is about to exit anyway, so nothing needs the surfaces disposed.
         Rank.RequestQuit();
-        ReleaseVideoSurfaces();
+        _ = LeftVideoSurface?.StopAsync();
+        _ = RightVideoSurface?.StopAsync();
         RaiseChanged();
         QuitRequested?.Invoke();
     }
@@ -261,16 +335,11 @@ public sealed class RankCoordinator
                 await _delay.Wait(Timings.CueMs).ConfigureAwait(false);
                 Rank.EndCue();
 
-                if (Rank.TakeQuitting())
+                if (Rank.IsQuitting)
                     return; // Esc during the cue: quit already raised, nothing sent (plan § 3.1)
 
                 var result = await _link.VoteAsync(side, Rank.CurrentPairSeq).ConfigureAwait(false);
                 await ApplyResult(RequestedAction.Vote, result).ConfigureAwait(false);
-            }
-            else if (intent == Intent.Skip)
-            {
-                var result = await _link.SkipAsync(Rank.CurrentPairSeq).ConfigureAwait(false);
-                await ApplyResult(RequestedAction.Skip, result).ConfigureAwait(false);
             }
             else if (intent.IsDiscard() || intent.IsSpecial())
             {
@@ -319,8 +388,10 @@ public sealed class RankCoordinator
         }
         else
         {
+            // C26: PaneControl.Render already disposed this lease, the moment it copied the frame
+            // into a bitmap ("MUST be disposed once its bitmap copy is made" -- its own contract).
+            // One owner per lease, and Views is it; nothing here needs to touch pane.Lease again.
             var folder = Rank.Snapshot?.Folder;
-            pane.Lease?.Dispose();
             if (folder is null) return;
             using var cts = new CancellationTokenSource(Timings.ReleaseWaitMaxMs);
             try { await _stills.ReleaseAsync(folder, pane.Id, cts.Token).ConfigureAwait(false); }
@@ -465,17 +536,28 @@ public sealed class RankCoordinator
             var left = Rank.Left;
             var right = Rank.Right;
             var changed = false;
+            var consumed = false;
 
             if (left is { IsVideo: false, Id: var lid } && lid == id && left.Kind is PaneKind.Waiting or PaneKind.Refining)
             {
                 left = ApplyStillState(left, state);
                 changed = true;
+                consumed = true;
             }
             if (right is { IsVideo: false, Id: var rid } && rid == id && right.Kind is PaneKind.Waiting or PaneKind.Refining)
             {
                 right = ApplyStillState(right, state);
                 changed = true;
+                consumed = true;
             }
+
+            // H8: IStillSource.Show raises Changed for both ids unconditionally, with a fresh lease
+            // each time, even for a pane that is reused (already Ready), superseded by a later
+            // generation, or simply not this id any more. Nobody else owns a lease that arrives here
+            // unconsumed -- dropped instead of disposed, it and the DecodeBudget bytes behind it are
+            // never freed (H8: ~124 votes before every decode starts failing).
+            if (!consumed && state is StillState.Ready ready)
+                ready.Lease.Dispose();
 
             if (!changed) return;
             Rank.SetPanes(left, right, Rank.PairArrivedAt);

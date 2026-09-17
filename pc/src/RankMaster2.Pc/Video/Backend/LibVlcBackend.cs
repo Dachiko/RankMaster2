@@ -240,7 +240,12 @@ internal sealed class LibVlcPlayer : IBackendPlayer
 
     public BackendStatistics Statistics()
     {
-        var media = _player.Media;
+        // A26: MediaPlayer.Media's getter constructs a new managed Media wrapper around a retained
+        // native reference on every call (AuditLibVlcSharpMediaGetterTests, kept as the proof of that
+        // library fact); this was called once a second per surface and never disposed. `using`
+        // disposes the wrapper every call so the native retain this getter takes is released again
+        // immediately, instead of leaking one per second per surface.
+        using var media = _player.Media;
         if (media is null)
             return default;
 

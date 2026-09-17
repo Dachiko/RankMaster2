@@ -31,30 +31,18 @@ public class StillDecoderColourTests(ITestOutputHelper output)
         return (r, g, b);
     }
 
-    [Fact]
+    [SkippableFact]
     public void The_wide_gamut_file_is_converted_and_the_untagged_twin_is_not()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var taggedPath = Path.Combine(Stills, "wide_gamut.jpg");
-        var untaggedPath = Path.Combine(Stills, "wide_gamut_untagged.jpg");
-        if (!File.Exists(taggedPath) || !File.Exists(untaggedPath))
-        {
-            output.WriteLine("skipped: wide_gamut files not in the corpus");
-            return;
-        }
+        Skip.If(Stills is null, "corpus not built");
+        var taggedPath = Path.Combine(Stills!, "wide_gamut.jpg");
+        var untaggedPath = Path.Combine(Stills!, "wide_gamut_untagged.jpg");
+        Skip.If(!File.Exists(taggedPath) || !File.Exists(untaggedPath), "wide_gamut files not in the corpus");
 
         using var codecStream = File.OpenRead(taggedPath);
         using var codec = SKCodec.Create(codecStream)!;
-        if (codec.Info.ColorSpace is null)
-        {
-            output.WriteLine("skipped: Skia did not parse this profile; see the report on LUT-based profiles");
-            return;
-        }
-        if (codec.Info.ColorSpace.IsSrgb)
-        {
-            output.WriteLine("skipped: the corpus file's profile is sRGB, so there is nothing to convert");
-            return;
-        }
+        Skip.If(codec.Info.ColorSpace is null, "Skia did not parse this profile; see the report on LUT-based profiles");
+        Skip.If(codec.Info.ColorSpace!.IsSrgb, "the corpus file's profile is sRGB, so there is nothing to convert");
 
         var tagged = DecodeOne(taggedPath);
         var untagged = DecodeOne(untaggedPath);
@@ -104,12 +92,12 @@ public class StillDecoderColourTests(ITestOutputHelper output)
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void An_untagged_file_is_left_alone()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var path = Path.Combine(Stills, "wide_gamut_untagged.jpg");
-        if (!File.Exists(path)) { output.WriteLine("skipped: wide_gamut_untagged.jpg not in the corpus"); return; }
+        Skip.If(Stills is null, "corpus not built");
+        var path = Path.Combine(Stills!, "wide_gamut_untagged.jpg");
+        Skip.If(!File.Exists(path), "wide_gamut_untagged.jpg not in the corpus");
 
         var frame = DecodeOne(path);
         try
@@ -137,19 +125,16 @@ public class StillDecoderColourTests(ITestOutputHelper output)
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void Cmyk_and_grayscale_agree_with_the_rgb_encodings()
     {
-        if (Stills is null) { output.WriteLine("skipped: corpus not built"); return; }
-        var cmykPath = Path.Combine(Stills, "cmyk.jpg");
-        var grayscalePath = Path.Combine(Stills, "grayscale.jpg");
-        var progressivePath = Path.Combine(Stills, "progressive.jpg");
-        var lossyWebpPath = Path.Combine(Stills, "lossy.webp");
-        if (!File.Exists(cmykPath) || !File.Exists(grayscalePath) || !File.Exists(progressivePath) || !File.Exists(lossyWebpPath))
-        {
-            output.WriteLine("skipped: cmyk/grayscale/progressive/lossy.webp not all in the corpus");
-            return;
-        }
+        Skip.If(Stills is null, "corpus not built");
+        var cmykPath = Path.Combine(Stills!, "cmyk.jpg");
+        var grayscalePath = Path.Combine(Stills!, "grayscale.jpg");
+        var progressivePath = Path.Combine(Stills!, "progressive.jpg");
+        var lossyWebpPath = Path.Combine(Stills!, "lossy.webp");
+        Skip.If(!File.Exists(cmykPath) || !File.Exists(grayscalePath) || !File.Exists(progressivePath) || !File.Exists(lossyWebpPath),
+            "cmyk/grayscale/progressive/lossy.webp not all in the corpus");
 
         var cmyk = DecodeOne(cmykPath);
         var grayscale = DecodeOne(grayscalePath);

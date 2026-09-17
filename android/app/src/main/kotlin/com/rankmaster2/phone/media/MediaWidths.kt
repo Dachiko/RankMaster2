@@ -27,9 +27,6 @@ object MediaWidths {
     /** What the server uses when `w` is omitted. */
     const val DEFAULT = 1080
 
-    /** `thumb` is fixed here and ignores `w` entirely. This layer does not use `thumb`. */
-    const val THUMB = 320
-
     private val LARGEST = ALLOWED.last()
 
     /**

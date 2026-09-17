@@ -125,11 +125,6 @@ sealed interface Rm2Result<out T> {
     ) : Rm2Result<Nothing>
 }
 
-inline fun <T> Rm2Result<T>.onOk(block: (T) -> Unit): Rm2Result<T> {
-    if (this is Rm2Result.Ok) block(value)
-    return this
-}
-
 /** The snapshot a call produced, or the one its refusal carried. Null only when nothing arrived. */
 fun Rm2Result<Snapshot>.snapshotOrNull(): Snapshot? = when (this) {
     is Rm2Result.Ok -> value

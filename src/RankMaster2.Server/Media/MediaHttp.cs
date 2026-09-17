@@ -49,8 +49,11 @@ public static class MediaHttp
 
     /// <summary>
     /// Writes the § 4 envelope with the status § 5 binds the code to. <paramref name="session"/> is
-    /// the <c>SessionSnapshot</c> when one is open; the media layer never has one to hand, and
-    /// § 4 only makes it mandatory for a 409 on a <c>/session/*</c> endpoint, so it stays absent.
+    /// the <c>SessionSnapshot</c> when one is open; the media layer never has one to hand. This is
+    /// deliberate, not a gap: § 4, as amended (C2), only makes <c>session</c> mandatory for a 409
+    /// on a <c>/session/*</c> endpoint, and says a nullable field MAY be omitted when null — every
+    /// <c>/media/*</c> error carries <c>session: null</c> (or omits it), never a lock-free snapshot
+    /// built for a 404 nobody reads.
     /// </summary>
     public static async Task WriteErrorAsync(
         HttpContext context,

@@ -14,6 +14,15 @@ namespace RankMaster2.Cli;
 /// </summary>
 public sealed class Cycle(Rm2Api api, Journal journal)
 {
+    /// <summary>
+    /// Every name one rename run produces (SERVER_SPEC.md § 10.16, SPEC.md § Rename by rank):
+    /// <c>NNNNNN-ssss.ext</c> — six decimal digits of rank so a byte-wise sort of the folder is rank
+    /// order, then the run's four lowercase hex characters, then the file's own extension. The suffix
+    /// is what makes the old and new names of a run disjoint sets, which is what lets an interrupted
+    /// rename be recovered without guessing which files have already moved.
+    /// </summary>
+    private const string RenamedName = @"^\d{6}-[0-9a-f]{4}\.[^.]+$";
+
     public async Task RunAsync(string folder)
     {
         journal.Title($"Ranking cycle against {api.BaseUrl}");
@@ -132,8 +141,9 @@ public sealed class Cycle(Rm2Api api, Journal journal)
         foreach (var id in new[] { after.Left?.Id, after.Right?.Id })
         {
             if (id is null) continue;
-            journal.Check(Regex.IsMatch(id, @"^\d{6}\."),
-                $"{id}: a renamed file's new id matches ^\\d{{6}}\\. (SPEC.md § Rename by rank)");
+            journal.Check(Regex.IsMatch(id, RenamedName),
+                $"{id}: a renamed file's new id is NNNNNN-ssss.ext — six digits of rank, the run's " +
+                "four-hex-character suffix, the file's own extension (SPEC.md § Rename by rank)");
         }
 
         var hasBackupFolder = Directory.Exists(before.Folder) &&
@@ -150,11 +160,23 @@ public sealed class Cycle(Rm2Api api, Journal journal)
             using var document = JsonDocument.Parse(File.ReadAllBytes(dbPath));
             var images = document.RootElement.TryGetProperty("images", out var img) ? img : default;
             var everyKeyIsNew = images.ValueKind == JsonValueKind.Object &&
-                images.EnumerateObject().All(p => Regex.IsMatch(p.Name, @"^\d{6}\."));
+                images.EnumerateObject().All(p => Regex.IsMatch(p.Name, RenamedName));
 
             journal.Check(everyKeyIsNew,
-                "the on-disk database still loads and every key matches the new numeric names — the " +
-                "acceptance gate: no rating lost to the rename (SERVER_SPEC.md § 10.16)");
+                "the on-disk database still loads and every key is a name of this run — NNNNNN-ssss.ext — " +
+                "the acceptance gate: no rating lost to the rename (SERVER_SPEC.md § 10.16)");
+
+            var suffixes = images.ValueKind == JsonValueKind.Object
+                ? images.EnumerateObject()
+                    .Select(p => Path.GetFileNameWithoutExtension(p.Name).Split('-')[^1])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+                : new List<string>();
+
+            journal.Check(everyKeyIsNew && suffixes.Count == 1,
+                "one suffix for the whole run, so sorting the folder by name is sorting it by rank " +
+                "(SERVER_SPEC.md § 10.16)",
+                suffixes.Count == 0 ? "no names to read a suffix from" : string.Join(", ", suffixes));
         }
         catch (JsonException)
         {

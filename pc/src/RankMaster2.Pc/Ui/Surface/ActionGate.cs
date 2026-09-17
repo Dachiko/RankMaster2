@@ -6,7 +6,7 @@ namespace RankMaster2.Pc.Ui.Surface;
 /// model. <see cref="RankModel"/> owns the state (busy, held keys, arrival time); this just answers
 /// the question.
 ///
-/// Only the seven pair actions (vote/skip/discard/special) and the two busy-only actions
+/// Only the six pair actions (vote/discard/special) and the two busy-only actions
 /// (undo/save) are ever passed here. OpenFolder, ToggleHelp and Quit have their own rules
 /// (plan § 1.1: "not while a dialog is open" / "none" / "none") and never reach this gate.
 /// </summary>
@@ -27,11 +27,11 @@ public static class ActionGate
 
         if (!intent.IsBusyOnlyAction())
         {
-            // Rule 2: ready. Skipped entirely for Undo/Save (plan § 3.1: "Undo and save skip this rule").
+            // Rule 2: ready. Not applied to Undo/Save (plan § 3.1: "Undo and save skip this rule").
             if (!input.PanesReady)
                 return GateVerdict.Drop(DropReason.NotReady);
 
-            // Rule 4: arrival guard. Also skipped for Undo/Save -- neither targets "the pair on
+            // Rule 4: arrival guard. Also not applied to Undo/Save -- neither targets "the pair on
             // screen" the way a vote or a file action does.
             if (input.Now - input.PairArrivedAt < Timings.ArrivalGuardMs)
                 return GateVerdict.Drop(DropReason.ArrivalGuard);
