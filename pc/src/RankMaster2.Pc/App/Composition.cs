@@ -1,7 +1,6 @@
 namespace RankMaster2.Pc.App;
 
 using Avalonia.Controls;
-using RankMaster2.Pc.App.Seams;
 using RankMaster2.Pc.Link;
 using RankMaster2.Pc.Stills;
 using RankMaster2.Pc.Video;
