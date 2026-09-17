@@ -40,6 +40,10 @@ tests/corpus/media/
 # D-video.md § 6.2: 4K AV1 and other generated video fixtures, built by pc/tests/make-video-fixtures.sh
 pc/tests/fixtures/
 
+# A-startup-and-shell.md § 4.4/§ 4.6: publish.sh/build-kit.sh/prune-check.sh output — zips and
+# published folders, rebuilt from source every time, never checked in.
+pc/dist/
+
 # Android client
 android/.gradle/
 android/build/

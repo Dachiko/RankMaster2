@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A-startup-and-shell.md § 4.6, § 6.2: WPF's floor on the owner's hardware — one black
+       borderless maximized window, no VLC, no packages, so the kit prices the shell before the
+       client exists. Built and published from Linux via EnableWindowsTargeting, exactly like the
+       old app's own publish. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>EmptyWpf</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+</Project>

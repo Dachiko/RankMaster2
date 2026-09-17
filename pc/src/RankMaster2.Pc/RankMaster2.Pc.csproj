@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>RankMaster2</AssemblyName>
+    <RootNamespace>RankMaster2.Pc</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>App/icon.ico</ApplicationIcon>
+    <ApplicationManifest>App/app.manifest</ApplicationManifest>
+    <!-- Avalonia's Win32 backend uses COM (composition, drag/drop). -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <!-- No reflection bindings anywhere: the trim/AOT analyzers must stay clean so NativeAOT remains reachable. -->
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- No ICU on the critical path; the app formats nothing culture-specific. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- One version string for the package reference and the native copy target below. -->
+    <LibVlcWindowsVersion>3.0.21</LibVlcWindowsVersion>
+    <LibVlcManifest>$(MSBuildThisFileDirectory)../../libvlc/plugins.keep.txt</LibVlcManifest>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- Publish shape. Folder, not single-file; ReadyToRun; nothing trimmed; nothing extracted at run time. -->
+  <PropertyGroup>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Simple" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.22" Condition="'$(Configuration)' == 'Debug'" />
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <!-- Restored for its files only. Its build targets would copy all 320 plugins, lua\, hrtfs\ and the
+         .lib import libraries; the CopyPrunedLibVlc target below copies the manifest instead. -->
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="$(LibVlcWindowsVersion)"
+                      ExcludeAssets="all" GeneratePathProperty="true" />
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
+    <!-- NoDependencies: the Linux native without a fontconfig dependency — runs Avalonia and part C's decoder in tests here (C § 4). -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/RankMaster2.Core/RankMaster2.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Link/ (part B) has no project file of its own — its test project recompiles the sources
+         standalone to prove they stay Avalonia-free (pc/tests/RankMaster2.Pc.Link.Tests). Video/
+         (part D) needs Avalonia types (IVideoSurface's Bitmap/PixelSize) and LibVLCSharp, so it is
+         globbed here with the rest of the shell. -->
+    <Compile Remove="Stills/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Stills/ (part C) keeps its own assembly: RankMaster2.Pc.Stills.Tests' DependencyTests
+         (C-stills.md § 8, acceptance point 10) asserts the production assembly that carries
+         StillSource/MediaProbe references only RankMaster2.Core, SkiaSharp and the BCL — never
+         Avalonia. Globbing Stills/*.cs into this project (which references Avalonia and
+         LibVLCSharp) would put those types in an assembly that fails that test, so it is kept as
+         the referenced sub-project the scaffold's own comment allows ("keep this as a referenced
+         sub project. Either gives the same production assembly shape"). -->
+    <ProjectReference Include="Stills/RankMaster2.Pc.Stills.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="App/icon.ico" />
+  </ItemGroup>
+
+  <!-- libvlc: only on a win-x64 publish, only what the manifest names, laid out where LibVLCSharp and
+       libvlccore both look: <app>\libvlc\win-x64\ and its plugins\ subtree. -->
+  <Target Name="CopyPrunedLibVlc" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <PropertyGroup>
+      <_VlcSrc>$(PkgVideoLAN_LibVLC_Windows)/build/x64/</_VlcSrc>
+      <_VlcDst>$(PublishDir)libvlc/win-x64/</_VlcDst>
+    </PropertyGroup>
+    <ReadLinesFromFile File="$(LibVlcManifest)">
+      <Output TaskParameter="Lines" ItemName="_VlcLine" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_VlcKeep Include="@(_VlcLine)" Condition="!$([System.String]::Copy('%(Identity)').StartsWith('#')) And '%(Identity)' != ''" />
+      <_VlcMissing Include="@(_VlcKeep)" Condition="!Exists('$(_VlcSrc)%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(_VlcMissing)' != ''" Text="plugins.keep.txt names files that are not in VideoLAN.LibVLC.Windows $(LibVlcWindowsVersion): @(_VlcMissing)" />
+    <Copy SourceFiles="$(_VlcSrc)libvlc.dll;$(_VlcSrc)libvlccore.dll" DestinationFolder="$(_VlcDst)" />
+    <Copy SourceFiles="@(_VlcKeep->'$(_VlcSrc)%(Identity)')" DestinationFiles="@(_VlcKeep->'$(_VlcDst)%(Identity)')" />
+    <Message Importance="high" Text="libvlc: copied libvlc.dll, libvlccore.dll and @(_VlcKeep->Count()) plugins from the manifest" />
+  </Target>
+
+</Project>

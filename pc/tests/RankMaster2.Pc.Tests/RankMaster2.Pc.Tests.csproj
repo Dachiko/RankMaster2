@@ -1,18 +1,40 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- TEMPORARY SCAFFOLD, WRITTEN BY THE INTEGRATOR. See the note in Video/RankMaster2.Pc.Video.csproj. -->
+  <!--
+    A-startup-and-shell.md § 2 / § 8: part A's own test project, carrying App/'s tests and the
+    tests every other part not given its own project (Video/ — D; Ui/ — E, once it lands) adds
+    here, all against pc/src/RankMaster2.Pc/RankMaster2.Pc.csproj — the one production assembly
+    that project folds Video/ and (once it exists) Ui/ into. Stills/ keeps its own assembly and
+    its own test project (RankMaster2.Pc.Stills.Tests) for the dependency-isolation reason that
+    project's DependencyTests explains; Link/ likewise (RankMaster2.Pc.Link.Tests).
+
+    Folded in from the temporary scaffold this file used to be (see git history / the coordinator's
+    notes): it referenced the standalone Video/RankMaster2.Pc.Video.csproj, which no longer exists —
+    Video/*.cs is now part of the shared project below.
+  -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <RootNamespace>RankMaster2.Pc.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.22" />
+    <!-- § 8 test 11 (Manifest_MatchesPackage): restored for its files only, exactly like the main
+         project, so the test can check plugins.keep.txt against the real package contents. -->
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" ExcludeAssets="all" GeneratePathProperty="true" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/RankMaster2.Pc/Video/RankMaster2.Pc.Video.csproj" />
+    <ProjectReference Include="../../src/RankMaster2.Pc/RankMaster2.Pc.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="LibVlcPackageDir" Value="$(PkgVideoLAN_LibVLC_Windows)" />
+    <AssemblyMetadata Include="LibVlcManifestPath" Value="$(MSBuildThisFileDirectory)../../libvlc/plugins.keep.txt" />
   </ItemGroup>
 </Project>

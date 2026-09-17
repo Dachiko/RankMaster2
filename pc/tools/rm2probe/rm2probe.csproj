@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A-startup-and-shell.md § 6.4: one console, both jobs — the measurement kit's LibVLC probe
+    (vlc-init / vlc-cache / play / scan / decode) and publish.sh's / the § 8 test suite's shape
+    check (is-r2r). Published win-x64 for the kit and linux-x64 for pc/tools/prune-check.sh's
+    docker harness.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>rm2probe</AssemblyName>
+    <RootNamespace>RankMaster2.Pc.Tools.Rm2Probe</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Same pattern as pc/tools/rm2vidprobe: Video/'s plain-C# backend seam, compiled directly
+         rather than through a project reference, so this tool never depends on the client's
+         Avalonia-carrying assembly for its LibVLC calls. -->
+    <Compile Include="../../src/RankMaster2.Pc/Video/IVideoSurface.cs" Link="Video/IVideoSurface.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/VideoOptions.cs" Link="Video/VideoOptions.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/FailureMapper.cs" Link="Video/FailureMapper.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/FrameStore.cs" Link="Video/FrameStore.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/PaneFit.cs" Link="Video/PaneFit.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/Backend/IPlayerBackend.cs" Link="Video/Backend/IPlayerBackend.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/Backend/LibVlcBackend.cs" Link="Video/Backend/LibVlcBackend.cs" />
+    <Compile Include="../../src/RankMaster2.Pc/Video/Backend/LibVlcOptions.cs" Link="Video/Backend/LibVlcOptions.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- IVideoSurface.cs needs Avalonia only for the types this tool never touches (Bitmap,
+         PixelSize) — referenced so the file compiles, exactly as rm2vidprobe.csproj notes. -->
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Read-only use only: JsonCatalog.Scan (§ 6.4's "scan" subcommand). Save is never called —
+         see the header comment in Commands/Scan.cs. -->
+    <ProjectReference Include="../../../src/RankMaster2.Catalog/RankMaster2.Catalog.csproj" />
+    <ProjectReference Include="../../../src/RankMaster2.Core/RankMaster2.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,63 @@
+# Rank Master 2 PC client — the libvlc 3.0.21 plugins this app needs.
+# Rules and reasons: pc/plans/A-startup-and-shell.md § 4.2 (merged with D-video.md § 5.1).
+# 27 files, 27,632 KB as first written; 23 files, 23,076 KB once the four provisional lines are settled.
+#
+# libvpx STRUCK (pc/tools/prune-check.sh, this box, VLC 3.0.23 on debian:trixie-slim): Debian's
+# vlc-plugin-base ships no libvpx_plugin.so at all (no-twin.txt recorded it missing), so the pruned
+# run necessarily had zero VP8/VP9 modules besides avcodec's own — and vp9.webm still decoded and
+# played (91 frames, avcodec logging its own harmless "get_buffer() failed" retries). That is the
+# harness's rule from this section applied exactly as written: "struck if the harness shows
+# vp9.webm decoded by avcodec." 26 files, 23,228 KB remain; three provisional lines still open
+# (librv32, libscale, libconsole_logger — usage unproven either way by this run; see PlayCommand.cs's
+# header comment on the log-level limitation that keeps the module-usage diff from settling them).
+#
+# access — local files only (filesystem 72); idummy 43 is what D's "--intf=dummy" names
+plugins/access/libfilesystem_plugin.dll
+plugins/access/libidummy_plugin.dll
+#
+# demux — the five containers; mov is mp4, webm is mkv (mp4 323, mkv 1708, avi 135)
+plugins/demux/libmp4_plugin.dll
+plugins/demux/libmkv_plugin.dll
+plugins/demux/libavi_plugin.dll
+#
+# packetizer — one per codec; copy carries VP9 and anything the demuxer hands over whole (172, 68, 57, 44)
+plugins/packetizer/libpacketizer_h264_plugin.dll
+plugins/packetizer/libpacketizer_av1_plugin.dll
+plugins/packetizer/libpacketizer_mpeg4video_plugin.dll
+plugins/packetizer/libpacketizer_copy_plugin.dll
+#
+# codec — avcodec decodes H.264, MPEG-4 part 2 and VP9; dav1d decodes AV1 and outscores avcodec's AV1 (16868, 1846)
+plugins/codec/libavcodec_plugin.dll
+plugins/codec/libdav1d_plugin.dll
+# libvpx (4404 KB) struck: prune-check.sh proved vp9.webm decodes and plays via avcodec alone (see the note above)
+#
+# video output — the frame-callback sink, and the dummy VLC falls back to (45, 44)
+plugins/video_output/libvmem_plugin.dll
+plugins/video_output/libvdummy_plugin.dll
+#
+# video chroma — I420, 8- and 10-bit, to RV32 at pane size (993, 60, 146, 70)
+plugins/video_chroma/libswscale_plugin.dll
+plugins/video_chroma/libi420_rgb_plugin.dll
+plugins/video_chroma/libi420_rgb_sse2_plugin.dll
+plugins/video_chroma/libchain_plugin.dll
+# provisional — RV32 converter (42); struck if no harness run shows it chosen
+plugins/video_chroma/librv32_plugin.dll
+#
+# video filter — deinterlace: VLC inserts it itself for interlaced content, combing without it (162)
+plugins/video_filter/libdeinterlace_plugin.dll
+# provisional — D's "vout resize hook" (45); struck if the 4K-into-1920 harness run never uses it
+plugins/video_filter/libscale_plugin.dll
+#
+# stream filter — the read-ahead VLC 3 puts in front of a file access (46, 45, 47)
+plugins/stream_filter/libcache_read_plugin.dll
+plugins/stream_filter/libcache_block_plugin.dll
+plugins/stream_filter/libprefetch_plugin.dll
+#
+# audio output — D's "--aout=dummy" names it; nothing is decoded under D's per-media ":no-audio" (41)
+plugins/audio_output/libadummy_plugin.dll
+#
+# text renderer — the vout asks for one lazily; the dummy answers (43)
+plugins/text_renderer/libtdummy_plugin.dll
+#
+# provisional — libvlccore may ask for a "logger" module at libvlc_new (65); struck if the harness log never shows it loaded
+plugins/logger/libconsole_logger_plugin.dll
