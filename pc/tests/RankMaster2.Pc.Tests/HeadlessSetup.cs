@@ -13,6 +13,9 @@ namespace RankMaster2.Pc.Tests;
 
 public static class TestAppBuilder
 {
+    // Part E shipped its own copy of this, building a bare Application; two of them in one assembly
+    // is a duplicate-attribute error. This one wins because it builds the real App, so a view test
+    // sees the styles production will apply rather than an unstyled control that happens to pass.
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<RankMaster2.Pc.App.App>()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions());

@@ -1,0 +1,35 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.PaneControl"
+             Focusable="False" ClipToBounds="True">
+  <Grid Name="Root" Background="{DynamicResource CompareBackground}">
+    <!-- The still or video frame. Uniform fit, letterboxed, per SPEC.md § Compare UI. -->
+    <Image Name="Frame" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+    <!-- Select cue: white flash + emerald ring + scale punch (plan § 1.2), winner only. -->
+    <Border Name="FlashOverlay" Background="{DynamicResource SelectCueFlash}" Opacity="0" IsHitTestVisible="False" />
+    <Border Name="CueRing" BorderBrush="{DynamicResource SelectCueRing}" BorderThickness="5"
+            Opacity="0" IsHitTestVisible="False" Margin="6"
+            RenderTransformOrigin="0.5,0.5" />
+    <!-- CueRing.RenderTransform is a ScaleTransform assigned in code-behind: Avalonia's XAML
+         compiler will not let a Transform (not a StyledElement) carry a Name/x:Name. -->
+
+    <!-- Wait ring: still (after a 300ms grace, no percent) or video (at once, with percent). -->
+    <StackPanel Name="WaitPanel" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Spacing="6" IsVisible="False" IsHitTestVisible="False">
+      <Ellipse Width="80" Height="80" Stroke="{DynamicResource WaitRingStroke}" StrokeThickness="4" />
+      <TextBlock Name="WaitPercent" HorizontalAlignment="Center" FontSize="18" Foreground="{DynamicResource WaitRingPercent}" />
+      <TextBlock Name="EngineWakeLine" Text="Starting video…" HorizontalAlignment="Center" FontSize="12"
+                 Foreground="{DynamicResource WaitRingCaption}" IsVisible="False" />
+    </StackPanel>
+
+    <!-- The one case where text on a pane is the point (plan § 1.2: Gone / Undecodable / NoVideoEngine). -->
+    <TextBlock Name="Sentence" HorizontalAlignment="Center" VerticalAlignment="Center"
+               FontSize="14" Foreground="{DynamicResource PaneSentenceText}" TextWrapping="Wrap"
+               TextAlignment="Center" MaxWidth="480" IsVisible="False" />
+
+    <!-- Filename, dim (plan § 1.2). Left pane: top-left after the card. Right pane: top-right. -->
+    <TextBlock Name="Filename" FontSize="11" Foreground="{DynamicResource FilenameText}"
+               VerticalAlignment="Top" Margin="0,18,0,0" />
+  </Grid>
+</UserControl>

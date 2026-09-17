@@ -1,0 +1,10 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.MatchStrip"
+             Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,32"
+             IsVisible="False">
+  <Border Background="{DynamicResource StripFill}" BorderBrush="{DynamicResource StripBorder}" BorderThickness="1"
+          CornerRadius="18" Padding="12,6">
+    <StackPanel Name="Balls" Orientation="Horizontal" Spacing="4" />
+  </Border>
+</UserControl>

@@ -1,0 +1,14 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.UiRoot"
+             Focusable="True">
+  <UserControl.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="Theme.axaml" />
+        <ResourceInclude Source="Icons.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </UserControl.Resources>
+  <ContentControl Name="Root" Background="{DynamicResource CompareBackground}" />
+</UserControl>

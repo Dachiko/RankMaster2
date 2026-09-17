@@ -13,6 +13,13 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <!-- No reflection bindings anywhere: the trim/AOT analyzers must stay clean so NativeAOT remains reachable. -->
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!--
+      Added at integration. Part C hands frames out as leases over native buffers (that is what
+      stops eviction pulling pixels from under a caller mid-copy), so part E's one copy into an
+      Avalonia bitmap is a pointer copy. It is confined to PaneControl.CopyToBitmap; no other file
+      in the client uses a pointer.
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
     <!-- No ICU on the critical path; the app formats nothing culture-specific. -->
     <InvariantGlobalization>true</InvariantGlobalization>

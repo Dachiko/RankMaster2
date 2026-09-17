@@ -6,6 +6,8 @@ using RankMaster2.Pc.Link;
 using RankMaster2.Pc.Stills;
 using RankMaster2.Pc.Video;
 using RankMaster2.Pc.Video.Backend;
+using RankMaster2.Pc.Ui.Surface;
+using RankMaster2.Pc.Ui.Views;
 
 /// <summary>
 /// A-startup-and-shell.md § 3.1: constructs parts B, C, D and (once it lands) E's <c>UiRoot</c> —
@@ -28,12 +30,22 @@ public static class Composition
 
         var stillSource = new StillSource(new DecodeBudget(512L * 1024 * 1024));
 
-        // TEMPORARY: part E's Ui/UiRoot has not landed in this worktree (see PlaceholderRoot's own
-        // header). Swap this for `new UiRoot(wakingLink, stillSource, videoEngine, AppInfo.Version)`
-        // the day it does; nothing else here changes.
-        var root = new PlaceholderRoot(AppInfo.Version);
+        // Part E's surface. The coordinator decides everything; UiRoot only draws it and turns
+        // keystrokes into intents. One AvaloniaUiThread serves both it and the video engine - the
+        // two parts declare their own IUiThread rather than sharing a seam, so this class satisfies
+        // both, which is cheaper than an adapter that would do nothing but forward.
+        var coordinator = new RankCoordinator(
+            wakingLink,
+            stillSource,
+            videoEngine,
+            new SystemClock(),
+            uiThread,
+            new SystemDelay(),
+            new LastFolderStore());
+
+        var root = new UiRoot(coordinator);
         var lifetime = new AppLifetime(wakingLink);
-        root.QuitRequested += (_, _) => _ = lifetime.QuitNow();
+        root.QuitRequested += () => _ = lifetime.QuitNow();
 
         return new CompositionResult(wakingLink, stillSource, videoEngine, gate, lifetime, root);
     }

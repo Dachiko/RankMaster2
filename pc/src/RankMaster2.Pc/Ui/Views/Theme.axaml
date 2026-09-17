@@ -1,0 +1,65 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Plan § 4.3, to the value where the old app had one. Kept in one file so nothing here is ever
+    guessed twice. Colors are Avalonia brushes; #AARRGGBB where the old app specified an alpha.
+  -->
+  <SolidColorBrush x:Key="CompareBackground">#000000</SolidColorBrush>
+  <SolidColorBrush x:Key="PaneRule">#111827</SolidColorBrush>
+
+  <SolidColorBrush x:Key="TitleBlue">#60A5FA</SolidColorBrush>
+  <SolidColorBrush x:Key="TitleEmerald">#34D399</SolidColorBrush>
+  <SolidColorBrush x:Key="VersionText">#71717A</SolidColorBrush>
+
+  <SolidColorBrush x:Key="CardFill">#99000000</SolidColorBrush>
+  <SolidColorBrush x:Key="CardBorder">#1AFFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="CardLabel">#71717A</SolidColorBrush>
+  <SolidColorBrush x:Key="CardConfidence">#60A5FA</SolidColorBrush>
+  <SolidColorBrush x:Key="CardBarTrack">#0DFFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="CardBarFill">#60A5FA</SolidColorBrush>
+  <SolidColorBrush x:Key="CardUnranked">#FB923C</SolidColorBrush>
+  <SolidColorBrush x:Key="CardSession">#93C5FD</SolidColorBrush>
+
+  <SolidColorBrush x:Key="FilenameText">#66FFFFFF</SolidColorBrush>
+
+  <SolidColorBrush x:Key="ActionBarFill">#66000000</SolidColorBrush>
+  <SolidColorBrush x:Key="ActionBarBorder">#1AFFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="ActionBarCaption">#4DFFFFFF</SolidColorBrush>
+
+  <SolidColorBrush x:Key="HelpSheetFill">#CC000000</SolidColorBrush>
+  <SolidColorBrush x:Key="HelpSheetLabel">#9CA3AF</SolidColorBrush>
+
+  <SolidColorBrush x:Key="StripConfirmation">#B310B981</SolidColorBrush>
+  <SolidColorBrush x:Key="StripUpset">#B3F59E0B</SolidColorBrush>
+  <SolidColorBrush x:Key="StripFill">#66000000</SolidColorBrush>
+  <SolidColorBrush x:Key="StripBorder">#0DFFFFFF</SolidColorBrush>
+
+  <SolidColorBrush x:Key="ToastFill">#CC18181B</SolidColorBrush>
+  <SolidColorBrush x:Key="ToastBorder">#33FFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="ToastText">#FFFFFF</SolidColorBrush>
+
+  <SolidColorBrush x:Key="WaitRingStroke">#4B5563</SolidColorBrush>
+  <SolidColorBrush x:Key="WaitRingPercent">#9CA3AF</SolidColorBrush>
+  <SolidColorBrush x:Key="WaitRingCaption">#71717A</SolidColorBrush>
+
+  <SolidColorBrush x:Key="PaneSentenceText">#9CA3AF</SolidColorBrush>
+
+  <SolidColorBrush x:Key="LateActionLine">#9960A5FA</SolidColorBrush>
+
+  <SolidColorBrush x:Key="SelectCueFlash">#FFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="SelectCueRing">#34D399</SolidColorBrush>
+
+  <SolidColorBrush x:Key="StartGradientTop">#18181B</SolidColorBrush>
+  <SolidColorBrush x:Key="StartGradientBottom">#000000</SolidColorBrush>
+
+  <SolidColorBrush x:Key="StartButtonFill">#1AFFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="StartButtonBorder">#1AFFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="ResumeButtonFill">#332563EB</SolidColorBrush>
+  <SolidColorBrush x:Key="ResumeButtonBorder">#4D3B82F6</SolidColorBrush>
+  <SolidColorBrush x:Key="RenameButtonFill">#1AF59E0B</SolidColorBrush>
+  <SolidColorBrush x:Key="RenameButtonBorder">#4DF59E0B</SolidColorBrush>
+  <SolidColorBrush x:Key="RenameButtonText">#F59E0B</SolidColorBrush>
+  <SolidColorBrush x:Key="ErrorBoxFill">#1AEF4444</SolidColorBrush>
+  <SolidColorBrush x:Key="ErrorBoxBorder">#80EF4444</SolidColorBrush>
+  <SolidColorBrush x:Key="ErrorBoxText">#F87171</SolidColorBrush>
+</ResourceDictionary>

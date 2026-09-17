@@ -1,0 +1,15 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Plan § 1: "inline vector paths for the five glyphs (folder, trash, star, help, rename)";
+    PC_CLIENT_PLAN.md § 11 removes the Segoe MDL2 Assets dependency the old app had. These are
+    plain, legible 24x24 glyphs, not a redraw of the old app's icon font; their exact silhouette is
+    cosmetic and easy to swap for another StreamGeometry later without touching anything that binds
+    to it by key.
+  -->
+  <StreamGeometry x:Key="Icon.Folder">M2,5 L9,5 L11,7 L22,7 L22,19 L2,19 Z</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Trash">M5,7 L19,7 M9,7 L9,4 L15,4 L15,7 M7,7 L7,21 L17,21 L17,7 M10,10 L10,18 M14,10 L14,18</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Star">M12,2 L14.7,9 L22,9.3 L16.2,14 L18,21.5 L12,17.3 L6,21.5 L7.8,14 L2,9.3 L9.3,9 Z</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Help">M12,22 A10,10 0 1 1 12,2 A10,10 0 1 1 12,22 Z M9.5,9 A2.5,2.5 0 1 1 13,11.3 C12,12 12,12.5 12,14 M12,17 L12,17.2</StreamGeometry>
+  <StreamGeometry x:Key="Icon.Rename">M4,20 L4,16 L15,5 L19,9 L8,20 Z M13,7 L17,11</StreamGeometry>
+</ResourceDictionary>

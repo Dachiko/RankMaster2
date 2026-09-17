@@ -1,0 +1,10 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.Toast"
+             Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,72"
+             IsVisible="False" IsHitTestVisible="False">
+  <Border Background="{DynamicResource ToastFill}" BorderBrush="{DynamicResource ToastBorder}" BorderThickness="1"
+          CornerRadius="20" Padding="20,10">
+    <TextBlock Name="Text" FontSize="14" Foreground="{DynamicResource ToastText}" />
+  </Border>
+</UserControl>

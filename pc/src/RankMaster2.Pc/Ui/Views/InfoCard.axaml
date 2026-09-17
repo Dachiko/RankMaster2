@@ -1,0 +1,25 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.InfoCard"
+             Focusable="False" Width="256" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16">
+  <Border Background="{DynamicResource CardFill}" BorderBrush="{DynamicResource CardBorder}"
+          BorderThickness="1" CornerRadius="8" Padding="12">
+    <StackPanel Spacing="4">
+      <TextBlock Name="FolderLabel" Text="FOLDER" FontSize="10" Foreground="{DynamicResource CardLabel}" />
+      <TextBlock Name="FolderText" FontSize="12" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
+
+      <TextBlock Text="CONFIDENCE" FontSize="10" Foreground="{DynamicResource CardLabel}" Margin="0,6,0,0" />
+      <TextBlock Name="ConfidenceText" FontFamily="Consolas,monospace" FontSize="12" Foreground="{DynamicResource CardConfidence}" />
+      <Border Height="6" Background="{DynamicResource CardBarTrack}" CornerRadius="3" Width="232" HorizontalAlignment="Left">
+        <Border Name="ConfidenceBar" Height="6" Background="{DynamicResource CardBarFill}" CornerRadius="3"
+                HorizontalAlignment="Left" Width="0" />
+      </Border>
+
+      <TextBlock Text="UNRANKED" FontSize="10" Foreground="{DynamicResource CardLabel}" Margin="0,6,0,0" />
+      <TextBlock Name="UnrankedText" FontSize="14" Foreground="{DynamicResource CardUnranked}" />
+
+      <TextBlock Text="SESSION" FontSize="10" Foreground="{DynamicResource CardLabel}" Margin="0,6,0,0" />
+      <TextBlock Name="SessionText" FontSize="14" Foreground="{DynamicResource CardSession}" />
+    </StackPanel>
+  </Border>
+</UserControl>

@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:RankMaster2.Pc.Ui.Views"
+             x:Class="RankMaster2.Pc.Ui.Views.RankView"
+             Focusable="True" KeyboardNavigation.TabNavigation="None"
+             Background="{DynamicResource CompareBackground}">
+  <Grid>
+    <!-- Two panes, a 1px seam between them (plan § 1.2, § 4.2). -->
+    <Grid Name="Panes" ColumnDefinitions="*,*">
+      <views:PaneControl Name="LeftPane" Grid.Column="0" />
+      <Border Grid.Column="0" Width="1" HorizontalAlignment="Right" Background="{DynamicResource PaneRule}" />
+      <views:PaneControl Name="RightPane" Grid.Column="1" />
+    </Grid>
+
+    <views:InfoCard Name="Card" />
+    <views:ActionBar Name="Actions" />
+
+    <Border Name="HelpButton" Width="36" Height="36" CornerRadius="18" HorizontalAlignment="Right" VerticalAlignment="Top"
+            Margin="0,16,16,0" Background="{DynamicResource CardFill}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1"
+            Focusable="False">
+      <Path Data="{DynamicResource Icon.Help}" Stretch="Uniform" Width="18" Height="18" Stroke="White" StrokeThickness="1.5" />
+    </Border>
+    <views:HelpSheet Name="Help" />
+
+    <views:MatchStrip Name="Strip" />
+    <views:Toast Name="ToastControl" />
+    <views:LateActionLine Name="LateLine" />
+  </Grid>
+</UserControl>

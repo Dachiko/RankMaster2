@@ -1,0 +1,22 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:surface="clr-namespace:RankMaster2.Pc.Ui.Surface"
+             x:Class="RankMaster2.Pc.Ui.Views.HelpSheet"
+             Focusable="False" Width="208" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,60,16,0"
+             IsVisible="False">
+  <Border Background="{DynamicResource HelpSheetFill}" CornerRadius="8" Padding="16">
+    <StackPanel Spacing="0">
+      <ItemsControl Name="Rows">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="surface:HelpRow">
+            <Grid ColumnDefinitions="*,Auto" Height="22">
+              <TextBlock Grid.Column="0" Text="{Binding Label}" Foreground="{DynamicResource HelpSheetLabel}" FontSize="12" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="{Binding Keys}" FontFamily="Consolas,monospace" Foreground="White" FontSize="12" VerticalAlignment="Center" />
+            </Grid>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBlock Name="VersionText" FontSize="10" Foreground="{DynamicResource VersionText}" Margin="0,8,0,0" HorizontalAlignment="Right" />
+    </StackPanel>
+  </Border>
+</UserControl>

@@ -1,0 +1,27 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.ActionBar"
+             Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,24,0,0">
+  <StackPanel Orientation="Horizontal" Spacing="64">
+    <StackPanel Orientation="Horizontal" Spacing="12">
+      <Button Name="DiscardLeftButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
+              Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
+              Content="[1]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Name="SpecialLeftButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
+              Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
+              Content="[4]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" Spacing="12">
+      <Button Name="SpecialRightButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
+              Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
+              Content="[5]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+      <Button Name="DiscardRightButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
+              Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
+              Content="[2]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+    </StackPanel>
+  </StackPanel>
+</UserControl>
