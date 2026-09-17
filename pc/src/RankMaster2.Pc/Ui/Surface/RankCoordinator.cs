@@ -14,6 +14,15 @@ public enum AppScreen { Start, Rank, Rename }
 /// Open on the start screen go through exactly the same <see cref="ISessionLink"/> the compare
 /// screen's actions do.
 /// <para/>
+/// <c>Views/</c> calls every public entry point here on the UI thread, so whatever runs before the
+/// first await is already on it. After that the rule has to be kept deliberately:
+/// Every await of B, C or D uses <c>ConfigureAwait(false)</c>, so the continuation runs wherever
+/// that call finished -- a thread-pool thread. Nothing after such an await touches
+/// <see cref="Rank"/>, <see cref="Start"/> or <see cref="Rename"/>, or raises
+/// <see cref="Changed"/>, except inside <c>_ui.InvokeAsync(...)</c>: <see cref="IUiThread"/>'s
+/// contract is that <b>everything</b> here that reads or writes a model does so on the UI thread,
+/// and AUDIT2.md § 4.5 is the report of this class not keeping it.
+/// <para/>
 /// <see cref="Views"/> never touches B, C or D directly except for two Avalonia-typed calls this
 /// class cannot make without importing Avalonia into <c>Surface/</c> (<c>IVideoSurface.SetPaneSize</c>
 /// and reading <c>IVideoSurface.Frame</c>): Views/ reads the same <see cref="IVideoSurface"/>
@@ -94,7 +103,7 @@ public sealed class RankCoordinator
     {
         Start.LastFolder = _folderStore.Load();
         await _link.ConnectAsync(ct).ConfigureAwait(false);
-        RaiseChanged();
+        await _ui.InvokeAsync(RaiseChanged).ConfigureAwait(false);
     }
 
     /// <summary>Plan § 2.4 (A20): a 250 ms tick from Views. Clears an expired toast and notices when
@@ -181,13 +190,13 @@ public sealed class RankCoordinator
                 try { opened = await _link.OpenAsync(folder, ct).ConfigureAwait(false); }
                 catch (Exception ex)
                 {
-                    ReturnToStartWithMessage($"Could not open the folder: {ex.Message}");
+                    await _ui.InvokeAsync(() => ReturnToStartWithMessage($"Could not open the folder: {ex.Message}")).ConfigureAwait(false);
                     return;
                 }
 
                 if (opened is OpenResult.Failed failed)
                 {
-                    ReturnToStartWithMessage(Notices.ForOpenFailure(failed.Failure).Text ?? failed.Failure.Title);
+                    await _ui.InvokeAsync(() => ReturnToStartWithMessage(Notices.ForOpenFailure(failed.Failure).Text ?? failed.Failure.Title)).ConfigureAwait(false);
                     return;
                 }
             }
@@ -196,26 +205,32 @@ public sealed class RankCoordinator
             try { started = await _link.StartRenameAsync(ct).ConfigureAwait(false); }
             catch (Exception ex)
             {
-                ReturnToStartWithMessage($"Could not start the rename: {ex.Message}");
+                await _ui.InvokeAsync(() => ReturnToStartWithMessage($"Could not start the rename: {ex.Message}")).ConfigureAwait(false);
                 return;
             }
 
-            switch (started)
+            await _ui.InvokeAsync(() =>
             {
-                case RenameOperationResult.Observed(var op):
-                    Rename.BeginRunning(op);
-                    if (op.IsTerminal) FinishRename(op);
-                    break;
+                switch (started)
+                {
+                    case RenameOperationResult.Observed(var op):
+                        Rename.BeginRunning(op);
+                        if (op.IsTerminal) FinishRename(op);
+                        break;
 
-                default:
-                    ReturnToStartWithMessage(DescribeRenameRefusal(started));
-                    break;
-            }
+                    default:
+                        ReturnToStartWithMessage(DescribeRenameRefusal(started));
+                        break;
+                }
+            }).ConfigureAwait(false);
         }
         finally
         {
-            Rename.ExitBusy();
-            RaiseChanged();
+            await _ui.InvokeAsync(() =>
+            {
+                Rename.ExitBusy();
+                RaiseChanged();
+            }).ConfigureAwait(false);
         }
     }
 
@@ -249,12 +264,15 @@ public sealed class RankCoordinator
         try
         {
             var result = await _link.CancelRenameAsync().ConfigureAwait(false);
-            ApplyRenamePollResult(result);
+            await _ui.InvokeAsync(() => ApplyRenamePollResult(result)).ConfigureAwait(false);
         }
         finally
         {
-            Rename.ExitBusy();
-            RaiseChanged();
+            await _ui.InvokeAsync(() =>
+            {
+                Rename.ExitBusy();
+                RaiseChanged();
+            }).ConfigureAwait(false);
         }
     }
 
@@ -268,17 +286,18 @@ public sealed class RankCoordinator
         try
         {
             var result = await _link.GetRenameAsync().ConfigureAwait(false);
-            ApplyRenamePollResult(result);
+            await _ui.InvokeAsync(() => ApplyRenamePollResult(result)).ConfigureAwait(false);
         }
         finally
         {
-            Rename.ExitBusy();
+            await _ui.InvokeAsync(Rename.ExitBusy).ConfigureAwait(false);
         }
 
-        if (Rename.CancelRequested && Rename.Stage == RenameStage.Running)
+        var cancelling = await _ui.InvokeAsync(() => Rename.CancelRequested && Rename.Stage == RenameStage.Running).ConfigureAwait(false);
+        if (cancelling)
             await FireCancelRenameAsync().ConfigureAwait(false);
 
-        RaiseChanged();
+        await _ui.InvokeAsync(RaiseChanged).ConfigureAwait(false);
     }
 
     private void ApplyRenamePollResult(RenameOperationResult result)
@@ -360,30 +379,36 @@ public sealed class RankCoordinator
             // another -- e.g. the startup ConnectAsync is still running when the owner's first press
             // is Open/Resume. Uncaught, this left Opening=true forever with both buttons disabled and
             // nothing said. Caught here, the start screen gets its buttons back and a reason.
-            Start.EndOpening();
-            Start.ShowMessage($"Could not open the folder: {ex.Message}");
-            RaiseChanged();
+            await _ui.InvokeAsync(() =>
+            {
+                Start.EndOpening();
+                Start.ShowMessage($"Could not open the folder: {ex.Message}");
+                RaiseChanged();
+            }).ConfigureAwait(false);
             return false;
         }
 
-        switch (result)
+        return await _ui.InvokeAsync(() =>
         {
-            case OpenResult.Opened opened:
-                Start.EndOpening();
-                _folderStore.Save(folder);
-                Start.LastFolder = folder;
-                EnterCompareScreen(opened.Snapshot);
-                RaiseChanged();
-                return true;
+            switch (result)
+            {
+                case OpenResult.Opened opened:
+                    Start.EndOpening();
+                    _folderStore.Save(folder);
+                    Start.LastFolder = folder;
+                    EnterCompareScreen(opened.Snapshot);
+                    RaiseChanged();
+                    return true;
 
-            case OpenResult.Failed failed:
-                Start.ShowMessage(Notices.ForOpenFailure(failed.Failure).Text ?? failed.Failure.Title);
-                RaiseChanged();
-                return false;
+                case OpenResult.Failed failed:
+                    Start.ShowMessage(Notices.ForOpenFailure(failed.Failure).Text ?? failed.Failure.Title);
+                    RaiseChanged();
+                    return false;
 
-            default:
-                return false;
-        }
+                default:
+                    return false;
+            }
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Plan § 4.1: "Ctrl+Z here calls the link's undo; if the snapshot that comes back is
@@ -402,30 +427,36 @@ public sealed class RankCoordinator
         {
             // H9, same gap as OpenFolderAsync: a thrown busy-gate exception must not wedge the
             // start screen's buttons.
-            Start.EndOpening();
-            Start.ShowMessage($"Could not open the folder: {ex.Message}");
-            RaiseChanged();
+            await _ui.InvokeAsync(() =>
+            {
+                Start.EndOpening();
+                Start.ShowMessage($"Could not open the folder: {ex.Message}");
+                RaiseChanged();
+            }).ConfigureAwait(false);
             return;
         }
 
-        var snapshot = SnapshotOf(result);
-        var notice = Notices.ForResult(RequestedAction.Undo, result);
-
-        if (snapshot is not null)
+        await _ui.InvokeAsync(() =>
         {
-            Rank.SetSnapshot(snapshot);
-            if (snapshot.IsRanking)
-            {
-                EnterCompareScreen(snapshot);
-                if (notice.Surface == NoticeSurface.Toast) Rank.SetToast(notice.Text!, _clock);
-            }
-            else if (snapshot.IsExhausted)
-            {
-                TransitionToExhausted(snapshot);
-            }
-        }
+            var snapshot = SnapshotOf(result);
+            var notice = Notices.ForResult(RequestedAction.Undo, result);
 
-        RaiseChanged();
+            if (snapshot is not null)
+            {
+                Rank.SetSnapshot(snapshot);
+                if (snapshot.IsRanking)
+                {
+                    EnterCompareScreen(snapshot);
+                    if (notice.Surface == NoticeSurface.Toast) Rank.SetToast(notice.Text!, _clock);
+                }
+                else if (snapshot.IsExhausted)
+                {
+                    TransitionToExhausted(snapshot);
+                }
+            }
+
+            RaiseChanged();
+        }).ConfigureAwait(false);
     }
 
     private void EnterCompareScreen(Snapshot snapshot)
@@ -544,41 +575,50 @@ public sealed class RankCoordinator
                 Rank.BeginCue(side);
                 RaiseChanged();
                 await _delay.Wait(Timings.CueMs).ConfigureAwait(false);
-                Rank.EndCue();
 
-                if (Rank.IsQuitting)
-                    return; // Esc during the cue: quit already raised, nothing sent (plan § 3.1)
+                var pairSeq = await _ui.InvokeAsync(() =>
+                {
+                    Rank.EndCue();
+                    // Esc during the cue: quit already raised, nothing sent (plan § 3.1).
+                    return Rank.IsQuitting ? (long?)null : Rank.CurrentPairSeq;
+                }).ConfigureAwait(false);
+                if (pairSeq is null)
+                    return;
 
-                var result = await _link.VoteAsync(side, Rank.CurrentPairSeq).ConfigureAwait(false);
-                await ApplyResult(RequestedAction.Vote, result).ConfigureAwait(false);
+                var result = await _link.VoteAsync(side, pairSeq.Value).ConfigureAwait(false);
+                await _ui.InvokeAsync(() => ApplyResult(RequestedAction.Vote, result)).ConfigureAwait(false);
             }
             else if (intent.IsDiscard() || intent.IsSpecial())
             {
                 var side = intent.Subject()!.Value;
                 await ReleaseHandlesBeforeMove(side).ConfigureAwait(false);
 
+                var pairSeq = await _ui.InvokeAsync(() => Rank.CurrentPairSeq).ConfigureAwait(false);
                 var result = intent.IsDiscard()
-                    ? await _link.DiscardAsync(side, Rank.CurrentPairSeq).ConfigureAwait(false)
-                    : await _link.SpecialAsync(side, Rank.CurrentPairSeq).ConfigureAwait(false);
+                    ? await _link.DiscardAsync(side, pairSeq).ConfigureAwait(false)
+                    : await _link.SpecialAsync(side, pairSeq).ConfigureAwait(false);
 
-                await ApplyResult(intent.IsDiscard() ? RequestedAction.Discard : RequestedAction.Special, result)
-                    .ConfigureAwait(false);
+                var requested = intent.IsDiscard() ? RequestedAction.Discard : RequestedAction.Special;
+                await _ui.InvokeAsync(() => ApplyResult(requested, result)).ConfigureAwait(false);
             }
             else if (intent == Intent.Undo)
             {
                 var result = await _link.UndoAsync().ConfigureAwait(false);
-                await ApplyResult(RequestedAction.Undo, result).ConfigureAwait(false);
+                await _ui.InvokeAsync(() => ApplyResult(RequestedAction.Undo, result)).ConfigureAwait(false);
             }
             else if (intent == Intent.Save)
             {
                 var result = await _link.SaveAsync().ConfigureAwait(false);
-                await ApplyResult(RequestedAction.Save, result).ConfigureAwait(false);
+                await _ui.InvokeAsync(() => ApplyResult(RequestedAction.Save, result)).ConfigureAwait(false);
             }
         }
         finally
         {
-            Rank.ExitBusy();
-            RaiseChanged();
+            await _ui.InvokeAsync(() =>
+            {
+                Rank.ExitBusy();
+                RaiseChanged();
+            }).ConfigureAwait(false);
         }
     }
 
@@ -586,7 +626,10 @@ public sealed class RankCoordinator
     /// blocks the request forever — it is sent anyway, and the server retries the move itself.</summary>
     private async Task ReleaseHandlesBeforeMove(Side side)
     {
-        var pane = side == Side.Left ? Rank.Left : Rank.Right;
+        // Read on the UI thread, like everything else that reads the model (§ 4.5): this runs after
+        // the cue's await, so the caller is no longer necessarily on it.
+        var (pane, folder) = await _ui.InvokeAsync(() =>
+            (side == Side.Left ? Rank.Left : Rank.Right, Rank.Snapshot?.Folder)).ConfigureAwait(false);
         if (pane is null) return;
 
         if (pane.IsVideo)
@@ -599,10 +642,11 @@ public sealed class RankCoordinator
         }
         else
         {
-            // C26: PaneControl.Render already disposed this lease, the moment it copied the frame
-            // into a bitmap ("MUST be disposed once its bitmap copy is made" -- its own contract).
-            // One owner per lease, and Views is it; nothing here needs to touch pane.Lease again.
-            var folder = Rank.Snapshot?.Folder;
+            // The pane's lease is still alive here and stays alive: it is a reference to a pixel
+            // buffer in memory, not to the file, so it cannot be what stops the server moving the
+            // file. It is disposed when this pane is replaced, which is what the result of this very
+            // action will do (AUDIT2.md § 1.1: PaneControl.Render used to dispose it here, leaving a
+            // kept pane pointing at freed memory).
             if (folder is null) return;
             using var cts = new CancellationTokenSource(Timings.ReleaseWaitMaxMs);
             try { await _stills.ReleaseAsync(folder, pane.Id, cts.Token).ConfigureAwait(false); }
@@ -620,7 +664,10 @@ public sealed class RankCoordinator
         _ => null,
     };
 
-    private async Task ApplyResult(RequestedAction requested, ActionResult result)
+    /// <summary>Runs on the UI thread, always: every caller wraps it in <c>_ui.InvokeAsync</c>
+    /// (§ 4.5). It touches <see cref="Rank"/>, <see cref="Start"/> and <see cref="Screen"/>, all of
+    /// which <c>Views/RankView.Refresh</c> reads on that thread with no barrier of its own.</summary>
+    private void ApplyResult(RequestedAction requested, ActionResult result)
     {
         var snapshot = SnapshotOf(result);
         if (snapshot is not null) ApplySnapshotSync(snapshot);
@@ -665,13 +712,12 @@ public sealed class RankCoordinator
 
         if (notice.Surface == NoticeSurface.Toast)
             Rank.SetToast(notice.Text!, _clock);
-
-        await Task.CompletedTask;
     }
 
     private void TransitionToExhausted(Snapshot snapshot)
     {
         ReleaseVideoSurfaces();
+        ReleasePaneLeases();
         Screen = AppScreen.Start;
         Rank.ClearToast();
         var name = string.IsNullOrEmpty(snapshot.FolderName) ? snapshot.Folder : snapshot.FolderName;
@@ -681,9 +727,20 @@ public sealed class RankCoordinator
     private void TransitionToStartWithMessage(string text)
     {
         ReleaseVideoSurfaces();
+        ReleasePaneLeases();
         Screen = AppScreen.Start;
         Rank.ClearToast();
         Start.ShowMessage(text);
+    }
+
+    /// <summary>Leaving the compare screen ends both panes: their leases are this class's to dispose
+    /// (see <see cref="PaneState.Lease"/>), and the panes go with them so no later repaint can find a
+    /// <see cref="PaneState"/> whose lease has been disposed.</summary>
+    private void ReleasePaneLeases()
+    {
+        Rank.Left?.Lease?.Dispose();
+        Rank.Right?.Lease?.Dispose();
+        Rank.SetPanes(null, null, _clock.UtcNow);
     }
 
     // ---- pane reconciliation (plan § 3.2) --------------------------------------------------------
@@ -731,6 +788,8 @@ public sealed class RankCoordinator
             return PaneState.Waiting(side, pairSeq, mediaRef.Id, mediaRef.MediaVersion, mediaRef.IsVideo, now).WithGone();
         }
 
+        // Kept: the same picture, still on screen. The lease travels with it, alive -- nothing has
+        // disposed it, and the frame behind it cannot be freed while it is held (AUDIT2.md § 1.1).
         if (old is not null && old.ReusableFor(mediaRef.Id, mediaRef.MediaVersion))
             return old.WithGeneration(pairSeq);
 
@@ -749,13 +808,13 @@ public sealed class RankCoordinator
             var changed = false;
             var consumed = false;
 
-            if (left is { IsVideo: false, Id: var lid } && lid == id && left.Kind is PaneKind.Waiting or PaneKind.Refining)
+            if (left is { IsVideo: false, Id: var lid } && lid == id && Accepts(left, state))
             {
                 left = ApplyStillState(left, state);
                 changed = true;
                 consumed = true;
             }
-            if (right is { IsVideo: false, Id: var rid } && rid == id && right.Kind is PaneKind.Waiting or PaneKind.Refining)
+            if (right is { IsVideo: false, Id: var rid } && rid == id && Accepts(right, state))
             {
                 right = ApplyStillState(right, state);
                 changed = true;
@@ -763,10 +822,10 @@ public sealed class RankCoordinator
             }
 
             // H8: IStillSource.Show raises Changed for both ids unconditionally, with a fresh lease
-            // each time, even for a pane that is reused (already Ready), superseded by a later
-            // generation, or simply not this id any more. Nobody else owns a lease that arrives here
-            // unconsumed -- dropped instead of disposed, it and the DecodeBudget bytes behind it are
-            // never freed (H8: ~124 votes before every decode starts failing).
+            // each time, even for a pane that is already showing exactly that frame, superseded by a
+            // later generation, or simply not this id any more. Nobody else owns a lease that arrives
+            // here unconsumed -- dropped instead of disposed, it and the DecodeBudget bytes behind it
+            // are never freed (H8: ~124 votes before every decode starts failing).
             if (!consumed && state is StillState.Ready ready)
                 ready.Lease.Dispose();
 
@@ -776,13 +835,47 @@ public sealed class RankCoordinator
         });
     }
 
-    private static PaneState ApplyStillState(PaneState pane, StillState state) => state switch
+    /// <summary>
+    /// Whether a delivery for this pane's id says anything this pane does not already show. A pane
+    /// still waiting takes whatever arrives. A pane already showing pixels takes only a DIFFERENT
+    /// frame: C re-decodes an id whose cached frame no longer covers the pane it is being asked to
+    /// fill (<c>StillSource.EnsureFreshLocked</c>), which is exactly what happens to a pane kept for
+    /// the next pair on a monitor bigger than the 960 x 1080 the first pair was decoded at, and the
+    /// pane must move to the new frame rather than keep painting the small one. The repeat delivery
+    /// of the frame it already holds -- which <c>Show</c> raises for every id, every time -- is not a
+    /// change, and its lease is disposed by the caller.
+    /// </summary>
+    private static bool Accepts(PaneState pane, StillState state) => pane.Kind switch
     {
-        StillState.Ready ready => pane.WithReady(ready.Lease),
-        StillState.Failed { Reason: StillFailure.Missing } => pane.WithGone(),
-        StillState.Failed failed => pane.WithUndecodable(failed.Detail),
-        _ => pane,
+        PaneKind.Waiting or PaneKind.Refining => true,
+        PaneKind.Ready => state is StillState.Ready ready && !ReferenceEquals(ready.Lease.Frame, pane.Lease?.Frame),
+        _ => false,
     };
+
+    private static PaneState ApplyStillState(PaneState pane, StillState state)
+    {
+        // Whatever this pane was holding is going: it is this class's to dispose (PaneState.Lease),
+        // and the frame behind it stays alive for as long as any other lease on it does.
+        switch (state)
+        {
+            case StillState.Ready ready:
+                pane.Lease?.Dispose();
+                return pane.WithReady(ready.Lease);
+            case StillState.Failed { Reason: StillFailure.Missing }:
+                pane.Lease?.Dispose();
+                return pane.WithGone();
+            case StillState.Failed { Reason: StillFailure.TooLarge }:
+                // § 2.1: a picture C could not fit inside the decode budget is not a broken file and
+                // is not described as one.
+                pane.Lease?.Dispose();
+                return pane.WithTooLarge();
+            case StillState.Failed failed:
+                pane.Lease?.Dispose();
+                return pane.WithUndecodable(failed.Detail);
+            default:
+                return pane;
+        }
+    }
 
     // ---- video (plan § 3.6) --------------------------------------------------------------------
 

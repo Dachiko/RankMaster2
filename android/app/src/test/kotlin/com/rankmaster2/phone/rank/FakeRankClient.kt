@@ -131,7 +131,7 @@ object RankFixtures {
         progress = 0.0,
         progressPercent = 0,
         cues = cues,
-        pair = Rm2Pair(ref("alpha.jpg"), ref("bravo.jpg")),
+        pair = Rm2Pair(pairRef("alpha", pairSeq, token), pairRef("bravo", pairSeq, token)),
         pairToken = token,
         pairSeq = pairSeq,
         warmPairs = emptyList(),
@@ -154,6 +154,24 @@ object RankFixtures {
         undoneType = what,
         at = "2026-09-15T10:01:00.000Z",
     )
+
+    /**
+     * A pair's two files, named so that two different `(pairSeq, token)` fixtures are two different
+     * pictures rather than the same two filenames every time.
+     *
+     * The second audit's § 5: every ranking test compared `alpha.jpg` against `bravo.jpg` regardless
+     * of which pair it was, so no test in the repository could observe a vote — or, far worse, a
+     * discard (§ 1.3) — landing on a pair other than the one the test built. The default fixture
+     * (`pairSeq = 0`, `token = "token-1"`) keeps the plain names, because plenty of existing tests
+     * read "alpha.jpg" to mean "whatever the default pair is called" rather than testing identity;
+     * every other `(pairSeq, token)` combination gets a name nothing else in the suite can produce,
+     * so a test that captures a file name at one pair and finds it attached to a *different* pair
+     * later has actually proven something.
+     */
+    private fun pairRef(stem: String, pairSeq: Long, token: String?): MediaRef {
+        val id = if (pairSeq == 0L && token == "token-1") "$stem.jpg" else "$stem-$pairSeq-${token ?: "none"}.jpg"
+        return ref(id)
+    }
 
     private fun ref(id: String) = MediaRef(
         id = id,

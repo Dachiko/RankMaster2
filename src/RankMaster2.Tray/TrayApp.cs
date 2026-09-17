@@ -24,6 +24,7 @@ internal sealed class TrayApp : IDisposable
     private readonly ToolStripMenuItem _status;
     private readonly ToolStripMenuItem _session;
     private readonly ToolStripMenuItem _deviceWarning;
+    private readonly ToolStripMenuItem _certificateChanged;
     private readonly System.Windows.Forms.Timer _poll;
     private readonly string _listenAddress;
     private readonly int _port;
@@ -42,6 +43,7 @@ internal sealed class TrayApp : IDisposable
         _listenAddress = listenAddress.ToString();
         _port = options.Port;
         _fingerprint = ReadFingerprint(dataDirectory);
+        var certificateChanged = CheckAndRecordCertificateChange(dataDirectory, _fingerprint);
 
         // A loopback bind is by design (SERVER_RUNNING.md), but the QR it produces carries
         // host=127.0.0.1 and a phone that tries it fails with a Wi-Fi-looking error (A29). Say so
@@ -57,12 +59,22 @@ internal sealed class TrayApp : IDisposable
             Enabled = false,
             Visible = false,
         };
+        // AUDIT2.md § 2.4: the phone pins this fingerprint and will not connect once it changes, but
+        // nothing else on the PC says so — the server logs it mid-sentence at Information, and no
+        // pairing window opens for it (that only happens when devices.json is entirely absent).
+        // Clicking the warning goes straight to the fix.
+        _certificateChanged = new ToolStripMenuItem("Certificate changed — phones need to re-pair")
+        {
+            Visible = certificateChanged,
+        };
+        _certificateChanged.Click += (_, _) => ShowPairing();
 
         var menu = new ContextMenuStrip();
         _menu = menu;
         menu.Items.Add(_status);
         menu.Items.Add(_session);
         menu.Items.Add(_deviceWarning);
+        menu.Items.Add(_certificateChanged);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Show pairing QR…", null, (_, _) => ShowPairing());
         menu.Items.Add("Copy certificate fingerprint", null, (_, _) => CopyFingerprint());
@@ -87,6 +99,16 @@ internal sealed class TrayApp : IDisposable
         _poll.Tick += (_, _) => RefreshSession();
         _poll.Start();
         RefreshSession();
+
+        // A menu item is easy to miss on an icon nobody was looking at; say it once, right away,
+        // too. It stays true in the menu (above) until the owner re-pairs a device, which mints no
+        // new marker of its own — only starting the tray again re-checks it.
+        if (certificateChanged)
+        {
+            Balloon("Rank Master 3's certificate changed since it last started. Every paired phone " +
+                "will show a certificate error until it is re-paired — open \"Show pairing QR…\" from " +
+                "this icon for each one.");
+        }
     }
 
     /// <summary>
@@ -252,6 +274,39 @@ internal sealed class TrayApp : IDisposable
         catch (Exception)
         {
             return "";
+        }
+    }
+
+    /// <summary>
+    /// AUDIT2.md § 2.4. <see cref="CertificateStore"/> regenerates the certificate silently whenever
+    /// the file on disk is missing, corrupt, expired or not yet valid — by design, since it is the
+    /// only thing that can recover from those without an owner ever touching it — but a new
+    /// certificate means a new fingerprint, and every phone pinned to the old one simply stops
+    /// connecting with no clue why. This must never affect which certificate loads or how it is
+    /// pinned; it only remembers what the tray saw last time, in a marker file it alone reads and
+    /// writes, so this run can say whether the identity under it just changed.
+    /// <para/>
+    /// A missing marker — first run ever, or an upgrade from a tray build that predates this file —
+    /// seeds it silently: there is no "last known good" to compare against, so reporting a change
+    /// would be a false alarm no phone could have been paired against anyway.
+    /// </summary>
+    private static bool CheckAndRecordCertificateChange(string dataDirectory, string fingerprint)
+    {
+        if (string.IsNullOrEmpty(fingerprint))
+            return false;
+
+        try
+        {
+            var markerPath = Path.Combine(dataDirectory, "tray-last-fingerprint.txt");
+            var previous = File.Exists(markerPath) ? File.ReadAllText(markerPath).Trim() : "";
+            File.WriteAllText(markerPath, fingerprint);
+            return previous.Length > 0 && !string.Equals(previous, fingerprint, StringComparison.Ordinal);
+        }
+        catch (Exception)
+        {
+            // Not knowing is not a reason to refuse to start; it only means this run cannot say
+            // whether the certificate changed.
+            return false;
         }
     }
 

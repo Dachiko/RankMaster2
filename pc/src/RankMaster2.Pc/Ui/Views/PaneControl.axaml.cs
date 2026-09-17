@@ -18,9 +18,14 @@ namespace RankMaster2.Pc.Ui.Views;
 /// One side of the compare screen (plan § 1.2, § 4.3): the frame, the select cue, the wait ring,
 /// the pane sentence, the filename. The only control that touches pixels: it copies a still's raw
 /// BGRA buffer into a <see cref="WriteableBitmap"/> once per <see cref="PaneState"/> instance (never
-/// re-copying the same one twice) and disposes the <see cref="StillLease"/> immediately after, per
-/// its contract ("MUST be disposed once its bitmap copy is made"). A video pane instead reads the
-/// live <see cref="IVideoSurface.Frame"/> straight through -- that bitmap is D's, not copied here.
+/// re-copying the same one twice). A video pane instead reads the live
+/// <see cref="IVideoSurface.Frame"/> straight through -- that bitmap is D's, not copied here.
+/// <para/>
+/// It does NOT dispose the <see cref="StillLease"/> it copied from, and must not. The lease belongs
+/// to the <see cref="PaneState"/> for as long as that pane exists, and <see cref="RankCoordinator"/>
+/// disposes it when it replaces the pane; a pane kept for the next pair (AUDIT2.md § 1.1) carries
+/// the same lease forward and is repainted from it, so a copy here that also disposed would leave
+/// the next repaint reading a buffer this part had already had freed.
 /// </summary>
 public partial class PaneControl : UserControl
 {
@@ -77,8 +82,8 @@ public partial class PaneControl : UserControl
             _lastRenderedPane = pane;
             if (showsPixels && !pane.IsVideo && pane.Lease is { } lease)
             {
+                // The lease stays alive: it is the pane's, not this control's (see the class doc).
                 _frame.Source = CopyToBitmap(lease.Frame);
-                lease.Dispose(); // contract: disposed once its bitmap copy is made
             }
         }
 

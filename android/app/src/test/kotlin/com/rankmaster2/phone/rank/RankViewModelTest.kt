@@ -20,6 +20,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -143,6 +144,110 @@ class RankViewModelTest {
         assertEquals("token-1", vm.state.value.snapshot?.pairToken)
     }
 
+    // -- § 1.3: a gesture is aimed at the pair it started on, not whatever is current when it lands -
+    //
+    // `RankFixtures.ranking()` now gives every distinct (pairSeq, token) its own file names, so these
+    // tests can actually tell a misdirected action apart from a correctly-targeted one - before the
+    // second audit's fix to the fixtures, every pair in every test was named `alpha.jpg`/`bravo.jpg`
+    // regardless of which pair it was, so no test here could have caught this even with the bug
+    // present. This is the test the audit's § 1.3 (and § 5) asked for.
+
+    @Test
+    fun `a vote whose pair moved on between the finger and the send is dropped, not sent`() = runTest {
+        val opened = RankFixtures.ranking(pairSeq = 0, token = "token-1")
+        val client = FakeRankClient()
+        val vm = viewModel(client, opened = opened, scope = this)
+        val whatHeSaw = opened.pair?.left?.id
+
+        // A refresh() lands between his finger going down and the tap being processed (§ 1.3: this
+        // is deliberately not gated by `busy` - see RankViewModel.refresh's A10 note) and the pair
+        // moves on to a different picture entirely.
+        val moved = RankFixtures.ranking(pairSeq = 1, token = "token-2")
+        client.sessionResults += Rm2Result.Ok(moved)
+        vm.refresh()
+        assertNotEquals("the fixture must actually be a different picture now", whatHeSaw, vm.state.value.pair?.left?.id)
+
+        // The tap still carries the token of the pair his finger actually landed on.
+        vm.vote(Side.LEFT, aimedAtToken = opened.pairToken)
+
+        assertEquals("a vote for a picture no longer on screen must never reach the PC", 0, client.votes.size)
+        assertEquals("token-2", vm.state.value.snapshot?.pairToken)
+        assertFalse(vm.state.value.busy)
+    }
+
+    @Test
+    fun `a vote whose token still matches what is current is sent exactly as before`() = runTest {
+        val opened = RankFixtures.ranking()
+        val client = FakeRankClient().apply {
+            voteResults += Rm2Result.Ok(RankFixtures.ranking(pairSeq = 1, token = "token-2"))
+        }
+        val vm = viewModel(client, opened = opened, scope = this)
+
+        vm.vote(Side.LEFT, aimedAtToken = opened.pairToken)
+
+        assertEquals(1, client.votes.size)
+        assertEquals("token-2", vm.state.value.snapshot?.pairToken)
+    }
+
+    @Test
+    fun `the pane menu is opened for one photograph, and Discard on it after a resync moves nothing`() = runTest {
+        val opened = RankFixtures.ranking(pairSeq = 0, token = "token-1")
+        val client = FakeRankClient()
+        val vm = viewModel(client, opened = opened, scope = this)
+
+        // He long-presses the left photograph and the menu opens on it.
+        vm.openPaneMenu(Side.LEFT, opened.pairToken)
+        val heWasLookingAt = opened.pair?.left?.id
+        assertEquals(opened.pairToken, vm.state.value.paneMenuToken)
+
+        // He reads the menu. While he does, the app comes back to the front and resyncs onto a
+        // different pair entirely - the scenario the audit proved end to end with PROBE1/finish().
+        val moved = RankFixtures.ranking(pairSeq = 1, token = "token-2")
+        client.sessionResults += Rm2Result.Ok(moved)
+        vm.refresh()
+        assertNotEquals(heWasLookingAt, vm.state.value.pair?.left?.id)
+
+        // He taps Discard, believing it is still about the photograph he read the menu for.
+        // RankScreen would pass RankState.paneMenuToken here - the token from when the menu opened.
+        vm.discard(Side.LEFT, aimedAtToken = opened.pairToken)
+
+        assertEquals(
+            "the photograph he read the menu for must not be moved off disk for a pair he never saw",
+            0,
+            client.discards.size,
+        )
+        assertNull("a dropped gesture closes the menu rather than leaving it open on a stale pair", vm.state.value.paneMenu)
+        assertNull(vm.state.value.paneMenuToken)
+    }
+
+    @Test
+    fun `opening the pane menu records the pair it was aimed at, and closing it forgets`() = runTest {
+        val vm = viewModel(FakeRankClient(), scope = this)
+
+        vm.openPaneMenu(Side.RIGHT, "token-1")
+        assertEquals("token-1", vm.state.value.paneMenuToken)
+        assertEquals(Side.RIGHT, vm.state.value.paneMenu)
+
+        vm.closePaneMenu()
+        assertNull(vm.state.value.paneMenuToken)
+        assertNull(vm.state.value.paneMenu)
+    }
+
+    @Test
+    fun `a discard whose token still matches what is current reaches the PC exactly as before`() = runTest {
+        val opened = RankFixtures.ranking()
+        val client = FakeRankClient().apply {
+            moveResults += Rm2Result.Ok(RankFixtures.ranking(pairSeq = 1, token = "token-2"))
+        }
+        val vm = viewModel(client, opened = opened, scope = this)
+
+        vm.openPaneMenu(Side.LEFT, opened.pairToken)
+        vm.discard(Side.LEFT, aimedAtToken = vm.state.value.paneMenuToken)
+
+        assertEquals(1, client.discards.size)
+        assertEquals("token-1", client.discards[0].token)
+    }
+
     // -- what the server says goes ----------------------------------------------------------------
 
     @Test
@@ -256,6 +361,45 @@ class RankViewModelTest {
         assertEquals("Nothing to take back", vm.state.value.problem?.title)
     }
 
+    // -- § 2.6: a silent code with no readable snapshot must not go dead --------------------------
+
+    @Test
+    fun `a silent refusal with no readable snapshot refreshes instead of going dead`() = runTest {
+        // The server always attaches a snapshot to stale_pair_token / no_current_pair - the
+        // correction *is* the snapshot. If it could not be decoded (a schema drift between phone
+        // and server), staying silent as these codes normally deserve would mean nothing on screen
+        // ever changes and every further tap meets the same stale token, forever - the screen the
+        // audit found completely dead. A plain read is the way out.
+        val client = FakeRankClient().apply {
+            voteResults += Rm2Result.Refused(409, "stale_pair_token", "not current", session = null)
+            sessionResults += Rm2Result.Ok(RankFixtures.ranking(pairSeq = 3, token = "token-3"))
+        }
+        val vm = viewModel(client, scope = this)
+
+        vm.vote(Side.LEFT)
+
+        assertEquals("the unreadable refusal must trigger a plain read", 1, client.sessionReads)
+        assertEquals("token-3", vm.state.value.snapshot?.pairToken)
+        assertNull(vm.state.value.problem)
+        assertFalse(vm.state.value.busy)
+    }
+
+    @Test
+    fun `a silent refusal that does carry a readable snapshot needs no extra read`() = runTest {
+        // Regression guard for the fix above: the common case - the server's snapshot decodes fine
+        // - must not start reading the session an extra time on every stale token.
+        val landed = RankFixtures.ranking(pairSeq = 1, token = "token-2")
+        val client = FakeRankClient().apply {
+            voteResults += Rm2Result.Refused(409, "stale_pair_token", "not current", session = landed)
+        }
+        val vm = viewModel(client, scope = this)
+
+        vm.vote(Side.LEFT)
+
+        assertEquals(0, client.sessionReads)
+        assertEquals("token-2", vm.state.value.snapshot?.pairToken)
+    }
+
     // -- A15: 503 session_busy is retried once, transparently, before it ever reaches the owner ----
 
     @Test
@@ -298,6 +442,34 @@ class RankViewModelTest {
         assertEquals(2, client.votes.size)
         assertEquals("The PC is busy", vm.state.value.problem?.title)
         assertFalse(vm.state.value.busy)
+    }
+
+    @Test
+    fun `a huge retryAfterSeconds from the server cannot freeze the screen for as long as it names`() = runTest {
+        // § 2.7: retryAfterSeconds is a number off the wire with no ceiling on this side. The
+        // server sends 1 today, but nothing stopped it (a bug, or something on the LAN answering
+        // that is not the PC he thinks it is) from naming a day and freezing `busy` for one.
+        val busy = Rm2Result.Refused(
+            503, "session_busy", "The PC is busy.",
+            details = buildJsonObject { put("retryAfterSeconds", 86_400) },
+        )
+        val landed = RankFixtures.ranking(pairSeq = 1, token = "token-2")
+        val client = FakeRankClient().apply {
+            voteResults += busy
+            voteResults += Rm2Result.Ok(landed)
+        }
+        val vm = viewModel(client, scope = this)
+
+        val startedAt = testScheduler.currentTime
+        vm.vote(Side.LEFT)
+        advanceUntilIdle()
+        val waitedMs = testScheduler.currentTime - startedAt
+
+        assertEquals(2, client.votes.size)
+        assertTrue(
+            "waited ${waitedMs}ms - a wait this long must be capped, not obey the server's own number",
+            waitedMs <= RankViewModel.MAX_RETRY_AFTER_SECONDS * 1000L,
+        )
     }
 
     // -- A16: a cancel that is still lost after its retry cannot self-heal the way a token can - it
@@ -590,6 +762,77 @@ class RankViewModelTest {
         override suspend fun special(pairToken: String, side: String, clientRequestId: String) = error("n/a")
         override suspend fun cancel(clientRequestId: String) = error("n/a")
         override suspend fun save() = error("n/a")
+        override suspend fun ping(): Rm2Result<Ping> = error("n/a")
+        override suspend fun pair(code: String, deviceName: String): Rm2Result<PairedDevice> = error("n/a")
+        override suspend fun revoke(deviceId: String): Rm2Result<Unit> = error("n/a")
+        override suspend fun roots(): Rm2Result<Roots> = error("n/a")
+        override suspend fun browse(path: String, counts: Boolean): Rm2Result<Browse> = error("n/a")
+        override suspend fun openSession(folder: String): Rm2Result<Snapshot> = error("n/a")
+        override suspend fun closeSession(): Rm2Result<Unit> = Rm2Result.Ok(Unit)
+        override fun url(link: String): String = link
+    }
+
+    // -- § 3.4: an action's own late answer must not drag a newer screen backwards -----------------
+
+    @Test
+    fun `an action's late answer for an older pair does not drag a newer screen backwards`() = runTest {
+        // resume() clears `busy` the moment the owner comes back to a folder his view model was
+        // already holding one for (A11) - it cannot tell a truly-lost action from one still
+        // genuinely in flight, and chooses never to leave the screen deaf. So the first vote's
+        // coroutine keeps running after he backs out, resumes, and casts a second vote that lands
+        // first and moves the screen on. When the first vote's own answer finally arrives, it must
+        // not drag the pair he is looking at back to the one it was actually about.
+        val client = TwoVotesClient()
+        val opened = RankFixtures.ranking(pairSeq = 0, token = "token-1")
+        val vm = viewModel(client, opened = opened, scope = this)
+
+        vm.vote(Side.LEFT) // the first vote - hangs, as if the PC were slow to answer
+        assertTrue(vm.state.value.busy)
+
+        // He backs out and re-opens the same folder; the server has not processed the first vote
+        // yet, so the open answers with the same pair he left on - the early-return branch of
+        // resume() (A11), which clears `busy` regardless.
+        vm.resume(opened)
+        assertFalse(vm.state.value.busy)
+
+        // A second, later vote - on the pair actually on screen now - lands and moves things on.
+        client.immediate += Rm2Result.Ok(RankFixtures.ranking(pairSeq = 2, token = "token-2"))
+        vm.vote(Side.RIGHT)
+        assertEquals("token-2", vm.state.value.snapshot?.pairToken)
+
+        // The first vote's answer finally arrives: an older pair generation than what is on screen.
+        client.firstCall.complete(Rm2Result.Ok(RankFixtures.ranking(pairSeq = 1, token = "token-old")))
+
+        assertEquals(
+            "a late answer for an older pair must not drag the screen back past what is already shown",
+            "token-2",
+            vm.state.value.snapshot?.pairToken,
+        )
+        assertFalse(vm.state.value.busy)
+    }
+
+    /**
+     * A client whose first `vote()` call hangs until the test completes it, and whose later calls
+     * answer immediately from a queue - for reproducing two actions genuinely in flight at once
+     * (§ 3.4), which [HoldingClient] above cannot (every call it makes hangs forever).
+     */
+    private class TwoVotesClient : Rm2Client {
+        override val baseUrl = "https://127.0.0.1:18611/api/v1"
+        val firstCall = CompletableDeferred<Rm2Result<Snapshot>>()
+        val immediate = ArrayDeque<Rm2Result<Snapshot>>()
+        private var calls = 0
+
+        override suspend fun vote(pairToken: String, winner: String, clientRequestId: String): Rm2Result<Snapshot> {
+            calls++
+            return if (calls == 1) firstCall.await() else immediate.removeFirstOrNull() ?: error("unqueued vote")
+        }
+
+        override suspend fun skip(pairToken: String, clientRequestId: String) = error("n/a")
+        override suspend fun discard(pairToken: String, side: String, clientRequestId: String) = error("n/a")
+        override suspend fun special(pairToken: String, side: String, clientRequestId: String) = error("n/a")
+        override suspend fun cancel(clientRequestId: String) = error("n/a")
+        override suspend fun save() = error("n/a")
+        override suspend fun session(): Rm2Result<Snapshot> = error("n/a")
         override suspend fun ping(): Rm2Result<Ping> = error("n/a")
         override suspend fun pair(code: String, deviceName: String): Rm2Result<PairedDevice> = error("n/a")
         override suspend fun revoke(deviceId: String): Rm2Result<Unit> = error("n/a")

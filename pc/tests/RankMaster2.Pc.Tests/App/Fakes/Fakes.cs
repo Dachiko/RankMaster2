@@ -122,7 +122,8 @@ public static class FakeComposition
     public static RankMaster2.Pc.App.CompositionResult Build(
         RankMaster2.Pc.App.Seams.PlaceholderRoot? root = null,
         FakeSessionLink? link = null,
-        FakeVideoSurfaceFactory? engine = null)
+        FakeVideoSurfaceFactory? engine = null,
+        Func<CancellationToken, Task>? initializeAsync = null)
     {
         link ??= new FakeSessionLink();
         engine ??= new FakeVideoSurfaceFactory();
@@ -130,7 +131,13 @@ public static class FakeComposition
         var gate = new RankMaster2.Pc.App.VideoEngineGate(engine, nativeDir: null);
         var lifetime = new RankMaster2.Pc.App.AppLifetime(link);
 
-        return new RankMaster2.Pc.App.CompositionResult(link, new FakeStillSource(), engine, gate, lifetime, root);
+        // These shell tests build the window around a PlaceholderRoot, not a real RankCoordinator
+        // (A-startup-and-shell.md § 8's "Fakes for B/C/D/E... implement the frozen seams only"), so
+        // by default this just does what the fake link's own ConnectAsync does — enough for
+        // ShellTests, which only cares that the window opens and stays off the video engine.
+        initializeAsync ??= (ct => link.ConnectAsync(ct));
+
+        return new RankMaster2.Pc.App.CompositionResult(link, new FakeStillSource(), engine, gate, lifetime, root, initializeAsync);
     }
 }
 

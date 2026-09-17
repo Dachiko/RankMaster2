@@ -12,7 +12,7 @@ public sealed class VideoEngineGate
 {
     private readonly IVideoSurfaceFactory _engine;
     private readonly string? _nativeDir;
-    private readonly string _libvlcVersion;
+    private readonly string? _libvlcVersion;
     private readonly Func<string, LibVlcIndexResult> _build;
     private readonly Action<string> _log;
     private readonly object _gate = new();
@@ -22,11 +22,20 @@ public sealed class VideoEngineGate
     /// <param name="nativeDir">Overrides <see cref="LibVlcLayout.NativeDir"/> — a test's temp
     /// plugin directory, or null (default) to use the real layout, which is itself null off
     /// Windows.</param>
+    /// <param name="libvlcVersion">
+    /// AUDIT2.md § 3.6: overrides the stamp's version tag — a test's fixed value, for a
+    /// deterministic comparison. Null (the default, and what production always passes) means "ask
+    /// <see cref="LibVlcIndex.DescribeLibVlcBuild"/>", which fingerprints <c>libvlc.dll</c> and
+    /// <c>libvlccore.dll</c> by size and write time rather than guessing at the string the runtime
+    /// would report — confirmed on the real 3.0.21 binary to carry a codename
+    /// (<c>"3.0.21 Vetinari"</c>) that a hard-coded <c>"3.0.21"</c> here never matched, so the index
+    /// this class exists to reuse was being silently rebuilt before every first video, every launch.
+    /// </param>
     /// <param name="build">Overrides <see cref="LibVlcIndex.Build"/> — the § 8 test 6 stub.</param>
     public VideoEngineGate(
         IVideoSurfaceFactory engine,
         string? nativeDir = null,
-        string libvlcVersion = "3.0.21",
+        string? libvlcVersion = null,
         Func<string, LibVlcIndexResult>? build = null,
         Action<string>? log = null)
     {
@@ -67,9 +76,10 @@ public sealed class VideoEngineGate
 
         var indexPath = Path.Combine(pluginsDir, LibVlcIndex.PluginsDatName);
         var stampPath = Path.Combine(pluginsDir, LibVlcIndex.StampName);
+        var versionTag = _libvlcVersion ?? LibVlcIndex.DescribeLibVlcBuild(_nativeDir);
 
         bool current;
-        try { current = LibVlcIndex.IsCurrent(pluginsDir, indexPath, stampPath, _libvlcVersion); }
+        try { current = LibVlcIndex.IsCurrent(pluginsDir, indexPath, stampPath, versionTag); }
         catch { current = false; }
 
         if (current)

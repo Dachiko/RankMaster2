@@ -62,11 +62,11 @@ import kotlinx.coroutines.delay
 fun RankScreen(
     state: RankState,
     media: Rm2Media,
-    onVote: (Side) -> Unit,
-    onPaneMenu: (Side) -> Unit,
+    onVote: (Side, String?) -> Unit,
+    onPaneMenu: (Side, String?) -> Unit,
     onClosePaneMenu: () -> Unit,
-    onDiscard: (Side) -> Unit,
-    onSpecial: (Side) -> Unit,
+    onDiscard: (Side, String?) -> Unit,
+    onSpecial: (Side, String?) -> Unit,
     onView: (Side) -> Unit,
     onCancel: () -> Unit,
     onLeave: () -> Unit,
@@ -90,9 +90,9 @@ fun RankScreen(
                 onLeave = onLeave,
             )
             state.left != null && state.right != null ->
-                Pair(state, media, onVote) { side, at ->
+                Pair(state, media, onVote) { side, at, aimedAtToken ->
                     pressedAt = at
-                    onPaneMenu(side)
+                    onPaneMenu(side, aimedAtToken)
                 }
             // The server says it is still ranking but sent no pair. Not something the owner did,
             // and not something he can fix from here - going back and opening it again is.
@@ -158,8 +158,10 @@ fun RankScreen(
                 state = state,
                 onDismiss = onClosePaneMenu,
                 onView = { onView(side) },
-                onDiscard = { onDiscard(side) },
-                onSpecial = { onSpecial(side) },
+                // The token this menu was opened with (§ 1.3), not whatever is current now — the
+                // menu can sit open for seconds while it is read.
+                onDiscard = { onDiscard(side, state.paneMenuToken) },
+                onSpecial = { onSpecial(side, state.paneMenuToken) },
             )
         }
 
@@ -179,8 +181,8 @@ fun RankScreen(
 private fun Pair(
     state: RankState,
     media: Rm2Media,
-    onVote: (Side) -> Unit,
-    onPaneMenu: (Side, Offset) -> Unit,
+    onVote: (Side, String?) -> Unit,
+    onPaneMenu: (Side, Offset, String?) -> Unit,
 ) {
     val left = state.left ?: return
     val right = state.right ?: return
@@ -191,8 +193,11 @@ private fun Pair(
         val widthPx = with(LocalDensity.current) { maxWidth.toPx() }
         val heightPx = with(LocalDensity.current) { maxHeight.toPx() }
 
-        // Videos run only while this screen is in front and nothing is in flight; two decoders
-        // going while an action resolves is how a phone runs out of memory mid-session.
+        // Videos run only while this screen is in front and the full-screen viewer is not open
+        // over it - RankState.panesPlaying is exactly `foreground && viewing == null`. Busy (an
+        // action resolving) is deliberately not part of this: it is brief, and a pane that stopped
+        // and restarted playback on every vote would be a worse annoyance than the memory an
+        // in-flight action's own two live players cost, which § 2.5's budget already accounts for.
         val playing = state.panesPlaying
 
         if (portrait) {
@@ -228,22 +233,34 @@ private fun Pair(
         val actionable by rememberUpdatedState(state.actionable)
         val vote by rememberUpdatedState(onVote)
         val paneMenu by rememberUpdatedState(onPaneMenu)
+        // § 1.3: read fresh on every recomposition, but only ever *sampled* at the finger - inside
+        // onPress, below - never read again once a gesture is under way. That sample is the pair
+        // identity the gesture is aimed at; RankViewModel checks it against whatever is current by
+        // the time the call actually goes out.
+        val currentPairToken by rememberUpdatedState(state.snapshot?.pairToken)
 
         Box(
             Modifier
                 .fillMaxSize()
                 .pointerInput(portrait, widthPx, heightPx, deadBandPx) {
+                    // Scoped to this gesture-detector instance, reassigned on every pointer down.
+                    // Not `remember`ed - it has no reason to survive a recomposition, only a whole
+                    // touch sequence, and this coroutine already loops for the detector's lifetime.
+                    var aimedAtToken: String? = null
                     detectTapGestures(
+                        // The moment a finger lands is the moment the gesture picks its target -
+                        // before Compose has had a chance to recompose underneath it.
+                        onPress = { aimedAtToken = currentPairToken },
                         // A tap votes, and only away from the seam and away from the outside edge.
                         onTap = { at ->
                             votableSideAt(at, portrait, widthPx, heightPx)
-                                ?.let { if (actionable) vote(it) }
+                                ?.let { if (actionable) vote(it, aimedAtToken) }
                         },
                         // A long press is not an accident, so it reaches every corner: the pane
                         // menu is the one thing somebody might deliberately go to an edge for.
                         onLongPress = { at ->
                             sideAt(at, portrait, widthPx, heightPx, deadBandPx)
-                                ?.let { side -> paneMenu(side, at) }
+                                ?.let { side -> paneMenu(side, at, aimedAtToken) }
                         },
                     )
                 }

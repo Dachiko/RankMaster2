@@ -195,6 +195,28 @@ class Rm2VideoPlayers(
             current?.release()
             current = null
         }
+
+        /**
+         * What a pane's slot should hold *right now*, given whether the pane is actually playing.
+         *
+         * § 2.5 (the second audit): a pane that stopped playing - because the full-screen viewer
+         * opened over it, or the app went to the background - used to keep its player anyway,
+         * paused rather than released, on the theory that "not in front means black, not gone".
+         * That is fine for one covered pane; it stops being fine the moment something else needs a
+         * decoder for the *same* file at the same time, which is exactly what the full-screen
+         * viewer does - it builds its own player for whichever pane it is showing, on top of the
+         * two the ranking screen never let go of. Four players at 32 MB each, against a heap sized
+         * for two, is the number `MEMORY_PROPOSALS.md` already names as having killed the app
+         * twice.
+         *
+         * So: a pane holds a player only while it is playing. Not playing releases it outright -
+         * [acquire] runs again, from a cold decoder, the next time this pane's `playing` turns
+         * true. That costs a restart of one file's playback on the rare transitions that flip it
+         * (opening or closing the viewer, backgrounding), never per vote - voting does not touch
+         * `playing`. Cheap resume was traded for a ceiling that actually holds.
+         */
+        fun sync(ref: MediaRef, playing: Boolean, onState: (MediaPaneState) -> Unit = {}): Rm2Video? =
+            if (playing) acquire(ref, onState) else { release(); null }
     }
 
     /** A fresh, empty slot - one per pane, kept for as long as the pane is on screen. */

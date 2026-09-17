@@ -59,7 +59,12 @@ public sealed record PaneState
     /// <summary>Owned by this record while Kind is Ready/Refining and the pane is a still. The
     /// caller (<see cref="RankCoordinator"/>) disposes it when replacing the pane, unless the
     /// replacement is a "reuse" of the same still (see <see cref="ReusableFor"/>), in which case the
-    /// lease is carried forward unchanged and must not be disposed.</summary>
+    /// lease is carried forward unchanged and must not be disposed.
+    /// <para/>
+    /// <c>Views/</c> reads the frame through it and does not dispose it. It cannot: a pane kept for
+    /// the next pair carries this same lease forward and is repainted from it, so a lease disposed at
+    /// the first repaint would leave the second one reading a freed buffer -- AUDIT2.md § 1.1,
+    /// reproduced end to end by <c>PaneLeaseLifetimeTests</c>.</summary>
     public StillLease? Lease { get; init; }
 
     /// <summary>When this pane last entered <see cref="Waiting"/>. Drives the still ring's 300 ms
@@ -98,6 +103,20 @@ public sealed record PaneState
         Kind = PaneKind.Undecodable,
         Lease = null,
         Sentence = $"{Id} cannot be shown — `{DiscardKeyLabel(MySide)}` discards it, `{VoteOtherKeyLabel(MySide)}` votes for the other",
+    };
+
+    /// <summary>
+    /// A real photograph that will not fit in the still decoder's memory ceiling -- not a damaged
+    /// file, and it must not be described as one. <see cref="IStillSource"/>'s own contract for
+    /// <see cref="StillFailure.TooLarge"/> asks for this: "same offers as NotAnImage, different
+    /// sentence" (AUDIT2.md § 2.1: "he is told his file is broken when it is not"). Same
+    /// <see cref="PaneKind.Undecodable"/>, so the keys that work are exactly the same ones.
+    /// </summary>
+    public PaneState WithTooLarge() => this with
+    {
+        Kind = PaneKind.Undecodable,
+        Lease = null,
+        Sentence = $"{Id} is too big to open on this PC, not damaged — `{DiscardKeyLabel(MySide)}` discards it, `{VoteOtherKeyLabel(MySide)}` votes for the other",
     };
 
     public PaneState WithNoVideoEngine(string reason) => this with

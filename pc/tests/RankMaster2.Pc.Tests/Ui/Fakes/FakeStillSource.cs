@@ -32,9 +32,15 @@ public sealed class FakeStillSource : IStillSource
         PaneHeight = heightPx;
     }
 
+    /// <summary>The managed thread each <see cref="Show"/> arrived on. RankCoordinator calls Show
+    /// from <c>ApplySnapshotSync</c>, so this is a direct record of which thread the snapshot was
+    /// applied on (AUDIT2.md § 4.5).</summary>
+    public readonly List<int> ShowThreadIds = new();
+
     public void Show(string folder, string leftId, string rightId)
     {
         ShowCalls.Add(new ShowCall(folder, leftId, rightId));
+        ShowThreadIds.Add(Environment.CurrentManagedThreadId);
         Changed?.Invoke(leftId, StateOf(leftId));
         Changed?.Invoke(rightId, StateOf(rightId));
     }

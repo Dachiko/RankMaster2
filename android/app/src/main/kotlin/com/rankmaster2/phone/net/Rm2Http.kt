@@ -44,6 +44,13 @@ object Rm2Http {
     private val clients = HashMap<String, OkHttpClient>()
 
     /**
+     * The live bearer token for a paired fingerprint, read fresh by [client]'s interceptor on every
+     * request rather than baked into the client at build time. This is what lets [client] key its
+     * map on the fingerprint alone - see [client]'s own doc for why that matters (§ 3.7).
+     */
+    private val tokens = HashMap<String, String>()
+
+    /**
      * Call once at startup, **before anything asks for a client**. The cache is what makes each
      * photo cross the network once, ever.
      *
@@ -70,25 +77,56 @@ object Rm2Http {
     fun cacheDirectory(): File? = cacheDirectory
 
     /**
-     * The client for a paired server: pinned to its certificate, carrying its token on every
-     * request. Cached per identity, because OkHttp clients are meant to be shared - a fresh one per
-     * call throws away the connection pool and the disk cache along with it.
+     * Empties every cached client's disk cache in place - `Cache.evictAll()`, never a close or a
+     * delete of the directory. The client keeps working exactly as before, just re-filling from
+     * nothing rather than from what was there.
+     *
+     * The live-instance half of "nothing survives while the app is not running" (the owner's ask,
+     * 2026-09-17): `MediaCacheJanitor.wipeBeforeUse` deletes the directory outright before anything
+     * has opened it, which is the half that actually holds against a killed process; this is what
+     * backs it up for the ordinary case, where something does get to run a shutdown path. One
+     * client's cache failing to evict does not stop the others - `evictAll` can throw on a strange
+     * disk state, and this is best-effort by design (see `MediaCacheJanitor`).
      */
     @Synchronized
-    fun client(identity: ServerIdentity): OkHttpClient =
-        clients.getOrPut(identity.certificateFingerprint + "|" + identity.token.take(12)) {
-            build(identity.certificateFingerprint, identity.token)
+    fun evictMediaCache() {
+        clients.values.forEach { client -> runCatching { client.cache?.evictAll() } }
+    }
+
+    /**
+     * The client for a paired server: pinned to its certificate, carrying its token on every
+     * request. Cached per **fingerprint**, not per `(fingerprint, token)` pair - re-pairing the same
+     * PC names a fresh token for a certificate this app already has a client for.
+     *
+     * § 3.7 (the second audit): keying on the token too, as this used to, made re-pairing build a
+     * second client - and, because every client with a cache directory configured gets its own
+     * `Cache` object, a second `Cache` pointed at the very directory the first one still had open.
+     * OkHttp documents that as corrupting. The fix is not to evict and rebuild on a new token - that
+     * only moves the same race earlier - but to never need to: the token lives in [tokens], read
+     * fresh by the interceptor on every request, so re-pairing updates *what this one client sends*
+     * rather than building another one.
+     */
+    @Synchronized
+    fun client(identity: ServerIdentity): OkHttpClient {
+        tokens[identity.certificateFingerprint] = identity.token
+        return clients.getOrPut(identity.certificateFingerprint) {
+            build(identity.certificateFingerprint, authenticated = true)
         }
+    }
 
     /**
      * The client used while pairing: the fingerprint is known (the QR carried it) but no token
      * exists yet. The order matters and is normative - SERVER_SPEC.md § 10.1.1 requires the client
      * to pin *before* it sends the code, because the code is a bearer secret and handing it to an
      * unverified peer hands it to whoever answered.
+     *
+     * Built fresh every call, deliberately outside [clients] - pairing is a handful of requests and
+     * never touches a photograph, so it has no business with the disk cache, and a client here never
+     * risks becoming the second `Cache` on [cacheDirectory] that § 3.7 was about.
      */
-    fun pairingClient(fingerprint: String): OkHttpClient = build(fingerprint, token = null)
+    fun pairingClient(fingerprint: String): OkHttpClient = build(fingerprint, authenticated = false)
 
-    private fun build(fingerprint: String, token: String?): OkHttpClient {
+    private fun build(fingerprint: String, authenticated: Boolean): OkHttpClient {
         val trust = PinnedTrustManager(fingerprint)
         val context = SSLContext.getInstance("TLS").apply {
             init(null, arrayOf(trust), java.security.SecureRandom())
@@ -105,15 +143,16 @@ object Rm2Http {
             // one thing that can double-count a vote (SERVER_SPEC.md § 13.3).
             .retryOnConnectionFailure(false)
 
-        cacheDirectory?.let { builder.cache(Cache(it, CACHE_BYTES)) }
-
-        if (token != null) {
+        if (authenticated) {
+            cacheDirectory?.let { builder.cache(Cache(it, CACHE_BYTES)) }
             builder.addInterceptor { chain ->
-                chain.proceed(
-                    chain.request().newBuilder()
-                        .header("Authorization", "Bearer $token")
-                        .build()
-                )
+                val token = synchronized(this) { tokens[fingerprint] }
+                val request = if (token != null) {
+                    chain.request().newBuilder().header("Authorization", "Bearer $token").build()
+                } else {
+                    chain.request()
+                }
+                chain.proceed(request)
             }
         }
 

@@ -22,6 +22,13 @@ data class RankState(
     val problem: Problem? = null,
     /** The pane whose long-press menu is open, if any. */
     val paneMenu: Side? = null,
+    /**
+     * § 1.3: the `pairToken` that was current when [paneMenu] was opened - the identity of the pair
+     * the long press was aimed at, not whatever pair is current by the time a row in the menu is
+     * tapped. The menu can sit open for seconds while the owner reads it; [RankViewModel] compares
+     * this against the live token before Discard or Move to special is allowed to reach the wire.
+     */
+    val paneMenuToken: String? = null,
     /** Set while the app is not in front, so videos stop and nothing is prefetched. */
     val foreground: Boolean = true,
     /**

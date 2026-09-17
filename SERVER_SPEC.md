@@ -811,7 +811,24 @@ the token names — the client never sends an id, so it cannot act on an item th
 
 Order (`LibraryActions.Move`): release any server-side decode of the id → `FileOps.MoveToSubfolder`
 (creates the folder on demand, uniquifies on collision as `name (2).ext`) → `RankingSession.Drop` →
-`RankingSession.Save`.
+`RankingSession.Save` → **carry the rating into the subfolder**.
+
+**The rating travels with the photograph** (owner's decision, 2026-09-17). The moved file's row is
+written into `<folder>/discarded/rankmaster_db.json` (and likewise `special 1/`), an ordinary v1
+database keyed by filename — so the subfolder can be opened and ranked like any other folder, and
+Rank Master 2 reads it with no schema change. Before this, the row was simply deleted on the next
+save: a discard folder could not be audited, and `special 1/`, which holds the owner's *best*
+pictures, destroyed exactly the judgements that had cost the most comparisons.
+
+It is the **last** step on purpose. The library's own database is the one that must be right, so the
+second write happens after it and can never cost it. The write is not swallowed: a carry that
+silently did not happen is the loss this exists to prevent, and § 8.3's stage rule already reads a
+throw at this point correctly — the record is gone from the session, so the answer is
+`500 save_failed { recordsChanged: true, fileMoved: true }` with undo armed, which is exactly true.
+
+`POST /session/undo` of a move rebuilds the subfolder's database from what is actually present,
+dropping the row the returned file left behind. That half is best-effort: the rating is already back
+in the library, so a stale row is untidiness, not loss.
 
 | Outcome | Status | State |
 |---|---|---|
@@ -1391,11 +1408,21 @@ header read, not a full decode; if it fails → `422 media_decode_failed`.
 Both derive from one fingerprint. All inputs are of the file **as it is at request time**.
 
 ```
-fingerprint  = SHA-256( utf8(id) || 0x00 || decimal(sizeBytes) || 0x00 || decimal(mtimeUtcTicks) )
+fingerprint  = SHA-256( utf8(folder) || 0x00 || utf8(id) || 0x00 || decimal(sizeBytes) || 0x00 || decimal(mtimeUtcTicks) )
 mediaVersion = lowercase hex of fingerprint[0..8)          // 16 chars
 ETag         = "\"" + variant + "-" + lowercase hex of fingerprint[0..16) + "\""
 ```
 
+- `folder` is the **open session's own absolute, canonicalized folder** (§ 11.2 step 5), never a
+  path the client supplied. Without it the fingerprint identifies a file by name alone, so two files
+  in two folders agreeing on id, size and mtime are one object to the server — the same ETag and the
+  same disk-cache entry. That is not theoretical: it was reproduced serving one photograph's pixels
+  under another photograph's name, byte-identical, while `meta` still reported the second file's real
+  size, and the client would then hold the wrong picture for a year under § 12.5.3's caching licence.
+  Including the folder is what makes "the same ETag means the same bytes" true across folders.
+- **Consequence, worth knowing:** moving or renaming a session folder on disk changes every ETag
+  under it at once. Nothing is wrong — each client revalidates once and receives a fresh ETag for the
+  same, correct bytes — but it is a real one-time cost rather than a silent one.
 - `mtimeUtcTicks` is `File.GetLastWriteTimeUtc(path).Ticks` — 100 ns units since 0001-01-01, decimal,
   no separators.
 - `variant` identifies the exact representation:
@@ -1497,9 +1524,12 @@ Normative guarantees, and their exact limits:
    **never** inside the user's media folder (`SERVER_PLAN.md` § 3.3). It is bounded by size with LRU
    eviction and is invisible to the API: eviction never changes a response body, only its latency.
 
-**Known limit:** the fingerprint is `(name, size, mtime)`. A file replaced with different content of
-the same length inside the filesystem's mtime granularity produces the same ETag, and a client will
-serve stale bytes from its cache. Hashing content would cost a full read of every file on every
+**Known limit:** the fingerprint is `(folder, name, size, mtime)`. Two writes to the **same** file
+that leave it with an identical name, byte length and modification time but different content still
+collide — a same-folder restore, or a sync tool that preserves all three while changing the bytes —
+and a client will serve stale bytes from its cache. This is the residual cost of identifying a file
+by what `stat` says rather than by its content. It no longer extends **across** folders: that was a
+real fault, and § 12.2 now hashes the folder. Hashing content would cost a full read of every file on every
 request; the trade is deliberate. Clients that must be certain MAY bypass with a distinct `v`. A
 rename (§ 10.16) reassigns every name to `NNNNNN-ssss.ext`, where `ssss` is that run's suffix. Two
 consecutive runs therefore cannot produce the same name for anything, because the second run refuses a

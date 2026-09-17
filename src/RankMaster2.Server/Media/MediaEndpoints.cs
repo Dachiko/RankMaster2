@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RankMaster2.Server.Contracts;
+using RankMaster2.Server.Security;
 
 namespace RankMaster2.Server.Media;
 
@@ -65,6 +66,33 @@ public static class MediaEndpoints
     }
 
     /// <summary>
+    /// Second audit § 3.5: left to itself, <see cref="MediaOptions.ResolvedCacheDirectory"/> falls
+    /// back to a hard-coded platform default that never consults
+    /// <c>RankMaster2:DataDirectory</c> / <c>RM2_DATA_DIR</c> — the exact setting SERVER_RUNNING.md
+    /// tells an operator to move when the default drive is full, and which lists <c>cache\</c> as
+    /// one of the files that live under it. So an operator who moves the data directory for
+    /// exactly that reason keeps filling the old drive with up to <see cref="MediaOptions.CacheMaxBytes"/>
+    /// of cached stills anyway.
+    /// <para/>
+    /// Only applied when <see cref="MediaOptions.CacheDirectory"/> was left unset — an operator who
+    /// names <c>Media:CacheDirectory</c> explicitly is always obeyed, unchanged from before. The
+    /// resolution itself is <see cref="Rm2SecurityOptions.ResolveDataDirectory"/> — the one place
+    /// the security layer already answers "where is the data directory" — reused rather than
+    /// re-implemented so the two layers can never disagree about it.
+    /// </summary>
+    public static void ApplyConfiguredCacheDirectoryDefault(MediaOptions options, IConfiguration? configuration)
+    {
+        if (!string.IsNullOrWhiteSpace(options.CacheDirectory) || configuration is null)
+            return;
+
+        var security = new Rm2SecurityOptions();
+        configuration.GetSection(Rm2SecurityOptions.SectionName).Bind(security);
+        var dataDirectory = security.ResolveDataDirectory();
+        if (!string.IsNullOrWhiteSpace(dataDirectory))
+            options.CacheDirectory = Path.Combine(dataDirectory, "cache");
+    }
+
+    /// <summary>
     /// Maps <c>GET</c> and <c>HEAD</c> for <c>meta</c>, <c>still</c>, <c>thumb</c> and
     /// <c>video</c>. § 2: "<c>HEAD</c> MUST be supported on all four <c>/media</c> endpoints and
     /// MUST return the identical status line and headers as <c>GET</c> with no body."
@@ -74,10 +102,15 @@ public static class MediaEndpoints
         var services = endpoints.ServiceProvider;
         var loggerFactory = services.GetService<ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance;
 
+        var configuration = services.GetService<IConfiguration>();
         var options =
             services.GetService<IOptions<MediaOptions>>()?.Value
-            ?? services.GetService<IConfiguration>()?.GetSection(MediaOptions.SectionName).Get<MediaOptions>()
+            ?? configuration?.GetSection(MediaOptions.SectionName).Get<MediaOptions>()
             ?? new MediaOptions();
+
+        // § 3.5: only fills in a default when CacheDirectory was left unset; an explicit
+        // Media:CacheDirectory is always obeyed as before.
+        ApplyConfiguredCacheDirectoryDefault(options, configuration);
 
         var renderer = services.GetService<StillRenderer>() ?? new StillRenderer(options);
         var cache = services.GetService<StillCache>() ?? new StillCache(options, loggerFactory.CreateLogger<StillCache>());
@@ -162,11 +195,22 @@ public static class MediaEndpoints
         {
             // § 5.5: the file exists but is not a decodable image. § 11.3 is the reason this does
             // not also drop the record: "The server MUST NOT mutate session state from a GET."
+            //
+            // AUDIT2.md § 2.1: a StillDecodeException raised because DecodeRoom/DecodeBudget had no
+            // room for this decode's peak — never because the bytes on disk were bad — carries
+            // IsCapacityRefusal. The wire contract does not change for it: still 422
+            // media_decode_failed, still details: { id } (SERVER_SPEC.md § 5.2's row for this code).
+            // Only error.message differs, and SERVER_SPEC.md § 4 says that field is free to: "Human
+            // English. Unstable. Never parsed." So this needs no contract change — the file itself
+            // was never the problem, and the owner must not be told it was damaged.
             layer.Logger.LogInformation(ex, "Could not decode {Id}.", media.Id);
+            var message = ex.IsCapacityRefusal
+                ? "The file is present and is not damaged, but the server did not have enough free decode memory for it right now — try again in a moment."
+                : "The file is present but could not be decoded as an image.";
             await MediaHttp.WriteErrorAsync(
                 context,
                 ErrorCodes.MediaDecodeFailed,
-                "The file is present but could not be decoded as an image.",
+                message,
                 new { id = media.Id },
                 cancellationToken: context.RequestAborted).ConfigureAwait(false);
         }
@@ -293,20 +337,68 @@ public static class MediaEndpoints
             if (HttpMethods.IsHead(context.Request.Method))
                 return;
 
+            AllowSynchronousEncodeWrites(context);
             await layer.Renderer.RenderAsync(media.Path, variant, context.Response.Body, context.RequestAborted).ConfigureAwait(false);
             return;
         }
 
-        var length = new FileInfo(cached).Length;
-        context.Response.ContentLength = length;
-        if (HttpMethods.IsHead(context.Request.Method))
-            return;
+        try
+        {
+            var length = new FileInfo(cached).Length;
+            context.Response.ContentLength = length;
+            if (HttpMethods.IsHead(context.Request.Method))
+                return;
 
-        var bodyFeature = context.Features.Get<IHttpResponseBodyFeature>();
-        if (bodyFeature is not null)
-            await bodyFeature.SendFileAsync(cached, 0, length, context.RequestAborted).ConfigureAwait(false);
-        else
-            await context.Response.SendFileAsync(cached, context.RequestAborted).ConfigureAwait(false);
+            var bodyFeature = context.Features.Get<IHttpResponseBodyFeature>();
+            if (bodyFeature is not null)
+                await bodyFeature.SendFileAsync(cached, 0, length, context.RequestAborted).ConfigureAwait(false);
+            else
+                await context.Response.SendFileAsync(cached, context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // § 3.12 (second audit): StillCache.GetOrAddAsync writes the entry, runs its own
+            // eviction, and only then returns the path — so its own eviction (racing against a
+            // concurrent write elsewhere, or, deterministically, a CacheMaxBytes bound smaller
+            // than the entry it just wrote) can take the file back off disk before we get to stat
+            // or send it. Nothing is wrong with the photograph; only the cached copy of it is
+            // gone. Answering 404 media_file_missing here would name a file that is sitting right
+            // there on disk — so this is the cache-declined case above, not a missing-file case:
+            // fall back to rendering it directly, the same way a cache root inside the media
+            // folder already does. Nothing has been written to the response body yet — the two
+            // points that can throw here (the stat, and SendFileAsync's own open) both happen
+            // before the first byte would go out — so it is still safe to change course.
+            layer.Logger.LogDebug(
+                ex,
+                "Still cache entry for {Id} disappeared between hand-off and send; re-rendering instead of answering media_file_missing.",
+                media.Id);
+
+            context.Response.ContentLength = null;
+            if (HttpMethods.IsHead(context.Request.Method))
+                return;
+
+            AllowSynchronousEncodeWrites(context);
+            await layer.Renderer.RenderAsync(media.Path, variant, context.Response.Body, context.RequestAborted).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Found while wiring up § 3.12's fallback, not one of the numbered findings itself: rendering
+    /// straight to <c>context.Response.Body</c> — both here and in the pre-existing "cache declined
+    /// to write" branch above — has SkiaSharp encode synchronously into whatever
+    /// <see cref="StillRenderer.RenderAsync"/> is handed, and ASP.NET Core refuses a synchronous
+    /// <c>Stream.Write</c> on the response body by default (Kestrel and <c>TestServer</c> alike),
+    /// throwing <see cref="InvalidOperationException"/> instead of a picture. Both direct-render
+    /// fallbacks are for exactly the cases where the disk cache could not help, so crashing there
+    /// is strictly worse than the thing being worked around. This is the documented escape hatch,
+    /// scoped to the one response it is called on.
+    /// </summary>
+    private static void AllowSynchronousEncodeWrites(HttpContext context)
+    {
+        var feature = context.Features.Get<IHttpBodyControlFeature>();
+        if (feature is not null)
+            feature.AllowSynchronousIO = true;
     }
 
     // --------------------------------------------------------------- video
@@ -421,6 +513,14 @@ public static class MediaEndpoints
             var query = path.IndexOf('?');
             if (query >= 0)
                 path = path[..query];
+
+            // § 3.11 (second audit): routing tolerates a trailing slash and still matches
+            // /media/{id}/{verb} with the intended id, but this hand-rolled split did not — the
+            // path split on that slash left a trailing empty segment, so segments[^2] named the
+            // verb ("still") instead of the id. Routing's own tolerance is the contract here, so
+            // trim the same trailing slash(es) before splitting, the same way routing effectively
+            // does.
+            path = path.TrimEnd('/');
 
             // Expect /api/v1/media/<id>/<verb>: the id is the second-to-last segment.
             var segments = path.TrimStart('/').ToString().Split('/');

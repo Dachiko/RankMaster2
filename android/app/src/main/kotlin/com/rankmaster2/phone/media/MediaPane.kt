@@ -136,17 +136,22 @@ private fun VideoPane(
     // its decoder too, which is the case a DisposableEffect never sees.
     val holder = remember(media) { VideoSlotHolder(media.players.newSlot()) }
 
-    // Keyed on the ref only - not on `playing` any more. Building a fresh player every time the
-    // screen pauses or resumes the panes was its own source of overlapping players; whether this
-    // plays is `setPlaying` below, on the one player this pane already has.
-    val video = remember(ref.id, url) {
-        holder.slot.acquire(ref) { next -> state = next }
+    // § 2.5 (second audit): keyed on `playing` too, and gone through `Slot.sync` rather than
+    // `acquire` directly. A pane that is not playing releases its player outright instead of
+    // holding it paused - see `sync`'s own doc for why "keep the buffer, just don't play" stopped
+    // being safe once the full-screen viewer started building its own player for the same file on
+    // top of the two this screen was already holding. `playing` only changes when the viewer opens
+    // or closes, or the app is backgrounded - never per vote - so this is not a rebuild-per-vote.
+    val video = remember(ref.id, url, playing) {
+        holder.slot.sync(ref, playing) { next -> state = next }
     }
 
     LaunchedEffect(video, playing) { video?.setPlaying(playing) }
 
     if (!playing) {
-        // Not in front means black, not gone: the player keeps its buffer and its place.
+        // Not in front means black - and, since § 2.5, the player is actually gone too: `sync`
+        // released it above. The pane still draws as "loading" rather than anything more alarming,
+        // because from here this looks exactly like a normal pair still warming up.
         StatusPane(MediaPaneState.Loading)
         return
     }

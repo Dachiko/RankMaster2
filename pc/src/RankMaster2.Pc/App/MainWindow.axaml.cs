@@ -36,8 +36,13 @@ public partial class MainWindow : Window
             StartupClock.Mark("first_frame");
             StartupClock.AssertNoVideoEngine();
 
+            // AUDIT2.md § 3.1: this used to call Link.ConnectAsync directly, which connects but does
+            // none of what RankCoordinator.InitializeAsync does on top of that — load the last
+            // folder so "Resume" can appear, and raise Changed so the start screen repaints once the
+            // connect settles instead of showing "Not connected" forever. Before this fix nothing in
+            // the whole program called InitializeAsync at all.
             if (_services is not null)
-                _ = System.Threading.Tasks.Task.Run(() => _services.Link.ConnectAsync());
+                _ = System.Threading.Tasks.Task.Run(() => _services.InitializeAsync(default));
         });
     }
 }

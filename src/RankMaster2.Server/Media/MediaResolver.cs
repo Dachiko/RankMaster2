@@ -12,7 +12,13 @@ public sealed record ResolvedMedia(
 
     public MediaKind Kind => Record.Kind;
 
-    public MediaFingerprint Fingerprint => MediaFingerprint.Of(Id, SizeBytes, ModifiedUtc.Ticks);
+    /// <summary>
+    /// Second audit § 1.2: the folder is part of the fingerprint, not just the name, size and
+    /// mtime — <see cref="Session"/>'s own folder is what the resolver verified <see cref="Path"/>
+    /// sits directly inside (§ 11.2 step 5), so it is already the canonical, absolute spelling
+    /// <see cref="MediaFingerprint.Of(string, long, long, string)"/> requires.
+    /// </summary>
+    public MediaFingerprint Fingerprint => MediaFingerprint.Of(Id, SizeBytes, ModifiedUtc.Ticks, Session.Folder);
 
     public string MediaVersion => Fingerprint.MediaVersion;
 }

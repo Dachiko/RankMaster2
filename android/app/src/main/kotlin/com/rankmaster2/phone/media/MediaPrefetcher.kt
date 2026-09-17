@@ -3,9 +3,11 @@ package com.rankmaster2.phone.media
 import com.rankmaster2.phone.net.MediaRef
 import com.rankmaster2.phone.net.Snapshot
 import java.io.IOException
+import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -96,19 +98,44 @@ class MediaPrefetcher(
         return MediaUrls.resolve(baseUrl, MediaUrls.still(link, width, format))
     }
 
-    /** A plain GET, read to the end so OkHttp commits the cache entry, then thrown away. */
-    private fun fetch(url: String): Boolean = try {
-        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
-            if (response.isSuccessful) {
-                response.body?.source()?.use { source ->
-                    blackholeSink().buffer().use { sink -> sink.writeAll(source) }
+    /**
+     * A plain GET, read to the end so OkHttp commits the cache entry, then thrown away.
+     *
+     * § 3.8 (the second audit): a warm-up this cancelled used to keep running regardless - `execute`
+     * blocks the thread it is on, and nothing coroutine cancellation does can interrupt a blocking
+     * Java call already in progress; `ensureActive` in [warm] only ever caught the gap *between*
+     * URLs. So a vote that superseded this warm-up (a fresh `LaunchedEffect` key cancelling the old
+     * job) left the download running to completion anyway, on the same Wi-Fi and through the same
+     * connection pool as the picture now actually in front of him - the download he meant to cancel
+     * was the one slowing down the one he was waiting for.
+     *
+     * The call is kept reachable for exactly as long as this suspends, so
+     * [suspendCancellableCoroutine] can wire the coroutine's own cancellation straight to
+     * `Call.cancel()` - which closes the connection out from under a blocking read on another
+     * thread and is what actually stops the bytes, not just stops *asking* for more of them.
+     */
+    private suspend fun fetch(url: String): Boolean = suspendCancellableCoroutine { continuation ->
+        val call = client.newCall(Request.Builder().url(url).build())
+        continuation.invokeOnCancellation { call.cancel() }
+
+        val result = try {
+            call.execute().use { response ->
+                if (response.isSuccessful) {
+                    response.body?.source()?.use { source ->
+                        blackholeSink().buffer().use { sink -> sink.writeAll(source) }
+                    }
+                    true
+                } else {
+                    false
                 }
-                true
-            } else {
-                false
             }
+        } catch (_: IOException) {
+            // Reached both by an ordinary network failure and by the cancellation above - a
+            // cancelled call's blocking read ends in an IOException, not a CancellationException,
+            // because nothing here ever suspended in the coroutine sense for it to interrupt.
+            false
         }
-    } catch (_: IOException) {
-        false
+
+        if (continuation.isActive) continuation.resume(result)
     }
 }

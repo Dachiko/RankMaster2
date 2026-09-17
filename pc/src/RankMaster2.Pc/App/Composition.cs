@@ -46,7 +46,13 @@ public static class Composition
         var lifetime = new AppLifetime(wakingLink);
         root.QuitRequested += () => _ = lifetime.QuitNow();
 
-        return new CompositionResult(wakingLink, stillSource, videoEngine, gate, lifetime, root);
+        // AUDIT2.md § 3.1: RankCoordinator.InitializeAsync is the only place that loads the last
+        // folder (Start.LastFolder = _folderStore.Load()) and the only place that raises Changed
+        // once ConnectAsync finishes — it is not the same thing as Link.ConnectAsync, which is all
+        // MainWindow.OnOpened called before this fix. Handing out the coordinator's own delegate
+        // (rather than the coordinator itself) keeps CompositionResult's surface exactly as narrow
+        // as it was: one more thing App/ can call, not a new type App/ now depends on.
+        return new CompositionResult(wakingLink, stillSource, videoEngine, gate, lifetime, root, coordinator.InitializeAsync);
     }
 }
 
@@ -57,4 +63,5 @@ public sealed record CompositionResult(
     IVideoSurfaceFactory Video,
     VideoEngineGate VideoGate,
     AppLifetime Lifetime,
-    Control Root);
+    Control Root,
+    Func<CancellationToken, Task> InitializeAsync);

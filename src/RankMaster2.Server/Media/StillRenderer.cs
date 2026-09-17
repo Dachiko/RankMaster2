@@ -3,8 +3,20 @@ using SkiaSharp;
 
 namespace RankMaster2.Server.Media;
 
-/// <summary>Thrown when a file exists but is not a decodable image → <c>422 media_decode_failed</c>.</summary>
-public sealed class StillDecodeException(string message, Exception? inner = null) : Exception(message, inner);
+/// <summary>Thrown when a file exists but is not a decodable image → <c>422 media_decode_failed</c>.
+/// <para/>
+/// AUDIT2.md § 2.1: this is also the exception a decode gets when the server simply had no room for
+/// it at that moment — a large still colliding with another large still in the same budget. That is
+/// never "damaged", so <see cref="IsCapacityRefusal"/> lets the caller (<c>MediaEndpoints</c>) say a
+/// different sentence for it while the wire contract — code <c>media_decode_failed</c>, status 422,
+/// <c>details: { id }</c> — is unchanged; only <c>error.message</c> (SERVER_SPEC.md § 4: "Human
+/// English. Unstable. Never parsed.") differs.</summary>
+public sealed class StillDecodeException(string message, Exception? inner = null, bool isCapacityRefusal = false) : Exception(message, inner)
+{
+    /// <summary>True when this was raised because <see cref="DecodeRoom"/>/<see cref="DecodeBudget"/>
+    /// had no room for the decode's worst-case peak — never because the file itself was bad.</summary>
+    public bool IsCapacityRefusal { get; } = isCapacityRefusal;
+}
 
 /// <summary>Pixel dimensions of a still <b>after</b> EXIF orientation (§ 12.1).</summary>
 public readonly record struct StillDimensions(int Width, int Height);
@@ -47,6 +59,7 @@ public sealed class StillRenderer : IDisposable
     private readonly MediaOptions _options;
     private readonly SemaphoreSlim _decodeSlots;
     private readonly DecodeBudget _budget;
+    private readonly DecodeRoom _room;
 
     public StillRenderer(IOptions<MediaOptions> options)
         : this(options.Value)
@@ -58,10 +71,28 @@ public sealed class StillRenderer : IDisposable
         _options = options;
         _decodeSlots = new SemaphoreSlim(Math.Max(1, options.MaxConcurrentDecodes));
         _budget = new DecodeBudget(Math.Max(16, options.DecodeMemoryLimitMegabytes) * 1024L * 1024L);
+        _room = new DecodeRoom(_budget);
+    }
+
+    /// <summary>Lets a caller hand in a <see cref="DecodeRoom"/> with a short
+    /// <c>maxWait</c>/<c>poll</c>, so a test asserting "wait ran out" or "two decodes collided" does
+    /// not have to sit through the real 10-second backstop. Also how a room and a renderer end up
+    /// sharing the same <see cref="DecodeBudget"/> — see <see cref="DecodeRoom.Budget"/>.</summary>
+    public StillRenderer(MediaOptions options, DecodeRoom room)
+    {
+        _options = options;
+        _decodeSlots = new SemaphoreSlim(Math.Max(1, options.MaxConcurrentDecodes));
+        _budget = room.Budget;
+        _room = room;
     }
 
     /// <summary>The ceiling every decode runs under. Tests measure against this.</summary>
     public DecodeBudget Budget => _budget;
+
+    /// <summary>The admission gate that serialises two decodes rather than letting the second be
+    /// refused for want of room (AUDIT2.md § 2.1). Exposed for tests that want to assert
+    /// <see cref="DecodeRoom.WaitedAdmissions"/> directly.</summary>
+    public DecodeRoom Room => _room;
 
     /// <summary>
     /// A header read, not a decode (§ 12.1: "Reading <c>width</c>/<c>height</c> for a still is a
@@ -136,8 +167,66 @@ public sealed class StillRenderer : IDisposable
         var outputWidth = swap ? resizedHeight : resizedWidth;
         var outputHeight = swap ? resizedWidth : resizedHeight;
 
+        // AUDIT2.md § 2.1: claim this whole render's worst-case peak here, before Decode() takes its
+        // first byte, and wait (bounded) for another render to finish if that is what it takes. This
+        // is the ONLY reservation in a render that is allowed to wait — see DecodeRoom's remarks and
+        // ReserveRoom below for why the reservations Decode() takes internally must not be.
+        var peakBytes = EstimatePeakBytes(decodeInfo, resizedWidth, resizedHeight, origin);
+        using var admission = ReserveRoom(peakBytes, path);
+
         using var finished = Decode(codec, decodeInfo, resizedWidth, resizedHeight, origin, outputWidth, outputHeight, path);
         Encode(finished, variant, destination);
+    }
+
+    /// <summary>
+    /// The most pixel memory one render can hold at once, computed the same way <see cref="Decode"/>
+    /// and <see cref="Orient"/> actually allocate, so the upfront <see cref="DecodeRoom"/> reservation
+    /// this guards is neither too small (a live overrun) nor so padded that ordinary photographs get
+    /// serialised for no reason.
+    /// <para/>
+    /// Three buffers can exist in a render, but never all three together: the decode buffer is freed
+    /// before the orientation buffer is taken (see the comment on <see cref="Decode"/>). So the peak
+    /// is one of two stages — decode-buffer-plus-resample-buffer, or fit-buffer-plus-oriented-buffer —
+    /// never their sum. When a resample happens, that stage always dominates: the resample target is
+    /// by construction never larger than the buffer being downscaled, so decodeBytes + fitBytes ≥
+    /// fitBytes + orientedBytes (orientedBytes and fitBytes hold the same pixel count, EXIF transpose
+    /// only swapping which axis is which). That is the same reasoning
+    /// <c>pc/src/RankMaster2.Pc/Stills/StillDecoder.cs</c>'s <c>Peak</c> uses, ported rather than
+    /// re-derived.
+    /// </summary>
+    private static long EstimatePeakBytes(SKImageInfo decodeInfo, int resizedWidth, int resizedHeight, SKEncodedOrigin origin)
+    {
+        var decodeBytes = decodeInfo.BytesSize64;
+        var needsResample = decodeInfo.Width != resizedWidth || decodeInfo.Height != resizedHeight;
+        var fitBytes = decodeInfo.WithSize(resizedWidth, resizedHeight).BytesSize64;
+
+        if (needsResample)
+            return decodeBytes + fitBytes;
+
+        var needsOrienting = origin is not (SKEncodedOrigin.TopLeft or SKEncodedOrigin.Default);
+        return needsOrienting ? decodeBytes + fitBytes : decodeBytes;
+    }
+
+    /// <summary>
+    /// Claims <paramref name="peakBytes"/> from <see cref="_room"/>, turning "there is no room and
+    /// none is coming" into the same <see cref="StillDecodeException"/> an undecodable file gets —
+    /// but flagged <see cref="StillDecodeException.IsCapacityRefusal"/> so <c>MediaEndpoints</c> can
+    /// tell the owner "too big right now", never "damaged".
+    /// </summary>
+    private DecodeRoom.Reservation ReserveRoom(long peakBytes, string path)
+    {
+        try
+        {
+            return _room.Take(peakBytes);
+        }
+        catch (DecodeBudgetExceededException ex)
+        {
+            throw new StillDecodeException(
+                $"{Path.GetFileName(path)} needs {ex.RequestedBytes:N0} bytes of decode memory but the " +
+                $"server's {ex.CeilingBytes:N0} byte budget could not free that much room.",
+                ex,
+                isCapacityRefusal: true);
+        }
     }
 
     /// <summary>
@@ -381,6 +470,14 @@ public sealed class StillRenderer : IDisposable
     /// <summary>
     /// Takes memory from the budget, turning a refusal into the 422 the contract asks for rather
     /// than letting it escape as a 500.
+    /// <para/>
+    /// Deliberately calls <see cref="DecodeBudget.Allocate"/> directly rather than <see cref="_room"/>
+    /// — <see cref="Render"/>'s upfront <see cref="DecodeRoom"/> reservation already covers every
+    /// buffer this method is asked for, and a THIS allocation is never allowed to wait: it runs while
+    /// an earlier buffer in the same render (the decode buffer, or the fit buffer) is still held, and
+    /// a wait there — holding that buffer — is exactly the self-deadlock <see cref="DecodeRoom"/>'s
+    /// remarks warn about. A throw here should not happen given a correct peak estimate; it stays as
+    /// a defensive 422 rather than a 500 if one ever does.
     /// </summary>
     private BudgetedBuffer Reserve(long bytes, string path)
     {
@@ -391,7 +488,9 @@ public sealed class StillRenderer : IDisposable
         catch (DecodeBudgetExceededException ex)
         {
             throw new StillDecodeException(
-                $"{Path.GetFileName(path)} is too large to decode inside the server's memory budget.", ex);
+                $"{Path.GetFileName(path)} is too large to decode inside the server's memory budget.",
+                ex,
+                isCapacityRefusal: true);
         }
     }
 

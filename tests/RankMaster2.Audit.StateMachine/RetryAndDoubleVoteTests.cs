@@ -209,9 +209,16 @@ public sealed class RetryAndDoubleVoteTests(Rm2Server server) : AuditTestBase(se
         Assert.Equal(landed.PairSeq, resync.PairSeq);
         Assert.Equal("req-discard", resync.RequireLastAction("§ 9.4").ClientRequestId);
 
-        var discarded = Directory.GetFiles(Path.Combine(folder.Path, "discarded"));
-        Assert.Single(discarded);
-        Assert.Equal(victim, Path.GetFileName(discarded[0]));
+        // Exactly one *photograph* moved. The folder also holds the carried rankmaster_db.json
+        // (the rating travels with the file, 2026-09-17), which is not a victim — so count media,
+        // and name the database explicitly rather than letting a stray file pass unnoticed.
+        var inDiscarded = Directory.GetFiles(Path.Combine(folder.Path, "discarded"))
+            .Select(Path.GetFileName)
+            .ToArray();
+        var movedPhotographs = inDiscarded.Where(f => !string.Equals(f, "rankmaster_db.json", StringComparison.Ordinal)).ToArray();
+        Assert.Single(movedPhotographs);
+        Assert.Equal(victim, movedPhotographs[0]);
+        Assert.Contains("rankmaster_db.json", inDiscarded);
     }
 
     /// <summary>

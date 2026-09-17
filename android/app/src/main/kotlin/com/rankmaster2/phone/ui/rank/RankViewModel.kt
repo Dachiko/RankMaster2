@@ -34,6 +34,14 @@ import kotlinx.coroutines.launch
  *
  * One action at a time, for the same reason — [RankState.busy] gates the gestures, so two taps in
  * quick succession cannot become two different actions racing on one token.
+ *
+ * ## The other rule: a gesture is aimed at the pair it started on, not the one current when it lands
+ *
+ * `busy` only stops one action from racing another. It says nothing about the gap between a finger
+ * touching the glass and that touch being turned into a call — a gap [refresh] deliberately keeps
+ * open (A10), and one that can be seconds wide for the pane menu. [act] takes the token the gesture
+ * was aimed at as a parameter and refuses to send if it no longer matches what is current — see its
+ * doc for the reasoning. This is a second, independent guard; it does not touch the retry rule above.
  */
 
 class RankViewModel(
@@ -50,13 +58,22 @@ class RankViewModel(
 
     // -- what the screen calls -------------------------------------------------------------------
 
-    fun vote(side: Side) = act { token, id -> client.vote(token, side.wire, id) }
+    /**
+     * [aimedAtToken] is the `pairToken` that was current when the gesture that led here began - a
+     * finger going down for a tap, a long press opening the pane menu - captured at the glass, not
+     * read fresh from [_state] at the moment the call is finally made. See [act] for what it is
+     * compared against and why (§ 1.3).
+     */
+    fun vote(side: Side, aimedAtToken: String? = null) =
+        act(aimedAtToken) { token, id -> client.vote(token, side.wire, id) }
 
-    fun skip() = act { token, id -> client.skip(token, id) }
+    fun skip() = act(null) { token, id -> client.skip(token, id) }
 
-    fun discard(side: Side) = act { token, id -> client.discard(token, side.wire, id) }
+    fun discard(side: Side, aimedAtToken: String? = null) =
+        act(aimedAtToken) { token, id -> client.discard(token, side.wire, id) }
 
-    fun special(side: Side) = act { token, id -> client.special(token, side.wire, id) }
+    fun special(side: Side, aimedAtToken: String? = null) =
+        act(aimedAtToken) { token, id -> client.special(token, side.wire, id) }
 
     /**
      * § 10.10. Takes no token — the action it reverses belongs to an earlier pair generation, so any
@@ -98,8 +115,14 @@ class RankViewModel(
 
         where.launch {
             when (val result = client.save()) {
-                is Rm2Result.Ok -> _state.update {
-                    it.copy(snapshot = result.value, busy = false, notice = "Saved")
+                // § 3.4: a slow save can land after something newer already moved the screen on,
+                // the same as any other action - see finish()'s own doc. Saving does not touch
+                // pairSeq itself, but the snapshot it carries does, and adopting it unconditionally
+                // would drag the screen backwards exactly as a stale vote's late answer could.
+                is Rm2Result.Ok -> if (isOlderThanHeld(result, _state.value.snapshot)) {
+                    _state.update { it.copy(busy = false) }
+                } else {
+                    _state.update { it.copy(snapshot = result.value, busy = false, notice = "Saved") }
                 }
                 else -> finish(result)
             }
@@ -181,8 +204,15 @@ class RankViewModel(
 
     fun view(side: Side?) = _state.update { it.copy(viewing = side, paneMenu = null) }
 
-    fun openPaneMenu(side: Side) = _state.update { it.copy(paneMenu = side) }
-    fun closePaneMenu() = _state.update { it.copy(paneMenu = null) }
+    /**
+     * [aimedAtToken] is the `pairToken` that was current at the moment of the long press that opened
+     * this menu - carried in [RankState.paneMenuToken] for as long as the menu stays open, so that
+     * Discard and Move to special can be checked against the pair the press was actually on (§ 1.3).
+     */
+    fun openPaneMenu(side: Side, aimedAtToken: String? = null) =
+        _state.update { it.copy(paneMenu = side, paneMenuToken = aimedAtToken) }
+
+    fun closePaneMenu() = _state.update { it.copy(paneMenu = null, paneMenuToken = null) }
     fun dismissNotice() = _state.update { it.copy(notice = null) }
     fun dismissProblem() = _state.update { if (it.problem?.fatal == true) it else it.copy(problem = null) }
 
@@ -200,13 +230,44 @@ class RankViewModel(
      * retry is the same logical action rather than a new one. Whichever way it lands, the server
      * answers with the state — a success carries the new snapshot, a `409 stale_pair_token` carries
      * the current one — so the screen never has to ask a second question to find out what happened.
+     *
+     * ## § 1.3: the pair the gesture was aimed at
+     *
+     * [aimedAtToken], when given, is the `pairToken` the caller captured at the finger - when a tap
+     * went down, or when a long press opened the pane menu - not the token read fresh here. Between
+     * that moment and this one a `refresh()` can land (the screen is deliberately not gated for a
+     * plain read, see [refresh]'s A10 note) and move the pair on. If it has, [current]'s token is no
+     * longer the one the gesture was aimed at, and sending anyway would apply the gesture to a
+     * picture the owner never looked at - for Discard, a picture moved out of the folder he did not
+     * choose. So: compare first, and if they disagree, send nothing. This is a guard *before* the
+     * retry machinery below ever starts, not a replacement for it - once a call is sent, the same
+     * token is retried in place exactly as § 13.3 requires; nothing here reopens that path.
+     *
+     * A null [aimedAtToken] means the caller has no gesture identity to check (there is no long-press
+     * menu for a plain vote to disagree with itself about, and callers that already know the token is
+     * current - like a fresh call built and sent in one place - have nothing to gain from repeating
+     * it). It is never used to bypass the check; it means the check does not apply.
      */
-    private fun act(send: suspend (token: String, requestId: String) -> Rm2Result<Snapshot>) {
+    private fun act(
+        aimedAtToken: String?,
+        send: suspend (token: String, requestId: String) -> Rm2Result<Snapshot>,
+    ) {
         val current = _state.value
         if (current.busy) return
         val token = current.snapshot?.pairToken ?: return
 
-        _state.update { it.copy(busy = true, paneMenu = null, notice = null) }
+        if (aimedAtToken != null && aimedAtToken != token) {
+            _state.update {
+                it.copy(
+                    paneMenu = null,
+                    paneMenuToken = null,
+                    notice = "That picture moved on — nothing was sent.",
+                )
+            }
+            return
+        }
+
+        _state.update { it.copy(busy = true, paneMenu = null, paneMenuToken = null, notice = null) }
 
         where.launch {
             val requestId = newRequestId()
@@ -232,7 +293,12 @@ class RankViewModel(
             result = send()
         }
         if (result is Rm2Result.Refused && result.code == ErrorCodes.SESSION_BUSY) {
-            delay((result.detailInt("retryAfterSeconds") ?: 1).coerceAtLeast(0) * 1000L)
+            // § 2.7: `retryAfterSeconds` is a number off the wire with no ceiling on this side.
+            // The server sends 1 today, but a wait this UI takes on faith - with `busy` held the
+            // whole time and nothing on screen to explain it - must not be able to freeze the
+            // screen for however long a server (buggy, or not the one he thinks it is) names.
+            val seconds = (result.detailInt("retryAfterSeconds") ?: 1).coerceIn(0, MAX_RETRY_AFTER_SECONDS)
+            delay(seconds * 1000L)
             result = send()
         }
         return result
@@ -248,8 +314,32 @@ class RankViewModel(
      * server correcting us for free (§ 8.5), not something the owner needs to read. Every other
      * refusal shows its text — and still adopts the snapshot it carried, when it carried one, so the
      * screen stays live under the problem panel rather than frozen on a pair that has moved on.
+     *
+     * § 2.6: "silent" only works because the server always attaches a snapshot to these two codes —
+     * the correction *is* the snapshot. If that snapshot could not be decoded (a schema drift
+     * between phone and server; the README says the three programs are updated separately and by
+     * hand), staying silent means nothing on screen changes and nothing is said about why — and
+     * every further tap meets the same stale token and does the same silent nothing, forever. So a
+     * silent code with no readable snapshot is not treated as silent: it falls back to [refresh], a
+     * plain read that is safe to run from here (A10) and gets a state worth showing instead of
+     * repeating a guess that already failed once.
+     *
+     * § 3.4: [resume] clears `busy` the moment the owner comes back to a folder whose view model was
+     * already holding one (A11) - it has no way to tell "that action was truly lost" from "that
+     * action is still genuinely in flight", and chooses never to leave the screen deaf over never
+     * risking this. So an action started before he backed out can still be running when he comes
+     * back and starts another one, and whichever answer lands *last* used to win regardless of which
+     * pair it was about - a vote's own late reply landing after a newer refresh or a newer action
+     * already moved the screen on. The same rule [refresh] already keeps for its own plain read
+     * (A10, via [isOlderThanHeld]) applies here: an answer for an older pair generation than what is
+     * already on screen clears `busy` - the coroutine that was waiting for it is done - and changes
+     * nothing else. It does not apply retroactively to anything already shown.
      */
     private fun finish(result: Rm2Result<Snapshot>, quiet: Boolean = false) {
+        if (isOlderThanHeld(result, _state.value.snapshot)) {
+            _state.update { it.copy(busy = false) }
+            return
+        }
         when (result) {
             is Rm2Result.Ok -> _state.update {
                 it.copy(
@@ -263,6 +353,11 @@ class RankViewModel(
             is Rm2Result.Refused -> {
                 val silent = result.code == ErrorCodes.STALE_PAIR_TOKEN ||
                     result.code == ErrorCodes.NO_CURRENT_PAIR
+                if (silent && result.session == null) {
+                    _state.update { it.copy(busy = false) }
+                    refresh()
+                    return
+                }
                 _state.update {
                     it.copy(
                         snapshot = result.session ?: it.snapshot,
@@ -346,5 +441,8 @@ class RankViewModel(
     companion object {
         fun factory(client: Rm2Client, opened: Snapshot): ViewModelProvider.Factory =
             viewModelFactory { initializer { RankViewModel(client, opened) } }
+
+        /** § 2.7's ceiling on `retryAfterSeconds` - see [sendWithRetries]. */
+        const val MAX_RETRY_AFTER_SECONDS = 30
     }
 }

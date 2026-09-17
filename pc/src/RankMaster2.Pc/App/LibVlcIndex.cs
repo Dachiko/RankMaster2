@@ -61,6 +61,36 @@ public static class LibVlcIndex
     public static void WriteStamp(string pluginsDir, string stampPath, string libvlcVersion) =>
         File.WriteAllText(stampPath, ComputeStamp(pluginsDir, libvlcVersion));
 
+    /// <summary>
+    /// AUDIT2.md § 3.6. A cheap, file-metadata-only stand-in for "which libvlc build is this",
+    /// usable <i>before</i> paying for a native load — which the actual runtime version string
+    /// (<c>LibVLC.Version</c>) cannot be, since LibVLCSharp only exposes it as an instance property
+    /// that requires constructing a <c>LibVLC</c> (the exact native init this stamp exists to
+    /// avoid). Confirmed on the shipped <c>videolan.libvlc.windows</c> 3.0.21 binary: it reports
+    /// itself at runtime as <c>"3.0.21 Vetinari"</c> (the codename is baked into both
+    /// <c>libvlc.dll</c> and <c>libvlccore.dll</c> as a literal string) — not the bare
+    /// <c>"3.0.21"</c> a caller would otherwise have to hard-code and hope matches. Fingerprinting
+    /// the two engine binaries' size and write time instead needs no such guess, and is exactly the
+    /// same signal <see cref="ComputeStamp"/> already trusts for every plugin DLL: if libvlc is
+    /// ever upgraded in place, these files change size or write time along with it.
+    /// </summary>
+    public static string DescribeLibVlcBuild(string nativeDir) =>
+        FingerprintFile(Path.Combine(nativeDir, "libvlc.dll")) + "|" +
+        FingerprintFile(Path.Combine(nativeDir, "libvlccore.dll"));
+
+    private static string FingerprintFile(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? $"{info.Length}:{info.LastWriteTimeUtc.Ticks}" : "absent";
+        }
+        catch (Exception)
+        {
+            return "unknown";
+        }
+    }
+
     /// <summary><c>RankMaster2.exe --build-vlc-cache</c>'s whole job (§ 4.3), returning the process
     /// exit code and the one line printed to stdout. Exit 2: <c>libvlc.dll</c> missing under
     /// <paramref name="nativeDir"/> (checked before any native call — the only branch the § 8 tests
@@ -100,11 +130,14 @@ public static class LibVlcIndex
                 catch { /* best-effort cleanup of a CacheSave temp file */ }
             }
 
-            WriteStamp(pluginsDir, Path.Combine(pluginsDir, StampName), version ?? "unknown");
+            // Stamped with the same file-fingerprint DescribeLibVlcBuild computes before any native
+            // call, not the runtime string (version, above) — so VideoEngineGate's next, cheap check
+            // agrees with what this expensive rebuild just wrote (§ 3.6).
+            WriteStamp(pluginsDir, Path.Combine(pluginsDir, StampName), DescribeLibVlcBuild(nativeDir));
 
             var bytes = new FileInfo(indexPath).Length;
             var plugins = Directory.EnumerateFiles(pluginsDir, "*.dll", SearchOption.AllDirectories).Count();
-            return new LibVlcIndexResult(0, $"plugins.dat {bytes} bytes, {plugins} plugins, {sw.ElapsedMilliseconds} ms");
+            return new LibVlcIndexResult(0, $"plugins.dat {bytes} bytes, {plugins} plugins, {sw.ElapsedMilliseconds} ms, libvlc {version}");
         }
         catch (Exception ex)
         {

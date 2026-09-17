@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.rankmaster2.phone.media.MediaCacheJanitor
 import com.rankmaster2.phone.net.Rm2Http
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -21,6 +22,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
+        // The owner's ask, 2026-09-17: nothing of his survives on disk while the app is not
+        // running. First, before anything opens either cache - see MediaCacheJanitor's own doc for
+        // why this is the call the guarantee actually rests on, and why it has to run before the
+        // next two lines rather than after them.
+        MediaCacheJanitor.wipeBeforeUse(this)
         // Before anything can ask for an HTTP client, because a client built without the cache
         // keeps not having one. This one line is what makes "each photograph crosses the network
         // once, ever" true rather than aspirational.
@@ -29,6 +35,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         goFullScreen()
         setContent { Rm2Theme { Rm2App(this) } }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // The ordinary-case half of the same guarantee: empties both caches in place while they
+        // are still open, so the gap between leaving the app and the next launch is small rather
+        // than however long it takes onCreate's own wipe, above, to run. Best-effort on purpose -
+        // Android can kill this process without ever calling onStop - which is exactly why that
+        // wipe, not this one, is what the guarantee is built on.
+        MediaCacheJanitor.wipeWhileRunning(this)
     }
 
     /**

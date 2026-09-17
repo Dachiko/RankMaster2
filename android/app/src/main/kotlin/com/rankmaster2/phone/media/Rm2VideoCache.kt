@@ -1,6 +1,7 @@
 package com.rankmaster2.phone.media
 
 import android.content.Context
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -45,4 +46,31 @@ object Rm2VideoCache {
             LeastRecentlyUsedCacheEvictor(MAX_BYTES),
             StandaloneDatabaseProvider(context.applicationContext),
         ).also { cache = it }
+
+    /**
+     * Empties the cache in place, one resource at a time, without releasing the directory lock
+     * this instance holds. The live-instance half of "nothing survives while the app is not
+     * running" (the owner's ask, 2026-09-17) - `MediaCacheJanitor.wipeBeforeUse` deletes the
+     * directory outright before anything has opened it, which is what actually holds against a
+     * killed process; this backs it up for the ordinary case, where something does get to run a
+     * shutdown path, and does it without the release-then-delete-then-reacquire dance that would
+     * risk a player mid-read finding its file gone out from under it.
+     *
+     * `removeResource` is the same call ordinary LRU eviction already makes when the cache fills,
+     * so running it over every key the cache currently has is that same, already-safe operation,
+     * exhaustively. A no-op if nothing has opened the cache yet - there is nothing to empty. One
+     * key's failure is logged and does not stop the rest from being removed, and does not stop
+     * this instance from going on serving the next video.
+     */
+    @Synchronized
+    fun evictAll() {
+        val live = cache ?: return
+        live.keys.toList().forEach { key ->
+            try {
+                live.removeResource(key)
+            } catch (e: Exception) {
+                Log.w("Rm2VideoCache", "could not remove cached video resource: $key", e)
+            }
+        }
+    }
 }

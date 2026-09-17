@@ -3,6 +3,8 @@ package com.rankmaster2.phone.net
 import com.rankmaster2.phone.store.ServerIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -48,6 +50,38 @@ class Rm2HttpCacheTest {
         Rm2Http.configure(root)
 
         assertEquals(java.io.File(root, "rm2-media"), Rm2Http.cacheDirectory())
+    }
+
+    // -- § 3.7 (second audit): re-pairing must not open a second cache on the same directory -------
+
+    @Test
+    fun `re-pairing the same PC reuses the same client rather than building a second one`() {
+        // Before this, the client map was keyed on (fingerprint, token) together, so a fresh token
+        // for a fingerprint this app already had a client for built a *second* client - and, since
+        // every client with a cache directory configured gets its own Cache object, a second Cache
+        // pointed at the directory the first one still had open. OkHttp documents that as
+        // corrupting. Keying on the fingerprint alone means re-pairing updates the one client's
+        // token instead of building another.
+        Rm2Http.configure(folder.newFolder("re-pair"))
+        val fingerprint = "sha256:" + "cd".repeat(32)
+        val beforeRepair = identity("token-before").copy(certificateFingerprint = fingerprint)
+        val afterRepair = identity("token-after").copy(certificateFingerprint = fingerprint)
+
+        val first = Rm2Http.client(beforeRepair)
+        val second = Rm2Http.client(afterRepair)
+
+        assertTrue("re-pairing must reuse the client, not build a second one", first === second)
+        assertTrue("the one client re-pairing reuses must still carry a cache", first.cache != null)
+        assertTrue("reusing the client means reusing its one Cache object too", first.cache === second.cache)
+    }
+
+    @Test
+    fun `the pairing client carries no cache, so it can never be the second one on the directory`() {
+        Rm2Http.configure(folder.newFolder("pairing-no-cache"))
+
+        val pairing = Rm2Http.pairingClient("sha256:" + "11".repeat(32))
+
+        assertNull("pairing never touches a photograph and must not risk a second Cache", pairing.cache)
     }
 
     @Test

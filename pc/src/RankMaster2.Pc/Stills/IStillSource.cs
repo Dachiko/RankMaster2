@@ -60,9 +60,12 @@ public abstract record StillState
     public sealed record Pending : StillState;
 
     /// <summary>
-    /// Pixels exist. The lease MUST be disposed by E once its bitmap copy is made (a `using` inside
-    /// the handler is the expected shape). The buffer stays valid until the last lease is gone even
-    /// if the cache has evicted the frame meanwhile.
+    /// Pixels exist. The lease is E's, and E MUST dispose it -- when it is finished with the frame,
+    /// which for a pane is when that pane stops showing it, not when the first bitmap copy is made
+    /// (a pane kept for the next pair goes on being repainted from the same lease). A delivery E
+    /// does not take up at all is disposed on the spot. The buffer stays valid until the last lease
+    /// is gone even if the cache has evicted the frame meanwhile -- which is the whole point: it is
+    /// what lets a pane keep painting while C re-decodes the same id at a new pane size.
     /// </summary>
     public sealed record Ready(StillLease Lease) : StillState;
 

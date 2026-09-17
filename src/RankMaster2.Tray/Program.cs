@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -60,10 +59,17 @@ internal static class Program
         }
         catch (Exception e)
         {
-            // Almost always the port already being held, or a data directory that cannot be
-            // written. Both are things the owner can fix, and neither is visible without a window.
+            // AUDIT2.md § 2.3: this used to guess "another copy already running" for every
+            // SocketException-or-IOException, which is wrong for two of the five ways startup can
+            // fail (an unreadable certificate, an unwritable data directory) and sent the owner
+            // looking for a second copy of the program that did not exist. Rm2Host.DescribeStartupFailure
+            // is shared with the console host so the two never disagree about the same failure, and it
+            // only names a cause it can actually support from the exception — never a guess.
+            var detail = Rm2Host.DescribeStartupFailure(e);
+            TryLogStartupFailure(dataDirectory, e, detail);
+
             MessageBox.Show(
-                "Rank Master 3 could not start.\n\n" + Describe(e),
+                detail,
                 "Rank Master 3", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
@@ -86,14 +92,26 @@ internal static class Program
         return 0;
     }
 
-    private static string Describe(Exception e)
+    /// <summary>
+    /// SERVER_RUNNING.md § 12's last resort is "Nothing to go on → logs\server-*.log" — but a
+    /// start-up failure this early never reaches the point where the server's own logger is wired
+    /// up, so without this the log would be silent about the one thing he most needs it for. Uses
+    /// the same <see cref="FileLoggerProvider"/> and the same file-per-day naming as a normal run,
+    /// so it is the same log SERVER_RUNNING.md already points him to — not a second, undocumented one.
+    /// Never throws: a crash dialog that itself crashes would be a worse trade than no log line.
+    /// </summary>
+    private static void TryLogStartupFailure(string dataDirectory, Exception e, string detail)
     {
-        var inner = e;
-        while (inner.InnerException is not null)
-            inner = inner.InnerException;
+        if (string.IsNullOrWhiteSpace(dataDirectory)) return;
 
-        return inner is SocketException or IOException
-            ? inner.Message + "\n\nIs another copy of the server already running?"
-            : inner.Message;
+        try
+        {
+            using var provider = new FileLoggerProvider(Path.Combine(dataDirectory, "logs"));
+            var logger = provider.CreateLogger("Startup");
+            logger.LogCritical(e, "{Detail}", detail);
+        }
+        catch (Exception)
+        {
+        }
     }
 }

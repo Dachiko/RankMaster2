@@ -11,6 +11,7 @@ import com.rankmaster2.phone.net.Roots
 import com.rankmaster2.phone.net.Snapshot
 import com.rankmaster2.phone.store.ServerIdentity
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
@@ -57,6 +58,11 @@ import okhttp3.Response
 class OkHttpRm2Client(
     override val baseUrl: String,
     private val http: OkHttpClient,
+    /**
+     * § 2.7. Overridable only so a test can prove the bound actually fires without waiting out the
+     * real one - production code never passes this.
+     */
+    callTimeoutSeconds: Long = CALL_TIMEOUT_SECONDS,
 ) : Rm2Client {
 
     /**
@@ -65,6 +71,21 @@ class OkHttpRm2Client(
      * [Rm2Http.pairingClient] to the primary constructor instead.
      */
     constructor(identity: ServerIdentity) : this(identity.baseUrl, Rm2Http.client(identity))
+
+    /**
+     * [http], with one bound added that only these JSON calls get: a ceiling on the *whole* call -
+     * connect, write, server time and read together - rather than [http]'s own per-phase timeouts
+     * (§ 2.7, the second audit). `readTimeout` alone lets a PC that accepts the connection and then
+     * stalls hold a call open for 30 s, and [sendWithRetries] resends once, so a single tap could
+     * cost a full minute of a screen that shows nothing for it - no spinner, `busy` just staying
+     * true. `newBuilder()` shares [http]'s connection pool, dispatcher and disk cache; it does not
+     * touch [http] itself, so the image loader and the video player - which read this same client
+     * from [Rm2Http] and need their own, much longer-lived timeouts for a big photograph or a
+     * playing video - are untouched.
+     */
+    private val bounded = http.newBuilder()
+        .callTimeout(callTimeoutSeconds, TimeUnit.SECONDS)
+        .build()
 
     /** `https://host:port`, with no path. What a `links.*` value is appended to, verbatim (§ 9.3). */
     private val origin: String = originOf(baseUrl)
@@ -170,7 +191,7 @@ class OkHttpRm2Client(
      */
     private suspend fun <T> call(request: Request, decode: (String) -> T): Rm2Result<T> {
         val response = try {
-            http.newCall(request).await()
+            bounded.newCall(request).await()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -264,6 +285,16 @@ class OkHttpRm2Client(
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * § 2.7: how long one JSON call may run before it counts as unreachable. Every call this
+         * client measured - a vote, a save, a session read - lands in well under a second on a LAN;
+         * twelve seconds is generous room for a slow disk on the PC's own save
+         * (`SessionRegistry.AfterChoice` writes synchronously on every fifth choice) while still
+         * being far short of the 30 s `readTimeout` [Rm2Http] sets for the image and video traffic
+         * that share its connection pool but not this bound.
+         */
+        const val CALL_TIMEOUT_SECONDS = 12L
 
         /**
          * § 2: the server ignores unknown request fields and reserves the right to add response

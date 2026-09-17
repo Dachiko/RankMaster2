@@ -28,6 +28,14 @@ public sealed class FakeSessionLink : ISessionLink
     /// Defaults to Applied(Snapshot) (or a NotSent(NoSession) if Snapshot is null) when empty.</summary>
     public Queue<ActionResult> ActionResults { get; } = new();
 
+    /// <summary>Set to make every action complete on a thread-pool thread instead of synchronously,
+    /// as a real HTTP call does. That is what makes the UI-thread rule of AUDIT2.md § 4.5 observable:
+    /// with a synchronous fake, the continuation is always already on the caller's thread and any
+    /// missing marshalling is invisible.</summary>
+    public bool CompleteOffThread { get; set; }
+
+    private Task<T> Complete<T>(T value) => CompleteOffThread ? Task.Run(() => value) : Task.FromResult(value);
+
     public Task<ConnectResult> ConnectAsync(CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(ConnectAsync), null, null));
@@ -45,44 +53,44 @@ public sealed class FakeSessionLink : ISessionLink
     public Task<ActionResult> VoteAsync(Side winner, long onPairSeq, CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(VoteAsync), winner, onPairSeq));
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task<ActionResult> SkipAsync(long onPairSeq, CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(SkipAsync), null, onPairSeq));
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task<ActionResult> DiscardAsync(Side side, long onPairSeq, CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(DiscardAsync), side, onPairSeq));
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task<ActionResult> SpecialAsync(Side side, long onPairSeq, CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(SpecialAsync), side, onPairSeq));
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task<ActionResult> UndoAsync(CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(UndoAsync), null, null));
         if (UndoThrows is { } ex) throw ex;
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task<ActionResult> SaveAsync(CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(SaveAsync), null, null));
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task<ActionResult> RefreshAsync(CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(RefreshAsync), null, null));
-        return Task.FromResult(NextActionResult());
+        return Complete(NextActionResult());
     }
 
     public Task CloseAsync(CancellationToken ct = default)

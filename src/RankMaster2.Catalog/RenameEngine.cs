@@ -449,9 +449,16 @@ public static class RenameEngine
                 // fix — Reunite simply has no row for it, and that rating is the one honest loss the
                 // design accepts (the image itself no longer exists either).
             }
-            catch (IOException)
+            catch (Exception)
             {
                 // Best effort: leave this entry at whatever name it holds. Reunite still finds it.
+                // Deliberately catches every exception, not just IOException: an access-denied move
+                // (UnauthorizedAccessException — an ACL-denied file or folder, the realistic Windows
+                // trigger) must be swallowed exactly like a locked file, or this "any failure is
+                // swallowed" promise is false for the one case that matters most, and the exception
+                // walks out of here, out of RecoverIfPresent, and — since this runs from inside
+                // SessionRegistry's own catch block — out of the rename task entirely, wedging the
+                // session until a restart (AUDIT2.md § 2.2).
             }
         }
     }

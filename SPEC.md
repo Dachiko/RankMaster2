@@ -146,6 +146,8 @@ File: `<folder>/rankmaster_db.json`
 - Move with a unique name on collision (`name (2).ext`, …).
 - Before move: `Pipeline.Release` the id, wait until the OS lock is gone, then `File.Move`.
 - After move: drop the id from Ranking/Catalog, if the current or any queued pair contains it, throw that pair away and refill, then save.
+- **The rating travels with the photograph.** After the library's own save, the moved file's row is written into the subfolder's own `rankmaster_db.json` — an ordinary v1 database in an ordinary folder, so `discarded/` or `special 1/` can be opened and ranked like any other folder, and Rank Master 2 reads it unchanged. The owner's reason (2026-09-17): he opens `discarded/` to check whether he threw something away by mistake, and `special 1/` is where his *best* pictures go, so those are the files whose ratings cost the most comparisons to earn. Written last, deliberately: the library's own database is the one that must be right, and a failure writing the second one can never damage the first.
+- **Undo removes the row again.** Once the file is back in the library, the subfolder's database is rebuilt from what is actually there, which drops the stale row. That half is best-effort — the rating is already safely back, so a leftover row is untidiness rather than loss.
 - **Undo** restores only the most recent successful move (file back + catalog row). No undo stack. The desktop app's `Ctrl+Z` is move-only and stays that way; the engine's wider one-level undo (see Ranking) is used by the server, where a mis-tap on a phone can cast a vote nobody meant.
 - v1 only *creates* `special 1`. Do not create `special 2` until we ask.
 

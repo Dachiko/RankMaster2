@@ -109,6 +109,73 @@ class Rm2VideoPlayersTest {
         assertTrue(!second.isReleased)
     }
 
+    // -- § 2.5 (second audit): a pane that is not playing must hold no player at all -------------
+
+    @Test
+    fun `a slot's sync releases the player outright when the pane stops playing, not merely pauses it`() {
+        // Before this, a covered pane (the full-screen viewer open over it) or a backgrounded app
+        // kept its player alive, paused - "not in front means black, not gone", per MediaPane's own
+        // old comment. That was fine for one covered pane; it stopped being fine the moment the
+        // full-screen viewer built a *second* player for the same file on top of it. Four players
+        // at 32 MB each is the number MEMORY_PROPOSALS.md says already killed the app twice.
+        var built = 0
+        val slot = players().Slot { _, _ -> built++; Rm2VideoPlayers.testVideo() }
+        val ref = MediaFixtures.video("a.mp4")
+
+        val playing = slot.sync(ref, playing = true)
+        requireNotNull(playing)
+        assertTrue(!playing.isReleased)
+        assertEquals(1, built)
+
+        val covered = slot.sync(ref, playing = false)
+        assertNull("a pane that is not playing must hold no player at all", covered)
+        assertTrue("its player must actually be released, not merely paused", playing.isReleased)
+
+        // Staying not-playing must not build another one behind the scenes.
+        slot.sync(ref, playing = false)
+        assertEquals(1, built)
+
+        val resumed = slot.sync(ref, playing = true)
+        requireNotNull(resumed)
+        assertTrue(!resumed.isReleased)
+        assertEquals("resuming builds a fresh player - it does not resurrect the released one", 2, built)
+    }
+
+    @Test
+    fun `two panes each releasing on cover leaves the ceiling this app's memory budget assumes`() {
+        // The scenario the audit measured: the ranking screen's two panes plus the full-screen
+        // viewer's own player for whichever one it is showing. With `sync`, a covered ranking-screen
+        // pane holds nothing, so the worst case is the viewer's one player for the pane it shows -
+        // never the four that stacked up when covered panes kept theirs.
+        val leftSlot = players().Slot { _, _ -> Rm2VideoPlayers.testVideo() }
+        val rightSlot = players().Slot { _, _ -> Rm2VideoPlayers.testVideo() }
+        val viewerSlot = players().Slot { _, _ -> Rm2VideoPlayers.testVideo() }
+        val left = MediaFixtures.video("left.mp4")
+        val right = MediaFixtures.video("right.mp4")
+
+        // Ranking screen, both panes playing normally.
+        val leftPlaying = leftSlot.sync(left, playing = true)
+        val rightPlaying = rightSlot.sync(right, playing = true)
+        requireNotNull(leftPlaying)
+        requireNotNull(rightPlaying)
+
+        // The owner long-presses and opens the full-screen viewer on the left photograph: the
+        // ranking screen's panes are covered, and the viewer builds its own player for the one it
+        // shows.
+        val leftCovered = leftSlot.sync(left, playing = false)
+        val rightCovered = rightSlot.sync(right, playing = false)
+        val viewerPlaying = viewerSlot.sync(left, playing = true)
+
+        assertNull(leftCovered)
+        assertNull(rightCovered)
+        requireNotNull(viewerPlaying)
+        assertTrue("the ranking screen's left pane must have let its player go", leftPlaying.isReleased)
+        assertTrue("the ranking screen's right pane must have let its player go", rightPlaying.isReleased)
+
+        val liveAtOnce = listOf(leftPlaying, rightPlaying, viewerPlaying).count { !it.isReleased }
+        assertEquals("only the viewer's one player may be live while it is open", 1, liveAtOnce)
+    }
+
     @Test
     fun `a slot releases its player on release, and a second release is a no-op`() {
         val video = Rm2VideoPlayers.testVideo()

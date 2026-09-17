@@ -1,6 +1,10 @@
 package com.rankmaster2.phone.media
 
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.Cache
 import okhttp3.OkHttpClient
@@ -182,5 +186,42 @@ class MediaPrefetcherTest {
 
         assertEquals("the second one still warms", 1, prefetcher().warm(pairs, panePx = 1080))
         assertEquals(2, server.requestCount)
+    }
+
+    // -- § 3.8 (second audit): a cancelled warm-up must actually stop downloading ------------------
+
+    @Test
+    fun `cancelling the warm-up stops the download instead of finishing it in the background`() = runBlocking {
+        // Before this, `fetch` blocked on `Call.execute()`, which nothing about coroutine
+        // cancellation can interrupt once it is under way - `ensureActive` in `warm` only ever
+        // caught the gap *between* URLs. So a vote that superseded this warm-up (a fresh
+        // `LaunchedEffect` key cancelling the old job) left the download running to completion on
+        // the same Wi-Fi the picture now on screen needed. Proven by timing: a body slow enough to
+        // take over three seconds in full, cancelled after 150 ms, must not make the job run
+        // anywhere near that long - only a call that is actually aborted, not merely abandoned,
+        // returns this fast.
+        server.shutdown()
+        server = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    MediaFixtures.stillResponse()
+                        .setBody(okio.Buffer().write(ByteArray(64 * 1024)))
+                        .throttleBody(2 * 1024, 100, TimeUnit.MILLISECONDS)
+            }
+            start()
+        }
+        baseUrl = server.url("/api/v1").toString()
+        val warm = MediaFixtures.pair(MediaFixtures.still("slow.jpg"), MediaFixtures.still("other.jpg"))
+
+        val startedAt = System.nanoTime()
+        val job = launch { prefetcher().warm(listOf(warm), panePx = 1080) }
+        delay(150) // well inside the ~3.2 s the full 64 KB body takes at this throttle
+        job.cancelAndJoin()
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+        assertTrue(
+            "elapsed was ${elapsedMs}ms - a cancelled download must not run anywhere near to completion",
+            elapsedMs < 1500,
+        )
     }
 }

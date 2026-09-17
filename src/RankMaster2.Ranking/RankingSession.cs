@@ -8,11 +8,14 @@ public sealed class RankingSession
     private readonly int _prefetchPairs;
     private readonly bool _saveOnChoice;
     /// <summary>
-    /// Not readonly, and never rebuilt in place. Every wholesale replacement — a scan, a resync, a
-    /// rollback — builds a complete new list and assigns it in one reference write, because the
-    /// media layer reads this collection without the session gate (SERVER_SPEC.md § 11.3). A
-    /// <c>Clear()</c> followed by an <c>AddRange()</c> gives that reader a window on an empty or
-    /// half-filled list; a reference swap gives it either the old list or the new one, both whole.
+    /// Not readonly, and never mutated in place — not even to add or drop a single record. Every
+    /// change of membership — a scan, a resync, a rollback, a discard, a restore — builds a complete
+    /// new list and assigns it in one reference write, because the media layer reads this collection
+    /// without the session gate (SERVER_SPEC.md § 11.3). A <c>Clear()</c>/<c>AddRange()</c>,
+    /// <c>RemoveAt</c> or in-place <c>Add</c> gives that reader a window on an empty, half-filled or
+    /// shrunk-under-it list — <c>Enumerable.ToArray()</c> reads <c>Count</c>, allocates, then
+    /// <c>CopyTo</c>, and a list that shrinks between those steps hands it a trailing null
+    /// (AUDIT2.md § 1.5); a reference swap gives it either the old list or the new one, both whole.
     /// </summary>
     private List<MediaRecord> _records = [];
     private readonly Queue<MediaId> _recentOrder = new();
@@ -192,7 +195,12 @@ public sealed class RankingSession
         _undo = null;
 
         var removed = _records[i];
-        _records.RemoveAt(i);
+        // A reference swap, not RemoveAt: the media layer reads Records off the session gate
+        // (SERVER_SPEC.md § 11.3, and the invariant this field's own doc comment states). RemoveAt
+        // shrinks the list in place, and a concurrent Enumerable.ToArray() that has already read the
+        // old, larger Count can be handed a trailing null when CopyTo runs against the now-shorter
+        // list (AUDIT2.md § 1.5).
+        _records = _records.Where(r => r.Id != id).ToList();
         _recent.Remove(id);
 
         var warmKept = new Queue<Pair>();
@@ -228,7 +236,9 @@ public sealed class RankingSession
         if (_records.Any(r => r.Id == record.Id))
             return;
         _undo = null;
-        _records.Add(record);
+        // Same reference-swap requirement as Drop — see the note there and the invariant on the
+        // _records field itself (AUDIT2.md § 1.5).
+        _records = [.. _records, record];
         // Same rule as after a vote/skip: clear Current first so a 2-3 file
         // library can pair again instead of staying reserved.
         Current = null;

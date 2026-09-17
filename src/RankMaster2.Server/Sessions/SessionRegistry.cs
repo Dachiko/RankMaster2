@@ -53,7 +53,6 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
 
     private OpenSession? _open;
     private RenameRun? _rename;
-    private bool _disposed;
 
     // The bounded write-behind (SERVER_SPEC.md § 13.1). Not readonly: a host binds them from
     // configuration through ApplyDurabilityOptions before it serves anything.
@@ -1096,12 +1095,38 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
     }
 
     /// <summary>
+    /// The outer guard around <see cref="RunRenameCoreAsync"/> (AUDIT2.md § 2.2). This runs
+    /// fire-and-forget from <c>Task.Run</c> — nobody awaits it — so any exception that reaches here
+    /// unhandled would fault the task silently and leave <c>open.RenameInProgress</c> set for the
+    /// life of the process: every vote, skip, discard, undo and even cancel refused for ever,
+    /// curable only by restarting the server. <see cref="RunRenameCoreAsync"/> already recovers from
+    /// every failure it knows about; this catch exists for the ones it does not — a second,
+    /// unrelated fault inside the recovery path itself (a folder that is still unwritable when
+    /// <c>RecoverIfPresent</c> is retried, say). There is nothing left to try at that point, so this
+    /// does not attempt recovery again: it just tells the truth (we do not know whether the files
+    /// reunited) and, critically, still clears the flag and gives the run a terminus, so the session
+    /// takes votes again and a cancel that raced the fault is not left watching "cancelling" for
+    /// ever.
+    /// </summary>
+    private async Task RunRenameAsync(OpenSession open, RenameRun run)
+    {
+        try
+        {
+            await RunRenameCoreAsync(open, run);
+        }
+        catch (Exception)
+        {
+            await FailAndResyncAsync(open, run, reunited: false, RenameEngine.JournalPath(open.Folder));
+        }
+    }
+
+    /// <summary>
     /// The live forward operation (§ 3.3), off the session lock: one move phase, the commit, the
     /// journal delete (the commit point), then the apply back under the lock. Cancellation is polled
     /// before every move and between the retries of a move waiting on a locked file; once the commit
     /// has begun it is too late (§ 3.5) and the run always finishes to a terminus.
     /// </summary>
-    private async Task RunRenameAsync(OpenSession open, RenameRun run)
+    private async Task RunRenameCoreAsync(OpenSession open, RenameRun run)
     {
         var plan = run.Plan;
 
@@ -1321,18 +1346,22 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
     /// <para>The semaphore is deliberately not disposed. This type has a process-wide
     /// <see cref="Shared"/> instance that more than one host can reach, and a disposed semaphore
     /// turns a later request into an <c>ObjectDisposedException</c> rather than an honest answer;
-    /// the handle it would release costs nothing at exit. Idempotent.</para>
+    /// the handle it would release costs nothing at exit. Idempotent, and deliberately not guarded
+    /// by a one-shot "already disposed" flag: <see cref="Shared"/> is a single process-wide instance
+    /// that a rebuilt host (the test harnesses do this) can dispose, reopen a session on and serve
+    /// requests from again, then dispose a second time. A flag that only let this body run once
+    /// would leave that second, entirely real shutdown's unsaved choices unflushed
+    /// (AUDIT2.md § 4.2). Every step below is already safe to repeat on a registry with nothing
+    /// open — the flush is skipped when there is nothing unsaved, and <c>Lock.Dispose()</c> and
+    /// closing an already-null session are both no-ops — so nothing here needs the flag either.
+    /// </para>
     /// </summary>
     public void Dispose()
     {
-        // Stopped first, and outside the _disposed guard: a host that was rebuilt after an earlier
-        // Dispose has a live timer again (EnsureFlushLoop runs on every open), and leaving it
-        // ticking against a registry nobody serves from is a background task with no owner.
+        // A host that was rebuilt after an earlier Dispose has a live timer again (EnsureFlushLoop
+        // runs on every open), and leaving it ticking against a registry nobody serves from is a
+        // background task with no owner.
         StopFlushLoop();
-
-        if (_disposed)
-            return;
-        _disposed = true;
 
         var open = _open;
 

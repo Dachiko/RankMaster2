@@ -55,11 +55,23 @@ internal sealed class StillDecoder : IStillDecoder
     private static readonly SKSamplingOptions Exact = new(SKFilterMode.Nearest, SKMipmapMode.None);
 
     private readonly DecodeBudget _budget;
+    private readonly DecodeRoom _room;
 
-    public StillDecoder(DecodeBudget budget) => _budget = budget;
+    public StillDecoder(DecodeBudget budget) : this(budget, new DecodeRoom(budget))
+    {
+    }
+
+    internal StillDecoder(DecodeBudget budget, DecodeRoom room)
+    {
+        _budget = budget;
+        _room = room;
+    }
 
     /// <summary>The ceiling every decode runs under. Tests measure against this.</summary>
     public DecodeBudget Budget => _budget;
+
+    /// <summary>The admission gate the two decode workers share (plan § 3.3 / AUDIT2.md § 2.1).</summary>
+    internal DecodeRoom Room => _room;
 
     public DecodeResult Decode(string path, int paneW, int paneH)
     {
@@ -128,6 +140,9 @@ internal sealed class StillDecoder : IStillDecoder
         // Step 3: target long edge (orientation-proof -- the same number either way round).
         var target = Math.Max(fitW, fitH);
 
+        // What the finished frame will cost, whichever way round it ends up.
+        var frameBytes = (long)fitW * fitH * 4;
+
         // Step 4: ask the codec for a decode size at or above the target.
         var scaled = DecodeGeometry.ChooseScaledDimensions(codec, target);
 
@@ -143,20 +158,13 @@ internal sealed class StillDecoder : IStillDecoder
         RawOutcome outcome;
         string? failDetail;
 
+        // Plan § 3.3 / AUDIT2.md § 2.1: claim this decode's whole worst-case peak before allocating
+        // any of it, waiting for the other worker's decode if the two would not fit at once. Taken
+        // while holding nothing, so a wait here can never be half of a deadlock; released in the
+        // finally below, whatever happens.
+        var reservation = Reserve(id, info, Peak(decodeInfo, storedFitW, storedFitH, frameBytes, origin));
         try
         {
-            outcome = DecodeRaw(codec, decodeInfo, id, out rawBuffer, out rawBitmap, out isPartial, out failDetail);
-        }
-        catch (DecodeBudgetExceededException)
-        {
-            throw TooLarge(id, info);
-        }
-
-        if (outcome == RawOutcome.InvalidScale)
-        {
-            // The codec lied about being able to produce `scaled` (measured: PNG/BMP always do
-            // this -- they only ever decode at source size). Retry once at full stored size.
-            decodeInfo = decodeInfo.WithSize(info.Width, info.Height);
             try
             {
                 outcome = DecodeRaw(codec, decodeInfo, id, out rawBuffer, out rawBitmap, out isPartial, out failDetail);
@@ -165,105 +173,162 @@ internal sealed class StillDecoder : IStillDecoder
             {
                 throw TooLarge(id, info);
             }
-        }
 
-        if (outcome == RawOutcome.Failed)
-            throw new NotAnImageException(failDetail!);
+            if (outcome == RawOutcome.InvalidScale)
+            {
+                // The codec lied about being able to produce `scaled` (measured: PNG/BMP always do
+                // this -- they only ever decode at source size). Retry once at full stored size --
+                // which needs more room, so the reservation is re-taken at the bigger figure. Nothing
+                // of this decode's is allocated at this point (DecodeRaw frees its buffer before
+                // reporting InvalidScale), so giving the smaller reservation back and queueing again
+                // for a larger one is as safe as the first claim was.
+                decodeInfo = decodeInfo.WithSize(info.Width, info.Height);
+                reservation.Dispose();
+                reservation = Reserve(id, info, Peak(decodeInfo, storedFitW, storedFitH, frameBytes, origin));
+                try
+                {
+                    outcome = DecodeRaw(codec, decodeInfo, id, out rawBuffer, out rawBitmap, out isPartial, out failDetail);
+                }
+                catch (DecodeBudgetExceededException)
+                {
+                    throw TooLarge(id, info);
+                }
+            }
 
-        // Step 6: downscale to the stored-orientation fit, if the decode came out bigger.
-        BudgetedBuffer fitBuffer;
-        SKBitmap fitBitmap;
-        if (decodeInfo.Width == storedFitW && decodeInfo.Height == storedFitH)
-        {
-            fitBuffer = rawBuffer!;
-            fitBitmap = rawBitmap!;
-        }
-        else
-        {
-            var fitInfo = new SKImageInfo(storedFitW, storedFitH, SKColorType.Bgra8888, SKAlphaType.Premul, srgb);
+            if (outcome == RawOutcome.Failed)
+                throw new NotAnImageException(failDetail!);
+
+            // Step 6: downscale to the stored-orientation fit, if the decode came out bigger.
+            BudgetedBuffer fitBuffer;
+            SKBitmap fitBitmap;
+            if (decodeInfo.Width == storedFitW && decodeInfo.Height == storedFitH)
+            {
+                fitBuffer = rawBuffer!;
+                fitBitmap = rawBitmap!;
+            }
+            else
+            {
+                var fitInfo = new SKImageInfo(storedFitW, storedFitH, SKColorType.Bgra8888, SKAlphaType.Premul, srgb);
+                try
+                {
+                    fitBuffer = _budget.Allocate(fitInfo.BytesSize64);
+                }
+                catch (DecodeBudgetExceededException)
+                {
+                    rawBitmap!.Dispose();
+                    rawBuffer!.Dispose();
+                    throw TooLarge(id, info);
+                }
+
+                fitBitmap = new SKBitmap();
+                try
+                {
+                    if (!fitBitmap.InstallPixels(fitInfo, fitBuffer.Pointer, fitInfo.RowBytes))
+                        throw new NotAnImageException($"{id}: could not install a resample buffer.");
+
+                    using var destination = fitBitmap.PeekPixels();
+                    if (!rawBitmap!.ScalePixels(destination, Downscale))
+                        throw new NotAnImageException($"{id}: could not resample.");
+                }
+                catch
+                {
+                    fitBitmap.Dispose();
+                    fitBuffer.Dispose();
+                    throw;
+                }
+                finally
+                {
+                    // The decode buffer is the big one; free it before the orientation buffer (if
+                    // any) is taken, so peak memory is decodeBuffer+fitBuffer, then fitBuffer+
+                    // orientedBuffer, never all three at once (plan section 3.1, final paragraph).
+                    rawBitmap!.Dispose();
+                    rawBuffer!.Dispose();
+                }
+            }
+
+            // Step 7: orient.
+            if (origin is SKEncodedOrigin.TopLeft or SKEncodedOrigin.Default)
+            {
+                fitBitmap.Dispose(); // the SKBitmap wrapper only; fitBuffer's native memory is the frame's
+                return DecodeResult.Ok(new StillFrame(id, fitBuffer, fitW, fitH, srcW, srcH, isPartial));
+            }
+
+            var orientedInfo = new SKImageInfo(fitW, fitH, SKColorType.Bgra8888, SKAlphaType.Premul, srgb);
+            BudgetedBuffer orientedBuffer;
             try
             {
-                fitBuffer = _budget.Allocate(fitInfo.BytesSize64);
+                orientedBuffer = _budget.Allocate(orientedInfo.BytesSize64);
             }
             catch (DecodeBudgetExceededException)
             {
-                rawBitmap!.Dispose();
-                rawBuffer!.Dispose();
+                fitBitmap.Dispose();
+                fitBuffer.Dispose();
                 throw TooLarge(id, info);
             }
 
-            fitBitmap = new SKBitmap();
             try
             {
-                if (!fitBitmap.InstallPixels(fitInfo, fitBuffer.Pointer, fitInfo.RowBytes))
-                    throw new NotAnImageException($"{id}: could not install a resample buffer.");
+                using var surface = SKSurface.Create(orientedInfo, orientedBuffer.Pointer, orientedInfo.RowBytes)
+                    ?? throw new NotAnImageException($"{id}: could not create an orientation surface.");
 
-                using var destination = fitBitmap.PeekPixels();
-                if (!rawBitmap!.ScalePixels(destination, Downscale))
-                    throw new NotAnImageException($"{id}: could not resample.");
+                var canvas = surface.Canvas;
+                canvas.Clear(SKColors.Transparent);
+                canvas.SetMatrix(DecodeGeometry.OrientationMatrix(origin, storedFitW, storedFitH));
+
+                fitBitmap.SetImmutable();
+                using var image = SKImage.FromBitmap(fitBitmap);
+                canvas.DrawImage(image, 0, 0, Exact, paint: null);
+                canvas.Flush();
             }
             catch
             {
-                fitBitmap.Dispose();
-                fitBuffer.Dispose();
+                orientedBuffer.Dispose();
                 throw;
             }
             finally
             {
-                // The decode buffer is the big one; free it before the orientation buffer (if
-                // any) is taken, so peak memory is decodeBuffer+fitBuffer, then fitBuffer+
-                // orientedBuffer, never all three at once (plan section 3.1, final paragraph).
-                rawBitmap!.Dispose();
-                rawBuffer!.Dispose();
+                fitBitmap.Dispose();
+                fitBuffer.Dispose();
             }
-        }
 
-        // Step 7: orient.
-        if (origin is SKEncodedOrigin.TopLeft or SKEncodedOrigin.Default)
-        {
-            fitBitmap.Dispose(); // the SKBitmap wrapper only; fitBuffer's native memory is the frame's
-            return DecodeResult.Ok(new StillFrame(id, fitBuffer, fitW, fitH, srcW, srcH, isPartial));
-        }
-
-        var orientedInfo = new SKImageInfo(fitW, fitH, SKColorType.Bgra8888, SKAlphaType.Premul, srgb);
-        BudgetedBuffer orientedBuffer;
-        try
-        {
-            orientedBuffer = _budget.Allocate(orientedInfo.BytesSize64);
-        }
-        catch (DecodeBudgetExceededException)
-        {
-            fitBitmap.Dispose();
-            fitBuffer.Dispose();
-            throw TooLarge(id, info);
-        }
-
-        try
-        {
-            using var surface = SKSurface.Create(orientedInfo, orientedBuffer.Pointer, orientedInfo.RowBytes)
-                ?? throw new NotAnImageException($"{id}: could not create an orientation surface.");
-
-            var canvas = surface.Canvas;
-            canvas.Clear(SKColors.Transparent);
-            canvas.SetMatrix(DecodeGeometry.OrientationMatrix(origin, storedFitW, storedFitH));
-
-            fitBitmap.SetImmutable();
-            using var image = SKImage.FromBitmap(fitBitmap);
-            canvas.DrawImage(image, 0, 0, Exact, paint: null);
-            canvas.Flush();
-        }
-        catch
-        {
-            orientedBuffer.Dispose();
-            throw;
+            return DecodeResult.Ok(new StillFrame(id, orientedBuffer, fitW, fitH, srcW, srcH, isPartial));
         }
         finally
         {
-            fitBitmap.Dispose();
-            fitBuffer.Dispose();
+            reservation.Dispose();
         }
+    }
 
-        return DecodeResult.Ok(new StillFrame(id, orientedBuffer, fitW, fitH, srcW, srcH, isPartial));
+    /// <summary>
+    /// The most pixel memory this decode can hold at once, exactly: the decode buffer, plus the
+    /// resample buffer when the decode does not land on the fit already (step 6 holds both), or
+    /// twice the frame when the only extra buffer is the orientation surface (step 7 holds the fit
+    /// and the oriented one together, and the decode buffer is freed before it).
+    /// </summary>
+    private static long Peak(SKImageInfo decodeInfo, int storedFitW, int storedFitH, long frameBytes, SKEncodedOrigin origin)
+    {
+        var rawBytes = decodeInfo.BytesSize64;
+        var needsResample = decodeInfo.Width != storedFitW || decodeInfo.Height != storedFitH;
+        if (needsResample)
+            return rawBytes + frameBytes;
+
+        var needsOrienting = origin is not (SKEncodedOrigin.TopLeft or SKEncodedOrigin.Default);
+        return needsOrienting ? rawBytes + frameBytes : rawBytes;
+    }
+
+    /// <summary>Reserves headroom, turning "there is no room and there will not be" into the same
+    /// <see cref="TooLargeException"/> an oversized single file gets -- never into "not a valid
+    /// image", which is what the owner must not be told about a photograph that is fine.</summary>
+    private DecodeRoom.Reservation Reserve(string id, SKImageInfo info, long peakBytes)
+    {
+        try
+        {
+            return _room.Take(peakBytes);
+        }
+        catch (DecodeBudgetExceededException)
+        {
+            throw TooLarge(id, info);
+        }
     }
 
     private static Exception TooLarge(string id, SKImageInfo sourceInfo) =>
