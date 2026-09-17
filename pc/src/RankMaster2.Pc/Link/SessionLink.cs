@@ -467,6 +467,166 @@ internal sealed class SessionLink : ISessionLink
         return await SendActionSequence(request, ct).ConfigureAwait(false);
     }
 
+    // ---- rename by rank (§ 10.16) -------------------------------------------------------------
+
+    public Task<RenameOperationResult> StartRenameAsync(CancellationToken ct = default) => Gated(async () =>
+    {
+        var reply = await SendRenameSequence(
+            FrozenRequest.StartRename(NewRequestId()), _options.ActionTimeout, retryOnUnreachable: true, ct).ConfigureAwait(false);
+        return ClassifyRenameReply(reply);
+    }, ct);
+
+    public Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default) => Gated(async () =>
+    {
+        var reply = await SendRenameSequence(
+            FrozenRequest.GetRename(), _options.ReadTimeout, retryOnUnreachable: false, ct).ConfigureAwait(false);
+        return ClassifyRenameReply(reply);
+    }, ct);
+
+    public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => Gated(async () =>
+    {
+        var reply = await SendRenameSequence(
+            FrozenRequest.CancelRename(), _options.ActionTimeout, retryOnUnreachable: true, ct).ConfigureAwait(false);
+        return ClassifyRenameReply(reply);
+    }, ct);
+
+    /// <summary>The retry shape every rename call shares: a lost response to a mutating call
+    /// (start/cancel) is safe to resend once — a start that actually landed answers the resend with
+    /// rename_in_progress and its own operationId, never a second run (§ 10.16's ordering makes that
+    /// safe the same way POST /session is); a read (GetRenameAsync) is not retried here because the
+    /// caller's own next poll, 250 ms later, is the retry. A stale bearer token is re-enrolled and
+    /// the same request sent once more, exactly as § 5.1.1 step 5 does for a pair action.</summary>
+    private async Task<Reply> SendRenameSequence(FrozenRequest request, TimeSpan timeout, bool retryOnUnreachable, CancellationToken ct)
+    {
+        var reply = await _http!.Send(request, timeout, ct).ConfigureAwait(false);
+
+        if (retryOnUnreachable && reply is Reply.Unreachable(var initialKind, _) &&
+            initialKind is not (UnreachableKind.PinMismatch or UnreachableKind.Cancelled))
+        {
+            reply = await _http.Send(request, timeout, ct).ConfigureAwait(false);
+        }
+
+        if (reply is Reply.Refused(401, _, _, _, _, _) && !ct.IsCancellationRequested)
+        {
+            var reEnrolled = await ReEnrolInPlace(ct).ConfigureAwait(false);
+            if (reEnrolled)
+                reply = await _http.Send(request, timeout, ct).ConfigureAwait(false);
+        }
+
+        return reply;
+    }
+
+    /// <summary>The body of every one of the three routes is the same shape (§ 10.16) whatever its
+    /// state, including a terminal one — that is passed through as Observed and the caller (the
+    /// rename surface, § 3.13 item 2) decides what a succeeded/cancelled/failed operation means on
+    /// screen. Only an HTTP-level refusal — the operation could not even be named — is Refused.</summary>
+    private RenameOperationResult ClassifyRenameReply(Reply reply)
+    {
+        if (reply is Reply.Ok(var status, var body, _) && status is 200 or 202)
+        {
+            var operation = TryParse(body, WireJsonContext.Default.RenameOperation);
+            if (operation is null)
+            {
+                var malformed = UnexpectedFailure(Codes.ClientMalformedResponse, null);
+                LastFailure = malformed;
+                return new RenameOperationResult.Refused(malformed);
+            }
+            return new RenameOperationResult.Observed(operation);
+        }
+
+        if (reply is Reply.Refused(404, Codes.NoRenameOperation, _, _, _, var noOpSession))
+        {
+            if (noOpSession is not null) AdoptSession(noOpSession);
+            return new RenameOperationResult.NoOperation();
+        }
+
+        if (reply is Reply.Refused(409, Codes.RenameInProgress, var busyMessage, var busyRequestId, var busyDetails, var busySession))
+        {
+            if (busySession is not null) AdoptSession(busySession);
+            var operationId = DetailString(busyDetails, "operationId");
+            var busyFailure = new Failure(FailureKind.Unexpected, "A rename is already running",
+                operationId is null
+                    ? busyMessage
+                    : $"Operation {operationId} is already in progress in this folder. {busyMessage}",
+                Codes.RenameInProgress, busyRequestId, Fatal: false);
+            LastFailure = busyFailure;
+            return new RenameOperationResult.Refused(busyFailure);
+        }
+
+        if (reply is Reply.Refused(500, Codes.RenameFailed, var failMessage, var failRequestId, var failDetails, var failSession))
+        {
+            // Only POST /session/rename answers rename_failed as an HTTP-level 500 — the flag is set
+            // after the journal write succeeds, never before (§ 10.16), so a session was open and is
+            // left exactly as it was. A rename that fails after it started is observed as a
+            // terminal "failed" RenameOperation through GetRenameAsync instead, not this branch.
+            if (failSession is not null) AdoptSession(failSession);
+            var reunited = DetailBool(failDetails, "reunited") ?? true;
+            var journal = DetailString(failDetails, "journal");
+            var detail = reunited
+                ? "Nothing moved and nothing was renamed; every rating is exactly where it was. " + failMessage
+                : $"The rename journal at {journal ?? "an unknown path"} could not be written. Nothing was renamed. " + failMessage;
+            var failFailure = new Failure(FailureKind.Unexpected, "The rename could not start", detail,
+                Codes.RenameFailed, failRequestId, Fatal: false);
+            LastFailure = failFailure;
+            return new RenameOperationResult.Refused(failFailure);
+        }
+
+        if (reply is Reply.Refused(404, Codes.NoSession, var noSessionMessage, var noSessionRequestId, _, _))
+        {
+            State = State == LinkState.Disconnected ? LinkState.Disconnected : LinkState.Connected;
+            Snapshot = null;
+            var noSessionFailure = new Failure(FailureKind.Unexpected, "The folder is not open",
+                "The session closed before the rename could be checked. " + noSessionMessage,
+                Codes.NoSession, noSessionRequestId, Fatal: false);
+            LastFailure = noSessionFailure;
+            return new RenameOperationResult.Refused(noSessionFailure);
+        }
+
+        if (reply is Reply.Refused(var otherStatus, var otherCode, var otherMessage, var otherRequestId, _, var otherSession))
+        {
+            if (otherSession is not null) AdoptSession(otherSession);
+            var otherFailure = FailureForCode(otherCode, otherMessage, otherRequestId);
+            LastFailure = otherFailure;
+            return new RenameOperationResult.Refused(otherFailure);
+        }
+
+        if (reply is Reply.Unreachable(UnreachableKind.PinMismatch, _))
+        {
+            State = LinkState.Disconnected;
+            var pinFailure = NotYourServerFailure(_credential?.BaseUrl);
+            LastFailure = pinFailure;
+            return new RenameOperationResult.Refused(pinFailure);
+        }
+
+        if (reply is Reply.Unreachable(var unreachableKind, _))
+        {
+            State = InSessionOfAnyKind ? LinkState.InSessionUnreachable : State;
+            var code = unreachableKind switch
+            {
+                UnreachableKind.Timeout => Codes.ClientTimeout,
+                UnreachableKind.Cancelled => Codes.ClientCancelled,
+                _ => Codes.ClientUnreachable,
+            };
+            var unreachableFailure = UnreachableFailure(code);
+            LastFailure = unreachableFailure;
+            return new RenameOperationResult.Refused(unreachableFailure);
+        }
+
+        var unexpected = UnexpectedFailure(Codes.ClientMalformedResponse, null);
+        LastFailure = unexpected;
+        return new RenameOperationResult.Refused(unexpected);
+    }
+
+    private static bool? DetailBool(JsonElement? details, string name) =>
+        details is { } d && d.ValueKind == JsonValueKind.Object &&
+        d.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False)
+            ? v.GetBoolean() : null;
+
+    private static string? DetailString(JsonElement? details, string name) =>
+        details is { } d && d.ValueKind == JsonValueKind.Object &&
+        d.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() : null;
+
     private static string NewRequestId()
     {
         Span<byte> bytes = stackalloc byte[16];

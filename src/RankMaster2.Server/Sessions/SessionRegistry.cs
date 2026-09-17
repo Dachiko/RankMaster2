@@ -25,7 +25,7 @@ namespace RankMaster2.Server.Sessions;
 /// that throws after the move leaves the change committed and <c>pairSeq</c> advanced. Same status
 /// code, opposite meaning. The normative table is § 8.3 and this class follows it exactly.
 /// </summary>
-public sealed class SessionRegistry : IDisposable
+public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvider
 {
     public const int DefaultPrefetchPairs = 2;
     public const string ApiBase = "/api/v1";
@@ -74,15 +74,32 @@ public sealed class SessionRegistry : IDisposable
     /// </summary>
     public static SessionRegistry Shared { get; } = new();
 
-    /// <summary>
-    /// Hook for the media layer: called with the id about to be moved, before the move, so any
-    /// server-side decode of it can be released first (§ 10.8, "release any server-side decode").
-    /// Left null here because this folder owns no decoders.
-    /// </summary>
-    public Action<MediaId>? ReleaseMedia { get; set; }
-
-    /// <summary>The open folder, or null. A cheap read for <c>GET /ping</c>; not a substitute for a snapshot.</summary>
+    /// <summary>The open folder, or null. A cheap read; not a substitute for a snapshot.</summary>
     public string? OpenFolder => Volatile.Read(ref _open)?.Folder;
+
+    /// <summary>
+    /// SERVER_SPEC.md § 14's <c>session</c> block, answered without taking the session gate so that
+    /// <c>/ping</c> can never queue behind a vote that is mid-save. All four fields come from one
+    /// read of the same <see cref="OpenSession"/> reference, so they describe one moment; <c>state</c>
+    /// is derived from <c>Current</c>, which is the same rule <see cref="Materialise"/> applies.
+    /// <para/>
+    /// This replaces the reflection bridge that used to stand in for it and could only ever report
+    /// <c>folder</c> (A4, C15): <c>sessionId</c> and <c>state</c> were null on every ping.
+    /// </summary>
+    public Security.SessionStatus Current
+    {
+        get
+        {
+            var open = Volatile.Read(ref _open);
+            return open is null
+                ? Security.SessionStatus.Closed
+                : new Security.SessionStatus(
+                    true,
+                    open.SessionId,
+                    open.Folder,
+                    open.Session.Current is null ? SessionStates.Exhausted : SessionStates.Ranking);
+        }
+    }
 
     private RankMaster2.Server.Media.MediaSessionView? _mediaView;
     private OpenSession? _mediaViewOf;
@@ -92,11 +109,11 @@ public sealed class SessionRegistry : IDisposable
     /// The read-only window the media layer needs (<see cref="Media.IMediaSessionAccessor"/>).
     /// <para/>
     /// Media requests are GETs and SERVER_SPEC.md § 11.3 forbids them from mutating session state,
-    /// so they must not queue behind a vote either. But <see cref="RankingSession.Records"/> hands
-    /// back its live backing list, and copying it while a vote commits throws
-    /// "collection was modified". So: read optimistically, then confirm nothing moved underneath,
-    /// and cache the result against <c>PairSeq</c> — which every mutation bumps — so the common
-    /// case costs a reference comparison rather than rebuilding a dictionary per image.
+    /// so they must not queue behind a vote either. <see cref="RankingSession.Records"/> hands back
+    /// its live backing list, which a vote can replace under the copy. So: read optimistically, then
+    /// confirm nothing moved underneath, and cache the result against <c>PairSeq</c> — which every
+    /// mutation bumps — so the common case costs a reference comparison rather than rebuilding a
+    /// dictionary per image.
     /// <para/>
     /// Only if that keeps losing the race do we take the gate and pay the wait.
     /// </summary>
@@ -116,15 +133,11 @@ public sealed class SessionRegistry : IDisposable
                     Volatile.Read(ref _mediaView) is { } cached)
                     return cached;
 
-                Media.MediaSessionView built;
-                try
-                {
-                    built = BuildMediaView(open);
-                }
-                catch (InvalidOperationException)
-                {
-                    continue;   // a mutation committed mid-copy; take a fresh look
-                }
+                // RankingSession replaces its record list by assigning a complete new one, never by
+                // clearing and refilling the old, so this copy can never see a half-built list and
+                // there is nothing here to catch (A8). What it can see is a list that was current a
+                // moment ago, which is what the pairSeq re-check below is for.
+                var built = BuildMediaView(open);
 
                 // If the session advanced or closed while we were copying, the view we just built
                 // may describe a pair that no longer exists. Drop it rather than cache it.
@@ -231,26 +244,24 @@ public sealed class SessionRegistry : IDisposable
                     new { folder });
             }
 
-            // Step 4.
-            var folderLock = FolderLock.TryAcquire(folder, _serverVersion, out var holder);
+            // Step 4. § 5.3.1: details.holder is null, always. The lock is FileShare.None, which is
+            // the point of it — and that same exclusivity is why no other process can open the file
+            // to read who holds it. The spec says in so many words not to attempt a best-effort read
+            // here; it cannot succeed and would only add a misleading error path (C6).
+            var folderLock = FolderLock.TryAcquire(folder, _serverVersion);
             if (folderLock is null)
             {
                 return SessionOutcome.Fail(
                     ErrorCodes.FolderLocked,
                     "That folder is in use by another Rank Master process.",
-                    new
-                    {
-                        holder = holder is null
-                            ? null
-                            : new
-                            {
-                                pid = holder.Pid,
-                                host = holder.Host,
-                                startedAt = holder.StartedAt,
-                                process = holder.Process,
-                            },
-                    });
+                    new { holder = (object?)null });
             }
+
+            // A9: a crash between JsonCatalog.Save's write and its File.Replace leaves
+            // rankmaster_db.json.tmp beside the photos. The scan skips it and the next save
+            // overwrites it, so it costs nothing but the owner's puzzlement at a stray file in his
+            // pictures folder. Open is the one moment we know no save is in flight here.
+            RemoveStaleDatabaseTemp(folder);
 
             // Step 4.5 (§ 10.16): recovery runs before anything scans. If a rename was interrupted,
             // <folder>/.rankmaster-rename.json is still here; reunite every rating with its file at
@@ -258,7 +269,28 @@ public sealed class SessionRegistry : IDisposable
             // the plain Scan/Save merge is exactly the thing that would silently drop them (§ 1).
             if (RenameEngine.JournalExists(folder))
             {
-                var recovery = RenameEngine.RecoverIfPresent(folder, _catalog);
+                RenameRecoveryOutcome recovery;
+                try
+                {
+                    recovery = RenameEngine.RecoverIfPresent(folder, _catalog);
+                }
+                catch (Exception)
+                {
+                    // § 10.16, "An unreadable journal is refused, not guessed at": a journal that
+                    // cannot be read (bad format, null plan, truncated or hand-edited JSON, a plan
+                    // whose old and new sets intersect) makes ReadJournal throw InvalidDataException,
+                    // and a disk fault could throw anything else. Either way nothing has been moved
+                    // and nothing written — but the lock was taken two steps ago, and letting the
+                    // exception leave here is how a folder ends up answering 423 folder_locked ("in
+                    // use by another Rank Master process") to the owner himself until the server is
+                    // restarted (H4). Release it, then answer the truth.
+                    folderLock.Dispose();
+                    return SessionOutcome.Fail(
+                        ErrorCodes.RenameFailed,
+                        "An interrupted rename left a journal this server cannot read; nothing was changed.",
+                        new { reunited = false, journal = RenameEngine.JournalPath(folder) });
+                }
+
                 if (!recovery.Reunited)
                 {
                     folderLock.Dispose();
@@ -328,14 +360,16 @@ public sealed class SessionRegistry : IDisposable
                 DateTimeOffset.UtcNow,
                 ranking,
                 folderLock,
-                _prefetchPairs);
-
-            opened.Actions = new LibraryActions(
-                () => folder,
-                _catalog,
-                () => _pipeline,
-                () => ranking,
-                id => ReleaseMedia?.Invoke(id));
+                _prefetchPairs,
+                new LibraryActions(
+                    () => folder,
+                    _catalog,
+                    () => _pipeline,
+                    () => ranking,
+                    // LibraryActions was written for the desktop shell, which had to let a decoder
+                    // go before moving the file under it. Nothing at this layer decodes anything:
+                    // media streams are opened FileShare.Delete, so a move needs no warning (C13).
+                    _ => { }));
 
             _open = opened;
 
@@ -366,6 +400,14 @@ public sealed class SessionRegistry : IDisposable
         {
             if (_open is not { } open)
                 return NoSession();
+
+            // § 10.4 and § 10.16: refused while a rename runs, like every other mutating call. It is
+            // the one that looks harmless and is not — closing releases the folder lock while the
+            // rename task is still moving files, which lets a second POST /session start journal
+            // recovery on a folder the first session is halfway through renaming, two programs
+            // finalizing the same plan at once. The client cancels the rename first (H14).
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
 
             _open = null;
             Volatile.Write(ref _rename, null);
@@ -455,6 +497,7 @@ public sealed class SessionRegistry : IDisposable
 
             open.PairSeq++;
             open.LastSavedAt = DateTimeOffset.UtcNow;
+            open.UndoPoint = UndoPoint.EngineSnapshot;
             open.LastAction = NewAction(open, ActionTypes.Vote, token, clientRequestId, winner: winner);
             return SessionOutcome.Ok(Materialise(open));
         });
@@ -502,6 +545,7 @@ public sealed class SessionRegistry : IDisposable
 
             open.PairSeq++;
             open.LastSavedAt = DateTimeOffset.UtcNow;
+            open.UndoPoint = UndoPoint.EngineSnapshot;
             open.LastAction = NewAction(open, ActionTypes.Skip, token, clientRequestId);
             return SessionOutcome.Ok(Materialise(open));
         });
@@ -551,6 +595,13 @@ public sealed class SessionRegistry : IDisposable
                 open.Session.Drop(id);
                 open.PairSeq++;
 
+                // § 10.10: drop_missing is not cancellable, and it does not hand the cancel on to
+                // whatever came before it. Drop already cleared the engine's snapshot; clearing the
+                // recorded move too is what stops a discard from three actions ago being restored by
+                // an undo the client was told was available (H5, A7).
+                open.Actions.ClearLastMove();
+                open.UndoPoint = UndoPoint.None;
+
                 try
                 {
                     open.Session.Save();
@@ -596,6 +647,9 @@ public sealed class SessionRegistry : IDisposable
                 }
 
                 open.PairSeq++;
+                // The file is in discarded/ or special 1/ and the database did not follow: undo is
+                // the only way back, so it must be offered (§ 8.3).
+                open.UndoPoint = UndoPoint.LastMove;
                 open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
                 return SessionOutcome.Fail(
                     ErrorCodes.SaveFailed,
@@ -606,6 +660,7 @@ public sealed class SessionRegistry : IDisposable
 
             open.PairSeq++;
             open.LastSavedAt = DateTimeOffset.UtcNow;
+            open.UndoPoint = UndoPoint.LastMove;
             open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
             return SessionOutcome.Ok(Materialise(open));
         });
@@ -633,13 +688,15 @@ public sealed class SessionRegistry : IDisposable
             if (error is not null)
                 return BodyFail(error, open);
 
-            // § 10.10. A vote or skip is the most recent action whenever the engine still holds an
-            // undo point: any discard, special or drop clears it. So this branch is "cancel the
-            // action", and the one below is "cancel the move", and they can never both apply.
-            if (open.Session.CanUndoLastAction)
+            // § 10.10, one level, one source of truth. The session records what the last cancellable
+            // thing was — a vote/skip (the engine holds the snapshot) or a move (LibraryActions holds
+            // the file) — and every structural change clears it. Asking the engine and LibraryActions
+            // separately, and OR-ing the two answers, is what let an undo reach past a drop_missing
+            // to a discard the owner had made on purpose (H5, A7).
+            if (open.UndoPoint == UndoPoint.EngineSnapshot)
                 return UndoAction(open, clientRequestId);
 
-            if (open.Actions.LastMove is not { } move)
+            if (open.UndoPoint != UndoPoint.LastMove || open.Actions.LastMove is not { } move)
             {
                 return SessionOutcome.Fail(
                     ErrorCodes.NothingToUndo,
@@ -651,6 +708,7 @@ public sealed class SessionRegistry : IDisposable
             if (!string.Equals(move.Folder, open.Folder, PathComparison))
             {
                 open.Actions.ClearLastMove();
+                open.UndoPoint = UndoPoint.None;
                 return SessionOutcome.Fail(
                     ErrorCodes.UndoFolderChanged,
                     "The recorded move belongs to a different folder.",
@@ -691,6 +749,7 @@ public sealed class SessionRegistry : IDisposable
                 // LibraryActions clears LastMove only after that save, so clear it here: the move
                 // has been reversed, and leaving it recorded would offer an undo that can only fail.
                 open.Actions.ClearLastMove();
+                open.UndoPoint = UndoPoint.None;
                 open.PairSeq++;
                 open.LastAction = NewAction(
                     open,
@@ -718,6 +777,7 @@ public sealed class SessionRegistry : IDisposable
 
             open.PairSeq++;
             open.LastSavedAt = DateTimeOffset.UtcNow;
+            open.UndoPoint = UndoPoint.None;
             open.LastAction = NewAction(
                 open,
                 ActionTypes.Undo,
@@ -741,7 +801,8 @@ public sealed class SessionRegistry : IDisposable
     // nothing else may mutate the folder while the journal's plan is being carried out.
     // ---------------------------------------------------------------------------------------
 
-    public async Task<RenameOutcome> StartRenameAsync(CancellationToken cancellation)
+    public async Task<RenameOutcome> StartRenameAsync(
+        string? clientRequestId, CancellationToken cancellation)
     {
         var acquired = await _gate.WaitAsync(LockTimeout, cancellation);
         if (!acquired)
@@ -772,17 +833,56 @@ public sealed class SessionRegistry : IDisposable
             }
 
             // § 3.3 "preparing": order by μ − 3σ desc, then filename, from the records as they are
-            // right now. Published to _rename before the (possibly slow, or test-blocked) journal
-            // write, so a concurrent cancel can flag it even while this call has not returned.
-            var plan = RenameEngine.BuildPlan(open.Session.Records);
+            // right now, and draw the run suffix against both those names and everything the folder
+            // currently lists — including files this session never knew about (§ 10.16, "The
+            // names"). Sixteen rejected draws is `rename_failed`, never `internal_error`, and
+            // nothing has moved.
+            List<PlanEntry> plan;
+            try
+            {
+                plan = RenameEngine.BuildPlan(open.Folder, open.Session.Records);
+            }
+            catch (Exception)
+            {
+                return RenameOutcome.Fail(
+                    ErrorCodes.RenameFailed,
+                    "A rename plan could not be built for this folder; nothing was changed.",
+                    new { reunited = true, journal = (string?)null },
+                    Materialise(open));
+            }
+
             run = new RenameRun(PairTokens.NewSessionId(), open.Folder, open.Session.Records, DateTimeOffset.UtcNow)
             {
                 Plan = plan,
+                ClientRequestId = clientRequestId,
             };
-            open.RenameInProgress = true;
+
+            // § 10.16, "The flag is set after the journal write, never before." The run is published
+            // to _rename first so a cancel racing a slow (or test-blocked) journal write can still
+            // flag it — that costs nothing, because a published run with the flag unset refuses
+            // nothing. The flag is what makes every other call answer 409 rename_in_progress, and
+            // setting it before a write that can throw is what left sessions wedged behind "A rename
+            // is already running" with no run to finish it and no cancel to clear it (H3).
             Volatile.Write(ref _rename, run);
 
-            _journalWriter.Write(open.Folder, plan, DateTimeOffset.UtcNow);
+            try
+            {
+                _journalWriter.Write(open.Folder, plan, DateTimeOffset.UtcNow);
+            }
+            catch (Exception)
+            {
+                // A read-only folder or a full disk. Nothing was disturbed and no rating is in
+                // doubt, so reunited is true; no journal was written, so journal is null.
+                Volatile.Write(ref _rename, null);
+                RenameEngine.DeleteJournal(open.Folder);
+                return RenameOutcome.Fail(
+                    ErrorCodes.RenameFailed,
+                    "The rename journal could not be written; the session is untouched.",
+                    new { reunited = true, journal = (string?)null },
+                    Materialise(open));
+            }
+
+            open.RenameInProgress = true;
 
             abortedBeforeAnyMove = run.CancelRequested;
             if (abortedBeforeAnyMove)
@@ -796,7 +896,9 @@ public sealed class SessionRegistry : IDisposable
             }
             else
             {
-                run.MarkPreparingDone(total: plan.Count * 2);
+                // § 10.16: total is N, the number of files in the plan. One move per file, so `done`
+                // reaches `total` exactly once.
+                run.MarkPreparingDone(total: plan.Count);
             }
         }
         finally
@@ -857,10 +959,10 @@ public sealed class SessionRegistry : IDisposable
     }
 
     /// <summary>
-    /// The live forward operation (§ 3.3), off the session lock: phase 1, phase 2, the commit, the
-    /// journal delete (the commit point), then the apply back under the lock. Cancellation is
-    /// polled between files; once phase 2 (renaming) has fully finished and the commit has begun,
-    /// it is too late (§ 3.5) and the run always finishes to a terminus.
+    /// The live forward operation (§ 3.3), off the session lock: one move phase, the commit, the
+    /// journal delete (the commit point), then the apply back under the lock. Cancellation is polled
+    /// before every move and between the retries of a move waiting on a locked file; once the commit
+    /// has begun it is too late (§ 3.5) and the run always finishes to a terminus.
     /// </summary>
     private async Task RunRenameAsync(OpenSession open, RenameRun run)
     {
@@ -868,7 +970,10 @@ public sealed class SessionRegistry : IDisposable
 
         try
         {
-            RenameEngine.MovePhase1(
+            // One move per file, old → new. There is no second phase: the run suffix has already
+            // proven the old and new name sets are disjoint, so there is no cycle to break and
+            // nothing a temporary name would be for (§ 10.16, "One move per file").
+            RenameEngine.MoveAll(
                 open.Folder, plan,
                 shouldStop: _ => run.CancelRequested,
                 onProgress: (done, _) => run.ReportProgress(RenamePhases.Renaming, done));
@@ -879,18 +984,7 @@ public sealed class SessionRegistry : IDisposable
                 return;
             }
 
-            RenameEngine.MovePhase2(
-                open.Folder, plan,
-                shouldStop: _ => run.CancelRequested,
-                onProgress: (done, _) => run.ReportProgress(RenamePhases.Renaming, plan.Count + done));
-
-            if (run.CancelRequested)
-            {
-                await CancelInPlaceAsync(open, run);
-                return;
-            }
-
-            run.ReportProgress(RenamePhases.Saving, plan.Count * 2);
+            run.ReportProgress(RenamePhases.Saving, plan.Count);
 
             IReadOnlyList<MediaRecord> remapped;
             try
@@ -902,29 +996,35 @@ public sealed class SessionRegistry : IDisposable
                 // The commit threw. The journal is still on disk, so reunite from it right now
                 // rather than waiting for the next open — the ratings are the asset (§ 1).
                 var recovery = RenameEngine.RecoverIfPresent(open.Folder, _catalog);
-                await FinishAsync(open, run, () =>
-                {
-                    open.RenameInProgress = false;
-                    run.Fail(recovery.Reunited, recovery.JournalPath);
-                });
+                await FailAndResyncAsync(open, run, recovery.Reunited, recovery.JournalPath);
                 return;
             }
 
             RenameEngine.DeleteJournal(open.Folder);   // the commit point (§ 3.3 step 4)
 
-            await FinishAsync(open, run, () =>
-            {
-                open.Session.ReplaceAll(remapped);
-                open.Actions.ClearLastMove();
-                open.PairSeq++;
-                open.LastSavedAt = DateTimeOffset.UtcNow;
-                open.LastAction = new SnapshotLastAction(
-                    open.PairSeq, ActionTypes.Rename,
-                    PairToken: null, ClientRequestId: null, Winner: null, Side: null,
-                    Id: null, RestoredId: null, UndoneType: null, At: Rfc3339(DateTimeOffset.UtcNow));
-                open.RenameInProgress = false;
-                run.Succeed();
-            });
+            await FinishAsync(
+                open,
+                applyToSession: () =>
+                {
+                    open.Session.ReplaceAll(remapped);
+                    open.Actions.ClearLastMove();
+                    open.UndoPoint = UndoPoint.None;
+                    open.PairSeq++;
+                    open.LastSavedAt = DateTimeOffset.UtcNow;
+                    open.LastAction = new SnapshotLastAction(
+                        open.PairSeq, ActionTypes.Rename,
+                        PairToken: null, ClientRequestId: run.ClientRequestId, Winner: null, Side: null,
+                        Id: null, RestoredId: null, UndoneType: null, At: Rfc3339(DateTimeOffset.UtcNow));
+                    open.RenameInProgress = false;
+                },
+                markRun: run.Succeed);
+        }
+        catch (OperationCanceledException)
+        {
+            // FileOps.MoveWithRetry throws this when the cancel lands between the retries of a move
+            // that is waiting on a file another program holds — the owner's slow-USB case. It is the
+            // cancel path, not a failure: the button he pressed did exactly what it says.
+            await CancelInPlaceAsync(open, run);
         }
         catch (Exception)
         {
@@ -932,35 +1032,103 @@ public sealed class SessionRegistry : IDisposable
             // deleted at the commit point above), so recovery from it is exactly the right answer,
             // identical to what the next POST /session would do if the process had died here.
             var recovery = RenameEngine.RecoverIfPresent(open.Folder, _catalog);
-            await FinishAsync(open, run, () =>
-            {
-                open.RenameInProgress = false;
-                run.Fail(recovery.Reunited, recovery.JournalPath);
-            });
+            await FailAndResyncAsync(open, run, recovery.Reunited, recovery.JournalPath);
         }
     }
 
-    /// <summary>§ 3.5: stop issuing moves, reunite in place (never finalizing the rest), resync the
-    /// session from a fresh scan since filenames on disk may now differ from what it holds in
-    /// memory.</summary>
+    /// <summary>§ 3.5: stop issuing moves, reunite in place (never finalizing the rest), then resync
+    /// the session — filenames on disk are now a mix of old and new, and what the session holds in
+    /// memory is neither.</summary>
     private async Task CancelInPlaceAsync(OpenSession open, RenameRun run)
     {
         run.ReportPhase(RenamePhases.Reuniting);
-        var outcome = RenameEngine.ReuniteInPlace(open.Folder, _catalog);
 
-        await FinishAsync(open, run, () =>
+        RenameRecoveryOutcome outcome;
+        try
+        {
+            outcome = RenameEngine.ReuniteInPlace(open.Folder, _catalog);
+        }
+        catch (Exception)
+        {
+            outcome = new RenameRecoveryOutcome(true, false, RenameEngine.JournalPath(open.Folder));
+        }
+
+        if (!outcome.Reunited)
+        {
+            await FailAndResyncAsync(open, run, outcome.Reunited, outcome.JournalPath);
+            return;
+        }
+
+        // Starts true: if there is no session left to resync (it went while the run was off the
+        // lock), the ratings were still reunited and `cancelled` is still the honest terminus.
+        var resynced = true;
+        await FinishAsync(
+            open,
+            applyToSession: () => resynced = ResyncAfterRename(open),
+            markRun: () =>
+            {
+                // The ratings were reunited either way; `cancelled` is the honest terminus unless
+                // the folder itself could not be re-read, and then the session is already closed.
+                if (resynced)
+                    run.Cancel();
+                else
+                    run.Fail(reunited: true, journal: null);
+            });
+    }
+
+    /// <summary>
+    /// The failure terminus, with the same session effect a cancel has (§ 7.2, § 10.16 "Cancel or
+    /// failure — the session effect"). The folder is in the same condition either way — some files
+    /// moved, some did not, the ratings reunited in place — so the session is resynced identically.
+    /// Only <c>reunited</c> differs, and it states the truth about the ratings (H2, A1, C1, C11).
+    /// </summary>
+    private Task FailAndResyncAsync(OpenSession open, RenameRun run, bool reunited, string? journal) =>
+        FinishAsync(
+            open,
+            applyToSession: () => ResyncAfterRename(open),
+            markRun: () => run.Fail(reunited, journal));
+
+    /// <summary>
+    /// Re-reads the folder into the open session and says so honestly. Called under the gate, from
+    /// both terminal paths that leave the folder half-renamed.
+    ///
+    /// <para><c>sessionId</c> unchanged — it is the same session. <c>sessionVotes</c> and the cue
+    /// strip kept — the owner cast those votes and a rename that did not finish is no reason to
+    /// forget them (this is why it is <see cref="RankingSession.Resync"/> and not <c>Start()</c>,
+    /// which zeroes exactly the counters § 10.1 goes out of its way to protect on a resume).
+    /// <c>pairSeq</c> +1 and undo cleared — the generation genuinely changed and the undo point
+    /// refers to files that may have moved, so every token a client holds is stale and the snapshot
+    /// that comes back says so. <c>lastAction</c> null.</para>
+    ///
+    /// <para>Returns false when the folder itself could not be re-read — unmounted, deleted, made
+    /// unreadable during the run — in which case the session is closed and the lock released:
+    /// "A session whose folder cannot be read is not a session" (§ 10.16).</para>
+    /// </summary>
+    private bool ResyncAfterRename(OpenSession open)
+    {
+        try
+        {
+            open.Session.Resync();
+        }
+        catch (Exception)
         {
             open.RenameInProgress = false;
-            if (outcome.Reunited)
+            if (ReferenceEquals(_open, open))
             {
-                open.Session.Start();   // re-scan: the folder may be a mix of old and new names now
-                run.Cancel();
+                _open = null;
+                Volatile.Write(ref _rename, null);
             }
-            else
-            {
-                run.Fail(outcome.Reunited, outcome.JournalPath);
-            }
-        });
+
+            open.Lock.Dispose();
+            return false;
+        }
+
+        open.Actions.ClearLastMove();
+        open.UndoPoint = UndoPoint.None;
+        open.PairSeq++;
+        open.LastAction = null;
+        open.RenameInProgress = false;
+        return true;
     }
 
     /// <summary>
@@ -969,19 +1137,30 @@ public sealed class SessionRegistry : IDisposable
     /// was closed and possibly reopened while the run was off the lock, in which case there is
     /// nothing left in memory to apply to; the filesystem and database work already committed
     /// correctly regardless, so this is not a failure, just nothing further to do.
+    ///
+    /// <para>The wait is unbounded. The five-second cap is for an HTTP caller, who has a client
+    /// waiting on the other end and must be told <c>503 session_busy</c> rather than left hanging;
+    /// this is the server finishing its own work, and giving up on it would leave
+    /// <c>RenameInProgress</c> set for ever, with the operation stuck in <c>saving</c> and no cancel
+    /// able to clear it — a wedge only a restart cures (H3's second half).</para>
     /// </summary>
-    private async Task FinishAsync(OpenSession open, RenameRun run, Action apply)
+    private async Task FinishAsync(OpenSession open, Action applyToSession, Action markRun)
     {
-        var acquired = await _gate.WaitAsync(LockTimeout);
+        await _gate.WaitAsync();
         try
         {
-            if (acquired && ReferenceEquals(_open, open))
-                apply();
+            if (ReferenceEquals(_open, open))
+                applyToSession();
+            else
+                open.RenameInProgress = false;
+
+            // The operation reaches its terminus either way, so a client that is still polling is
+            // never left watching a run that can no longer move.
+            markRun();
         }
         finally
         {
-            if (acquired)
-                _gate.Release();
+            _gate.Release();
         }
     }
 
@@ -995,6 +1174,18 @@ public sealed class SessionRegistry : IDisposable
 
     // ---------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Shutdown (A3). <c>Rm2Host</c> registers this on <c>ApplicationStopping</c>, and closing the
+    /// open session is the whole point: the OS releases the handle when the process dies either way,
+    /// but <c>&lt;folder&gt;/.rankmaster.lock</c> is deleted by <see cref="FolderLock.Dispose"/> and
+    /// by nothing else — so without this the owner is left with a stray file sitting next to his
+    /// photographs after every clean exit.
+    ///
+    /// <para>The semaphore is deliberately not disposed. This type has a process-wide
+    /// <see cref="Shared"/> instance that more than one host can reach, and a disposed semaphore
+    /// turns a later request into an <c>ObjectDisposedException</c> rather than an honest answer;
+    /// the handle it would release costs nothing at exit. Idempotent.</para>
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -1003,8 +1194,8 @@ public sealed class SessionRegistry : IDisposable
 
         var open = _open;
         _open = null;
+        Volatile.Write(ref _rename, null);
         open?.Lock.Dispose();
-        _gate.Dispose();
     }
 
     /// <summary>
@@ -1088,6 +1279,7 @@ public sealed class SessionRegistry : IDisposable
         // Leaving it would make cancel walk backwards through the session one press at a time,
         // which is an undo stack by the back door.
         open.Actions.ClearLastMove();
+        open.UndoPoint = UndoPoint.None;
 
         open.PairSeq++;
         open.LastSavedAt = DateTimeOffset.UtcNow;
@@ -1147,28 +1339,44 @@ public sealed class SessionRegistry : IDisposable
         }
     }
 
-    /// <summary>§ 10.1 step 1 and § 15: non-empty, rooted, no NUL, 4096 characters at most.</summary>
+    /// <summary>
+    /// § 10.1 step 1 and § 15, through the same <see cref="Security.PathGuard"/> that
+    /// <c>GET /libraries/browse</c> uses (H11). Browsing the whole filesystem is the product
+    /// decision and this does not change it: what it closes is that the endpoints which
+    /// <i>move files</i> used to accept path forms the read-only endpoint refuses — <c>..</c>
+    /// segments, UNC (<c>\\host\share</c>, which on Windows makes the server authenticate to a
+    /// host of the caller's choosing), Win32 device namespaces, reserved device names, and segments
+    /// with a trailing dot or space. One guard, one answer, one canonical path.
+    /// </summary>
     private static BodyError? ResolveFolder(string raw, out string folder)
     {
         folder = "";
-        if (string.IsNullOrWhiteSpace(raw) || raw.Length > 4096 || raw.Contains('\0'))
-            return new BodyError(ErrorCodes.InvalidPath, "'folder' must be an absolute path.", new { field = "folder" });
+        var check = Security.PathGuard.Check(raw);
+        if (!check.Ok)
+            return new BodyError(ErrorCodes.InvalidPath, DescribeRejection(check.Reason), new { field = "folder" });
 
-        if (!Path.IsPathRooted(raw))
-            return new BodyError(ErrorCodes.InvalidPath, "'folder' must be an absolute path.", new { field = "folder" });
-
-        try
-        {
-            // TrimEndingDirectorySeparator leaves a root alone, so "C:\" and "/" survive intact.
-            folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(raw));
-        }
-        catch (Exception)
-        {
-            return new BodyError(ErrorCodes.InvalidPath, "'folder' is not a usable path.", new { field = "folder" });
-        }
-
+        folder = check.Canonical;
         return null;
     }
+
+    /// <summary>
+    /// Human text only. Like the browse endpoint's, it names nothing the caller did not send and
+    /// never reports which check failed in a machine-readable field: <c>details</c> stays the
+    /// <c>{ field }</c> shape § 5.2 fixes for <c>invalid_path</c>.
+    /// </summary>
+    private static string DescribeRejection(Security.PathRejection reason) => reason switch
+    {
+        Security.PathRejection.Empty => "'folder' is required.",
+        Security.PathRejection.TooLong => "'folder' is longer than 4096 characters.",
+        Security.PathRejection.Nul => "'folder' contains a NUL character.",
+        Security.PathRejection.ControlCharacter => "'folder' contains a control character.",
+        Security.PathRejection.NotAbsolute => "'folder' must be an absolute path.",
+        Security.PathRejection.Traversal => "'folder' contains a relative segment.",
+        Security.PathRejection.Unc => "UNC and device paths cannot be opened.",
+        Security.PathRejection.DeviceName => "'folder' names a reserved device.",
+        Security.PathRejection.TrailingDotOrSpace => "A segment of 'folder' ends with a dot or a space.",
+        _ => "'folder' is not a usable path.",
+    };
 
     // ---------------------------------------------------------------------------------------
     // The snapshot — § 9. Materialised inside the lock, always in full; there is no small variant.
@@ -1193,12 +1401,10 @@ public sealed class SessionRegistry : IDisposable
             records.Count(r => r.Kind == MediaKind.Still),
             records.Count(r => r.Kind == MediaKind.Video));
 
-        // § 9.1: is there an action to cancel? A vote or skip leaves one in the engine; a move
-        // leaves one in LibraryActions. The engine's is cleared by any structural change to the
-        // record set, so "the engine has one" already means "a vote/skip was the most recent thing
-        // that happened" (§ 10.10).
-        var undoAvailable = session.CanUndoLastAction
-            || (open.Actions.LastMove is { } move && string.Equals(move.Folder, open.Folder, PathComparison));
+        // § 9.1: is there an action to cancel? Exactly one field answers that, the same field
+        // POST /session/undo consults, so the snapshot cannot offer a cancel the undo would refuse
+        // or refuse one it would take (A7).
+        var undoAvailable = open.UndoPoint != UndoPoint.None;
 
         return new SessionSnapshot(
             open.SessionId,
@@ -1231,7 +1437,7 @@ public sealed class SessionRegistry : IDisposable
             ? record.Kind
             : MediaExtensions.KindOf(id.Filename) ?? MediaKind.Still;
 
-        var (size, version) = MediaFingerprint.Of(open.Folder, id.Filename);
+        var (size, version) = FingerprintOf(open.Folder, id.Filename);
         var encoded = Uri.EscapeDataString(id.Filename);
         var query = version is null ? "" : "?v=" + version;
         var isStill = kind == MediaKind.Still;
@@ -1245,6 +1451,56 @@ public sealed class SessionRegistry : IDisposable
         return new SnapshotMediaRef(id.Filename, isStill ? "still" : "video", size, version, links);
     }
 
+    /// <summary>
+    /// § 12.2's <c>mediaVersion</c>, from the one implementation of the fingerprint the server has
+    /// (<see cref="Media.MediaFingerprint"/>). There used to be a second, private to this folder,
+    /// which agreed with it only by inspection (C16).
+    ///
+    /// <para>Null when the file cannot be stat'd — it was moved or deleted under the session
+    /// (§ 7.4.8) — and <c>sizeBytes</c> is then null too (§ 9.3).</para>
+    /// </summary>
+    private static (long? SizeBytes, string? MediaVersion) FingerprintOf(string folder, string id)
+    {
+        try
+        {
+            var info = new FileInfo(Path.Combine(folder, id));
+            if (!info.Exists)
+                return (null, null);
+
+            return (info.Length, Media.MediaFingerprint.Of(id, info).MediaVersion);
+        }
+        catch (IOException)
+        {
+            return (null, null);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// A9: removes <c>rankmaster_db.json.tmp</c>, left behind by a crash between
+    /// <c>JsonCatalog.Save</c>'s write and its atomic replace. It is skipped by every scan and
+    /// overwritten by the next save, so the only thing it costs is the owner finding a file he did
+    /// not put there among his pictures. Failure to delete is not a reason to refuse the folder.
+    /// </summary>
+    private static void RemoveStaleDatabaseTemp(string folder)
+    {
+        try
+        {
+            var stale = Path.Combine(folder, JsonCatalog.FileName + ".tmp");
+            if (File.Exists(stale))
+                File.Delete(stale);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
     /// <summary>§ 2: RFC 3339 UTC with a Z and milliseconds.</summary>
     private static string Rfc3339(DateTimeOffset when) =>
         when.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
@@ -1256,7 +1512,8 @@ public sealed class SessionRegistry : IDisposable
         DateTimeOffset openedAt,
         RankingSession session,
         FolderLock folderLock,
-        int prefetchPairs)
+        int prefetchPairs,
+        LibraryActions actions)
     {
         public string SessionId { get; } = sessionId;
 
@@ -1272,7 +1529,20 @@ public sealed class SessionRegistry : IDisposable
 
         public int PrefetchPairs { get; } = prefetchPairs;
 
-        public LibraryActions Actions { get; set; } = null!;
+        /// <summary>
+        /// Constructed with the session, not assigned afterwards: <c>null!</c> plus "someone always
+        /// fills this in" is a promise the type cannot keep, and every read of it here would have
+        /// had to trust it (C20).
+        /// </summary>
+        public LibraryActions Actions { get; } = actions;
+
+        /// <summary>
+        /// § 9.1 and § 10.10: the one thing that can be cancelled, one level, one source. Set by
+        /// vote and skip (the engine's snapshot) and by discard and special (the file that moved);
+        /// cleared by <c>drop_missing</c>, by a successful rename, by a resync, by the undo itself,
+        /// and at open. <c>undoAvailable</c> is this field and nothing else.
+        /// </summary>
+        public UndoPoint UndoPoint { get; set; } = UndoPoint.None;
 
         public ulong PairSeq { get; set; }
 
@@ -1286,4 +1556,22 @@ public sealed class SessionRegistry : IDisposable
         /// </summary>
         public bool RenameInProgress { get; set; }
     }
+}
+
+/// <summary>
+/// SERVER_SPEC.md § 9.1 / § 10.10: what a cancel would take back, if anything. One level, and
+/// exactly one of these at a time — which is the point. <c>undoAvailable</c> on the wire is
+/// <c>!= None</c>, and <c>POST /session/undo</c> branches on the same value, so the snapshot and the
+/// endpoint can no longer disagree (A7).
+/// </summary>
+internal enum UndoPoint
+{
+    /// <summary>Nothing to cancel: a fresh session, or the cancel has been spent.</summary>
+    None,
+
+    /// <summary>A vote or a skip. The engine holds the snapshot; nothing moved on disk.</summary>
+    EngineSnapshot,
+
+    /// <summary>A discard or a special. The file is in a subfolder and undo moves it back.</summary>
+    LastMove,
 }

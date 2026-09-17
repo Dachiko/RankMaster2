@@ -123,6 +123,13 @@ public sealed class RenameRun
     public IReadOnlyList<PlanEntry> Plan { get; set; } = Array.Empty<PlanEntry>();
 
     /// <summary>
+    /// SERVER_SPEC.md § 10.16: the optional <c>clientRequestId</c> from the start request, echoed in
+    /// <c>lastAction</c> when the run succeeds (§ 9.4). Null when the client sent none. It is not on
+    /// the operation's own wire shape — the operation has its own id.
+    /// </summary>
+    public string? ClientRequestId { get; init; }
+
+    /// <summary>
     /// Polled between every file move (§ 3.3 "checking for cancel between files"). Plain volatile
     /// read/write: it is only ever set true, never back to false, so a torn read costs nothing.
     /// </summary>

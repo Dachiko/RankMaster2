@@ -34,6 +34,7 @@ public sealed class RenameAuditTests(Rm2Server server) : AuditTestBase(server)
 
         var voted = (await client.VoteAsync(opened.RequireToken("ranking"), "left"))
             .ShouldBeSnapshot(200, "a vote before the rename, so there is a real rating to lose");
+        Assert.Equal(1, voted.SessionVotes);
 
         folder.JamSave();
         try
@@ -51,6 +52,24 @@ public sealed class RenameAuditTests(Rm2Server server) : AuditTestBase(server)
                 "the rare double fault and reunited must say so truthfully.");
             Assert.False(string.IsNullOrEmpty(error.GetProperty("journal").GetString()),
                 "SERVER_SPEC.md § 5.7: reunited: false must name the journal left for the next open to retry.");
+
+            // SERVER_SPEC.md § 7.2: a rename that failed resyncs the session exactly as a cancel
+            // does — pairSeq +1 because the generation genuinely changed, sessionVotes kept because
+            // the owner really did cast them. The failure path used to do neither: it cleared the
+            // flag and left the session holding filenames that were no longer on disk, so every
+            // later vote answered 200 and wrote nothing (AUDIT.md H2, A1).
+            var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "GET /session after the failure");
+            Assert.Equal(voted.PairSeq + 1, after.PairSeq);
+            Assert.Equal(voted.SessionVotes, after.SessionVotes);
+            Assert.Equal(voted.Cues, after.Cues);
+            Assert.False(after.UndoAvailable);
+            Assert.Null(after.LastAction);
+
+            foreach (var id in after.PairIds)
+            {
+                Assert.True(File.Exists(Path.Combine(folder.Path, id)),
+                    $"the session is resynced from disk, so '{id}' must be a file that is there.");
+            }
         }
         finally
         {

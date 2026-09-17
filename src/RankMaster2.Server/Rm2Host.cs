@@ -31,13 +31,28 @@ public static class Rm2Host
         // could do from inside its own folder. Media asks "is a session open, and is this id one of
         // its records?"; the registry answers without taking the session gate, because a GET must
         // not queue behind a vote.
-        builder.Services.AddSingleton<Media.IMediaSessionAccessor>(_ =>
+        builder.Services.AddSingleton<Media.IMediaSessionAccessor>(services =>
             new Media.DelegatingMediaSessionAccessor(
-                () => Sessions.SessionRegistry.Shared.CurrentForMedia));
+                () => (services.GetService<Sessions.SessionRegistry>()
+                       ?? Sessions.SessionRegistry.Shared).CurrentForMedia));
+
+        // The other seam: GET /ping reports whether a session is open, which folder, its id and its
+        // state (§ 14). The registry answers all four without taking the session gate, so the ping
+        // stays cheap to poll. Registering it here is the line that was missing — without it the
+        // security layer fell back to a reflection bridge that could only ever fill in `folder`
+        // (A4, C15). Resolved from DI so a test that registers its own registry gets its own answer.
+        builder.Services.AddSingleton<Security.ISessionStatusProvider>(services =>
+            services.GetService<Sessions.SessionRegistry>() ?? Sessions.SessionRegistry.Shared);
 
         configure?.Invoke(builder);
 
         var app = builder.Build();
+
+        // A3: close the open session on the way out, so <folder>/.rankmaster.lock is deleted rather
+        // than left sitting among the owner's photographs. The OS frees the handle when the process
+        // dies; nothing but FolderLock.Dispose removes the file.
+        var registry = app.Services.GetService<Sessions.SessionRegistry>() ?? Sessions.SessionRegistry.Shared;
+        app.Lifetime.ApplicationStopping.Register(registry.Dispose);
 
         // TLS, pairing, tokens, the fail-closed auth gate, /ping and /libraries/*.
         // Must come first: the middleware it installs guards every route mapped below.

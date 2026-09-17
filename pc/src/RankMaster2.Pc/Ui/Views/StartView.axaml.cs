@@ -16,6 +16,7 @@ public partial class StartView : UserControl, IRefreshable
     private readonly TextBlock _versionText;
     private readonly Button _openButton;
     private readonly Button _resumeButton;
+    private readonly Button _renameButton;
     private readonly TextBlock _openingLine;
     private readonly Border _errorBox;
     private readonly TextBlock _errorText;
@@ -33,6 +34,7 @@ public partial class StartView : UserControl, IRefreshable
         _versionText = this.FindControl<TextBlock>("VersionText")!;
         _openButton = this.FindControl<Button>("OpenButton")!;
         _resumeButton = this.FindControl<Button>("ResumeButton")!;
+        _renameButton = this.FindControl<Button>("RenameButton")!;
         _openingLine = this.FindControl<TextBlock>("OpeningLine")!;
         _errorBox = this.FindControl<Border>("ErrorBox")!;
         _errorText = this.FindControl<TextBlock>("ErrorText")!;
@@ -48,6 +50,7 @@ public partial class StartView : UserControl, IRefreshable
         {
             if (_coordinator.Start.LastFolder is { } folder) _ = _coordinator.OpenFolderAsync(folder);
         };
+        _renameButton.Click += (_, _) => _ = RenameViaPicker();
 
         _helpButton.PointerEntered += (_, _) => _help.SetButtonHover(true);
         _helpButton.PointerExited += (_, _) => _help.SetButtonHover(false);
@@ -74,6 +77,28 @@ public partial class StartView : UserControl, IRefreshable
         }
     }
 
+    /// <summary>§ 3.13: the same native picker <see cref="OpenViaPicker"/> uses, but on a folder to
+    /// rename rather than to rank — the result opens the rename screen's confirmation, nothing is
+    /// sent to the server yet.</summary>
+    private async Task RenameViaPicker()
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider is not { } storage || _coordinator.Start.DialogOpen) return;
+
+        _coordinator.BeginDialog();
+        try
+        {
+            var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Select a folder to rename by rank" });
+            var folder = result.Count > 0 ? result[0].TryGetLocalPath() : null;
+            if (folder is not null)
+                _coordinator.BeginRenameConfirm(folder);
+        }
+        finally
+        {
+            _coordinator.EndDialog();
+        }
+    }
+
     public void Refresh()
     {
         var start = _coordinator.Start;
@@ -91,6 +116,7 @@ public partial class StartView : UserControl, IRefreshable
 
         _openButton.IsEnabled = !start.Opening;
         _resumeButton.IsEnabled = !start.Opening;
+        _renameButton.IsEnabled = !start.Opening;
 
         _openingLine.IsVisible = start.Opening;
         _openingLine.Text = start.Opening ? $"Opening {start.OpeningFolder}…" : "";

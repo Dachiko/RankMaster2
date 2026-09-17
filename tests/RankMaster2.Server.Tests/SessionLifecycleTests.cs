@@ -1,3 +1,4 @@
+using RankMaster2.Catalog;
 using RankMaster2.Server.Tests.Fixtures;
 using RankMaster2.Server.Tests.Harness;
 using Xunit;
@@ -219,60 +220,101 @@ public class SessionLifecycleTests(Rm2Server server) : SessionTestBase(server)
     /// a second Rank Master process would do, and the server must refuse the folder rather than
     /// writing into it alongside.
     ///
-    /// `details.holder` is null by construction, and the spec spends a section explaining why: the
-    /// lock is opened <c>FileShare.None</c>, which is exactly what stops a second writer — and that
-    /// same exclusivity stops anyone opening the file to read who holds it.
+    /// <para>The lock is held by a <b>second process</b> (<c>tests/RankMaster2.LockHolder</c>), which
+    /// is the only way to ask the question the contract asks. This test used to open the file from
+    /// the test process itself: .NET enforces <c>FileShare.None</c> in-process too, so it passed
+    /// while proving nothing about a different program — and it carried an escape hatch that turned a
+    /// genuine failure into a printed remark about advisory locking. On Linux .NET maps
+    /// <c>FileShare.None</c> onto <c>flock(2)</c>, which is cross-process, so the 423 is real here
+    /// and the hatch was never earned (G-audit-remediation § 2, T1b).</para>
+    ///
+    /// <para><c>details.holder</c> is null by construction, and the spec spends a section explaining
+    /// why: the lock is opened <c>FileShare.None</c>, which is exactly what stops a second writer —
+    /// and that same exclusivity stops anyone opening the file to read who holds it.</para>
     /// </summary>
     [Fact]
-    public async Task A_folder_whose_lock_is_held_elsewhere_is_refused()
+    public async Task A_folder_whose_lock_is_held_by_another_process_is_refused()
     {
         using var folder = LibraryFolder.SixStills();
         var client = await ClientAsync();
 
-        FileStream held;
-        try
+        using var holder = LockHolderProcess.Hold(folder.Path);
+
+        var response = await client.OpenSessionAsync(folder.Path);
+
+        if (response.StatusCode is 200 or 201)
         {
-            held = new FileStream(folder.File(".rankmaster.lock"), FileMode.OpenOrCreate,
-                                  FileAccess.ReadWrite, FileShare.None);
-        }
-        catch (IOException)
-        {
+            await client.CloseSessionAsync();
             throw new Xunit.Sdk.XunitException(
-                "Could not take the folder lock from the test process, so this test cannot set up.");
+                "SERVER_SPEC.md § 10.1 step 4: opening a folder whose .rankmaster.lock is held by another " +
+                "process must be 423 folder_locked, and this opened it instead.\n" + response.Describe());
         }
 
-        try
-        {
-            var response = await client.OpenSessionAsync(folder.Path);
+        var failure = response.ShouldBeError("folder_locked",
+            "SERVER_SPEC.md § 10.1 step 4: a folder whose lock is held elsewhere is 423 folder_locked");
 
-            // A platform whose file locks are advisory cannot produce this, and saying so is more
-            // useful than a failure that looks like a server bug.
-            if (response.StatusCode is 200 or 201)
-            {
-                await client.CloseSessionAsync();
-                throw new Xunit.Sdk.XunitException(
-                    "SERVER_SPEC.md § 10.1 step 4: opening a folder whose .rankmaster.lock is held elsewhere " +
-                    "must be 423 folder_locked, and this opened it instead.\n" +
-                    "  If this platform's file locking is advisory rather than mandatory, the server cannot " +
-                    "detect the conflict — which is worth knowing, because SERVER_SPEC.md § 16.6 already warns " +
-                    "the lock only binds this server.\n" + response.Describe());
-            }
+        var holderDetail = failure.Detail("holder", "folder_locked details");
+        Assert.True(holderDetail.ValueKind == System.Text.Json.JsonValueKind.Null,
+            "SERVER_SPEC.md § 5.3.1: details.holder is null, always. The lock is FileShare.None, so no " +
+            "other process can open it to read the holder record — a best-effort read cannot succeed and " +
+            $"would only produce a misleading error path. Got {holderDetail}.");
 
-            var failure = response.ShouldBeError("folder_locked",
-                "SERVER_SPEC.md § 10.1 step 4: a folder whose lock is held elsewhere is 423 folder_locked");
+        Assert.NotNull(response.HeaderOrNull("X-Request-Id"));
 
-            var holder = failure.Detail("holder", "folder_locked details");
-            Assert.True(holder.ValueKind == System.Text.Json.JsonValueKind.Null,
-                "SERVER_SPEC.md § 5.3.1: details.holder is null, always. The lock is FileShare.None, so no " +
-                "other process can open it to read the holder record — a best-effort read cannot succeed and " +
-                $"would only produce a misleading error path. Got {holder}.");
+        // And the moment the other process lets go, the folder opens.
+        holder.Release();
+        (await client.OpenSessionAsync(folder.Path)).ShouldBeSnapshot(
+            201, "the folder opens once the other process has released the lock");
+    }
 
-            Assert.NotNull(response.HeaderOrNull("X-Request-Id"));
-        }
-        finally
-        {
-            held.Dispose();
-        }
+    /// <summary>
+    /// AUDIT.md H11, the cheap half. Browsing the whole filesystem is the product decision and stays;
+    /// what does not stay is <c>POST /session</c> — which can discard files into subfolders and
+    /// rename every file in the folder — accepting path forms that the read-only
+    /// <c>GET /libraries/browse</c> refuses. One guard, one answer.
+    /// </summary>
+    [Theory]
+    [InlineData("/tmp/../etc", "a relative segment")]
+    [InlineData("/tmp/./photos", "a dot segment")]
+    [InlineData("\\\\evil\\share", "a UNC path — on Windows this makes the server authenticate to a host of the caller's choosing")]
+    [InlineData("\\\\?\\C:\\photos", "the Win32 device namespace, which turns off the normalisation every check depends on")]
+    [InlineData("/tmp/NUL", "a reserved device name")]
+    [InlineData("/tmp/photos.", "a segment ending in a dot, which Windows silently strips")]
+    public async Task Session_open_refuses_what_browse_refuses(string path, string because)
+    {
+        var client = await ClientAsync();
+
+        var browse = await client.BrowseAsync(path);
+        var open = await client.OpenSessionAsync(path);
+
+        browse.ShouldBeError("invalid_path", $"GET /libraries/browse refuses {because}");
+        open.ShouldBeError("invalid_path",
+            $"SERVER_SPEC.md § 10.1 step 1 and AUDIT.md H11: POST /session takes the same path guard as " +
+            $"/libraries/browse, and this is {because}. The endpoint that moves files must not be the " +
+            "lenient one.");
+    }
+
+    /// <summary>
+    /// AUDIT.md A9. <c>JsonCatalog.Save</c> writes a temp file and replaces atomically; a crash
+    /// between the two leaves <c>rankmaster_db.json.tmp</c> beside the photographs. It is skipped by
+    /// every scan and overwritten by the next save, so it costs nothing except the owner wondering
+    /// what it is. Open is the one moment the server knows no save is in flight in this folder.
+    /// </summary>
+    [Fact]
+    public async Task A_stale_tmp_is_removed_on_open()
+    {
+        using var folder = LibraryFolder.SixStills();
+        var stale = folder.File("rankmaster_db.json.tmp");
+        await File.WriteAllTextAsync(stale, "{ half-written, from a crash }");
+
+        var snapshot = await OpenAsync(folder);
+
+        Assert.False(File.Exists(stale),
+            "SERVER_SPEC.md § 13.2 / AUDIT.md A9: a stale rankmaster_db.json.tmp is cleaned up when the " +
+            "folder is opened.");
+
+        // And it was never a record: six files went in, six come out.
+        Assert.Equal(6, snapshot.Total);
     }
 
     [Fact]
@@ -412,5 +454,196 @@ public class SessionLifecycleTests(Rm2Server server) : SessionTestBase(server)
         Assert.Equal(2, snapshot.Rankable);
         Assert.Equal("ranking", snapshot.State);
         Assert.NotNull(snapshot.PairToken);
+    }
+}
+
+/// <summary>
+/// The parts of the session lifecycle that only exist while a rename is running, held at an exact
+/// step by <see cref="RenameGateServer"/>'s blockable catalog and journal writer. A six-file rename
+/// on this box is over in a millisecond, so without a gate these would be three coin tosses.
+/// </summary>
+[Collection(RenameGateCollection.Name)]
+public sealed class SessionLifecycleDuringRenameTests(RenameGateServer server) : IAsyncLifetime
+{
+    private readonly RenameGateServer _server = server;
+
+    public Task InitializeAsync() => _server.ResetAsync();
+    public Task DisposeAsync() => _server.ResetAsync();
+
+    /// <summary>
+    /// AUDIT.md H14 and SERVER_SPEC.md § 10.4. Closing releases the folder lock; doing that while the
+    /// rename task is still moving files would let a second <c>POST /session</c> run journal recovery
+    /// on a folder that is being renamed underneath it — two programs finalizing the same plan at
+    /// once. The refusal makes that race unbuildable. The phone used to do exactly this, unasked.
+    /// </summary>
+    [Fact]
+    public async Task Close_during_a_rename_is_refused()
+    {
+        using var folder = LibraryFolder.SixStills();
+        var client = _server.Client;
+        (await client.OpenSessionAsync(folder.Path)).ShouldBeSnapshot(201, "open");
+
+        var gate = new TaskCompletionSource<bool>();
+        _server.Catalog.SaveGate = gate;
+
+        (await client.StartRenameAsync()).ShouldHaveStatus(202, "start");
+        await RenamePolling.PollUntilAsync(
+            client, op => op.GetProperty("phase").GetString() == "saving", timeoutSeconds: 5);
+
+        var refused = await client.CloseSessionAsync();
+        refused.ShouldBeError("rename_in_progress",
+            "SERVER_SPEC.md § 10.4: DELETE /session is refused while a rename runs, like every other " +
+            "mutating call. The client cancels the rename first (AUDIT.md H14).");
+
+        Assert.NotNull(refused.JsonBody.GetProperty("error").GetProperty("details")
+                              .GetProperty("operationId").GetString());
+
+        Assert.True(File.Exists(folder.File(".rankmaster.lock")),
+            "the refusal has to mean the lock is still held — that is the whole point of it.");
+
+        gate.SetResult(true);
+        var final = await RenamePolling.PollToTerminalAsync(client);
+        Assert.Equal("succeeded", final.GetProperty("state").GetString());
+
+        (await client.CloseSessionAsync()).ShouldHaveStatus(204, "the close lands once the rename has settled");
+    }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 7.2 and § 10.16, "Cancel or failure — the session effect": a cancel in
+    /// <c>renaming</c> keeps <c>sessionVotes</c> and <c>cues</c>. The cancel path used to call
+    /// <c>Start()</c>, which zeroes exactly the two counters § 10.1 goes out of its way to protect on
+    /// a resuming <c>POST /session</c> — so pressing Cancel told the owner he had cast no votes this
+    /// sitting (AUDIT.md A1, C11).
+    ///
+    /// <para>The cancel lands while a move is retrying, which is the case the owner asked for: on his
+    /// slow USB drive he wants the button to answer within one retry interval, not after the whole
+    /// budget. The retry is forced by parking a <b>directory</b> at the name the first move is about
+    /// to use — read out of the journal, which is fsynced before any file moves.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_rename_keeps_the_session_counters()
+    {
+        using var folder = LibraryFolder.SixStills();
+        var client = _server.Client;
+
+        var opened = (await client.OpenSessionAsync(folder.Path)).ShouldBeSnapshot(201, "open");
+        var voted = (await client.VoteAsync(opened.RequireToken("open"), "left")).ShouldBeSnapshot(200, "vote");
+        Assert.Equal(1, voted.SessionVotes);
+        Assert.Single(voted.Cues);
+
+        // The gate is inside the journal write, which POST /session/rename holds the session gate
+        // across — so the request is still in flight while the directory is planted, and it is
+        // awaited afterwards.
+        var afterWrite = new TaskCompletionSource<bool>();
+        _server.JournalWriter.AfterWriteGate = afterWrite;
+
+        var startTask = client.StartRenameAsync();
+        var blocked = await BlockFirstMoveAsync(folder);
+        afterWrite.SetResult(true);
+        (await startTask).ShouldHaveStatus(202, "start");
+
+        (await client.CancelRenameAsync()).ShouldHaveStatus(200, "cancel while the first move is retrying");
+
+        var final = await RenamePolling.PollToTerminalAsync(client);
+        Assert.Equal("cancelled", final.GetProperty("state").GetString());
+        Directory.Delete(blocked);
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "after the cancel");
+
+        // § 7.2's row, field by field.
+        Assert.Equal(opened.SessionId, after.SessionId);
+        Assert.Equal(voted.SessionVotes, after.SessionVotes);
+        Assert.Equal(voted.Cues, after.Cues);
+        Assert.Equal(voted.PairSeq + 1, after.PairSeq);
+        Assert.False(after.UndoAvailable);
+        Assert.Null(after.LastAction);
+
+        (await client.VoteAsync(voted.RequireToken("before the cancel"), "left"))
+            .ShouldBeError("stale_pair_token", "pairSeq advanced, so every token the client held is stale");
+
+        foreach (var id in after.PairIds)
+            Assert.True(File.Exists(folder.File(id)), $"the session was resynced from disk; '{id}' is not there");
+
+        Assert.False(RenameEngine.JournalExists(folder.Path), "a cancel that reunited deletes the journal");
+    }
+
+    /// <summary>
+    /// The other half of the same row: a rename that <b>fails</b> after the journal was written does
+    /// exactly what a cancel does to the session, because the folder is in the same condition either
+    /// way. § 7.2 promised "cancelled <b>or failed</b> → resynced from disk" from the beginning and
+    /// only the cancel did it (AUDIT.md H2, C1).
+    /// </summary>
+    [Fact]
+    public async Task A_failed_rename_resyncs_like_a_cancel()
+    {
+        using var folder = LibraryFolder.SixStills();
+        var client = _server.Client;
+
+        var opened = (await client.OpenSessionAsync(folder.Path)).ShouldBeSnapshot(201, "open");
+        var voted = (await client.VoteAsync(opened.RequireToken("open"), "left")).ShouldBeSnapshot(200, "vote");
+
+        var afterWrite = new TaskCompletionSource<bool>();
+        _server.JournalWriter.AfterWriteGate = afterWrite;
+
+        // Nobody cancels this one, so the move exhausts its retry budget and the run fails.
+        var startTask = client.StartRenameAsync();
+        var blocked = await BlockFirstMoveAsync(folder);
+        afterWrite.SetResult(true);
+        (await startTask).ShouldHaveStatus(202, "start");
+
+        var final = await RenamePolling.PollToTerminalAsync(client, timeoutSeconds: 30);
+        Assert.Equal("failed", final.GetProperty("state").GetString());
+        Assert.Equal("rename_failed", final.GetProperty("error").GetProperty("code").GetString());
+        Assert.True(final.GetProperty("error").GetProperty("reunited").GetBoolean(),
+            "the reunite after the failed move could write, so no rating is in doubt");
+        Directory.Delete(blocked);
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "after the failure");
+
+        Assert.Equal(opened.SessionId, after.SessionId);
+        Assert.Equal(voted.SessionVotes, after.SessionVotes);
+        Assert.Equal(voted.Cues, after.Cues);
+        Assert.Equal(voted.PairSeq + 1, after.PairSeq);
+        Assert.False(after.UndoAvailable);
+        Assert.Null(after.LastAction);
+
+        foreach (var id in after.PairIds)
+            Assert.True(File.Exists(folder.File(id)),
+                $"SERVER_SPEC.md § 7.2: a failed rename resyncs from disk; '{id}' is not on disk.");
+
+        // And the point of H2: a vote after the failure actually reaches the file.
+        var before = await File.ReadAllTextAsync(folder.File("rankmaster_db.json"));
+        (await client.VoteAsync(after.RequireToken("after the failure"), "left"))
+            .ShouldBeSnapshot(200, "vote after the failed rename");
+        Assert.NotEqual(before, await File.ReadAllTextAsync(folder.File("rankmaster_db.json")));
+    }
+
+    /// <summary>
+    /// Reads the journal the rename has just fsynced and parks a <b>directory</b> at the first plan
+    /// entry's destination. <c>File.Move</c> onto a directory is an I/O error, so
+    /// <c>FileOps.MoveWithRetry</c> retries it — twenty times, fifty milliseconds apart — polling the
+    /// cancel flag between attempts. That is a full second in which a test (or the owner) can press
+    /// Cancel, and it is the exact situation § 10.16 describes: "a move whose destination or source is
+    /// briefly held by another program".
+    /// <para>Returns the directory it created, so the caller can remove it once the run is terminal.</para>
+    /// </summary>
+    private static async Task<string> BlockFirstMoveAsync(LibraryFolder folder)
+    {
+        var journalPath = RenameEngine.JournalPath(folder.Path);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!File.Exists(journalPath))
+        {
+            if (DateTime.UtcNow > deadline)
+                throw new Xunit.Sdk.XunitException("The rename journal was never written.");
+            await Task.Delay(5);
+        }
+
+        var journal = RenameEngine.ReadJournal(folder.Path)
+            ?? throw new Xunit.Sdk.XunitException("The rename journal is present but empty.");
+        var first = journal.Plan![0];
+
+        var blocked = folder.File(first.New);
+        Directory.CreateDirectory(blocked);
+        return blocked;
     }
 }

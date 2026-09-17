@@ -116,6 +116,25 @@ public class UiRootTests
         Assert.NotEqual(1080, stills.PaneHeight);
     }
 
+    /// <summary>§ 3.13: on the rename screen, Esc is wired to the coordinator's own cancel path, not
+    /// <see cref="RankCoordinator.QuitRequested"/> -- "Esc on this screen cancels the rename, not
+    /// the program."</summary>
+    [AvaloniaFact]
+    public void Esc_on_the_rename_confirmation_screen_returns_to_start_and_does_not_quit()
+    {
+        var (window, _, coordinator, link, _, _) = Build();
+        coordinator.BeginRenameConfirm("/lib/photos");
+        Assert.Equal(AppScreen.Rename, coordinator.Screen);
+
+        var quit = false;
+        coordinator.QuitRequested += () => quit = true;
+        window.KeyPress(Key.Escape, RawInputModifiers.None);
+
+        Assert.False(quit);
+        Assert.Equal(AppScreen.Start, coordinator.Screen);
+        Assert.Empty(link.Calls);
+    }
+
     private static T? FindDescendant<T>(Control root, string? name = null) where T : Control
     {
         if (root is T match && (name is null || root.Name == name)) return match;

@@ -78,6 +78,23 @@ internal sealed record FrozenRequest(
         return new FrozenRequest(HttpMethod.Post, "/session/save", body, null, null);
     }
 
+    /// <summary>SERVER_SPEC.md § 10.16: no <c>pairToken</c> — a rename is not pair-scoped, so it is
+    /// never sent (a token in the body would be ignored by the server anyway).</summary>
+    public static FrozenRequest StartRename(string clientRequestId)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(
+            new RenameStartRequest(clientRequestId), WireJsonContext.Default.RenameStartRequest);
+        return new FrozenRequest(HttpMethod.Post, "/session/rename", body, null, clientRequestId);
+    }
+
+    public static FrozenRequest GetRename() => Get("/session/rename");
+
+    /// <summary>SERVER_SPEC.md § 10.16: "takes no body" — unlike the other bodyless POSTs here
+    /// (<see cref="Save"/>), openapi.yaml declares no <c>requestBody</c> for this route at all, so
+    /// this sends zero bytes rather than an empty JSON object.</summary>
+    public static FrozenRequest CancelRename() =>
+        new(HttpMethod.Post, "/session/rename/cancel", [], null, null);
+
     /// <summary>Unauthenticated (§ 3): the bearer token does not exist yet. Never retried (§ 13.3):
     /// the code is single-use, so the caller must set <c>Authenticate = false</c> and never resend
     /// this instance.</summary>

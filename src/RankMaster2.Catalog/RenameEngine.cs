@@ -358,24 +358,6 @@ public static class RenameEngine
         return done;
     }
 
-    /// <summary>Removed by G-audit-remediation § 3.9: there is one phase now. Calls <see cref="MoveAll"/>.</summary>
-    [Obsolete("Removed by G-audit-remediation § 3.9")]
-    public static int MovePhase1(
-        string folder,
-        IReadOnlyList<PlanEntry> plan,
-        Func<int, bool>? shouldStop = null,
-        Action<int, int>? onProgress = null) =>
-        MoveAll(folder, plan, shouldStop, onProgress);
-
-    /// <summary>Removed by G-audit-remediation § 3.9: nothing is left to do after <see cref="MoveAll"/>.</summary>
-    [Obsolete("Removed by G-audit-remediation § 3.9")]
-    public static int MovePhase2(
-        string folder,
-        IReadOnlyList<PlanEntry> plan,
-        Func<int, bool>? shouldStop = null,
-        Action<int, int>? onProgress = null) =>
-        plan.Count;
-
     /// <summary>Writes the database with the plan's new keys, atomically (§ 3.3 step "saving").</summary>
     public static IReadOnlyList<MediaRecord> Commit(
         ICatalog catalog, string folder, IReadOnlyList<MediaRecord> preRenameRecords, IReadOnlyList<PlanEntry> plan)

@@ -6,7 +6,14 @@ public sealed class RankingSession
     private readonly IRatingEngine _engine;
     private readonly IPairSelector _selector;
     private readonly int _prefetchPairs;
-    private readonly List<MediaRecord> _records = [];
+    /// <summary>
+    /// Not readonly, and never rebuilt in place. Every wholesale replacement — a scan, a resync, a
+    /// rollback — builds a complete new list and assigns it in one reference write, because the
+    /// media layer reads this collection without the session gate (SERVER_SPEC.md § 11.3). A
+    /// <c>Clear()</c> followed by an <c>AddRange()</c> gives that reader a window on an empty or
+    /// half-filled list; a reference swap gives it either the old list or the new one, both whole.
+    /// </summary>
+    private List<MediaRecord> _records = [];
     private readonly Queue<MediaId> _recentOrder = new();
     private readonly HashSet<MediaId> _recent = [];
     private readonly Queue<Pair> _warm = new();
@@ -44,15 +51,36 @@ public sealed class RankingSession
     public int UnrankedCount => Eligible().Count(r => r.Matches == 0);
     public string FolderName => Path.GetFileName(Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
-    public bool Start()
+    /// <summary>
+    /// Opens the session on <see cref="Folder"/>: scan, forget everything this session accumulated,
+    /// pick the first pair. Returns false when fewer than two eligible files are there.
+    /// </summary>
+    public bool Start() => Rescan(keepSessionCounters: false);
+
+    /// <summary>
+    /// Re-reads the folder <b>without</b> discarding what the owner did in this sitting
+    /// (SERVER_SPEC.md § 7.2, "Cancel or failure — the session effect"). It is <see cref="Start"/>
+    /// minus two lines: <c>sessionVotes</c> and the cue strip are kept, because he really did cast
+    /// those votes and a rename that did not finish is no reason to tell him otherwise. Everything
+    /// that refers to <i>filenames</i> — the records, the current pair, the warm queue, the
+    /// recent-shown set and the undo point — is rebuilt, because the names on disk may have changed
+    /// underneath.
+    /// </summary>
+    public bool Resync() => Rescan(keepSessionCounters: true);
+
+    private bool Rescan(bool keepSessionCounters)
     {
-        _records.Clear();
-        _records.AddRange(_catalog.Scan(Folder));
+        // One assignment, never Clear()+AddRange(): see the field's own comment.
+        _records = [.. _catalog.Scan(Folder)];
         _warm.Clear();
-        _cues.Clear();
         _recent.Clear();
         _recentOrder.Clear();
-        SessionVotes = 0;
+        if (!keepSessionCounters)
+        {
+            _cues.Clear();
+            SessionVotes = 0;
+        }
+
         _undo = null;
         Current = null;
         Current = Pick();
@@ -179,8 +207,7 @@ public sealed class RankingSession
     public void ReplaceAll(IReadOnlyList<MediaRecord> records)
     {
         _undo = null;
-        _records.Clear();
-        _records.AddRange(records);
+        _records = [.. records];
         _warm.Clear();
         _recent.Clear();
         _recentOrder.Clear();
@@ -319,8 +346,7 @@ public sealed class RankingSession
 
     private void RestoreSnapshot(SessionSnap snap)
     {
-        _records.Clear();
-        _records.AddRange(snap.Records);
+        _records = [.. snap.Records];
         Current = snap.Current;
         SessionVotes = snap.SessionVotes;
         _warm.Clear();

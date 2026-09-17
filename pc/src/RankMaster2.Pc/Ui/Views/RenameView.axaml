@@ -1,0 +1,45 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RankMaster2.Pc.Ui.Views.RenameView">
+  <Grid>
+    <Grid.Background>
+      <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+        <GradientStop Color="#18181B" Offset="0" />
+        <GradientStop Color="#000000" Offset="1" />
+      </LinearGradientBrush>
+    </Grid.Background>
+
+    <!-- Confirming: the owner's own words (§ 3.13 item 2), then Yes / No. -->
+    <StackPanel Name="ConfirmPanel" Width="480" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+      <TextBlock Text="Rename Files by Rank" FontSize="24" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+      <TextBlock Name="ConfirmText" FontSize="14" Foreground="{DynamicResource HelpSheetLabel}" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" />
+      <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+        <Button Name="YesButton" Content="Rename  [Enter]" Height="44" Width="200" FontSize="15" FontWeight="SemiBold"
+                Background="{DynamicResource RenameButtonFill}" BorderBrush="{DynamicResource RenameButtonBorder}" BorderThickness="1"
+                Foreground="{DynamicResource RenameButtonText}" CornerRadius="10" />
+        <Button Name="NoButton" Content="Cancel  [Esc]" Height="44" Width="200" FontSize="15" FontWeight="SemiBold"
+                Background="{DynamicResource StartButtonFill}" BorderBrush="{DynamicResource StartButtonBorder}" BorderThickness="1"
+                CornerRadius="10" />
+      </StackPanel>
+    </StackPanel>
+
+    <!-- Running: done/total, phase, a real progress bar, Cancel. -->
+    <StackPanel Name="RunningPanel" Width="480" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" IsVisible="False">
+      <TextBlock Text="Renaming by Rank" FontSize="24" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+      <TextBlock Name="FolderText" FontSize="12" Foreground="{DynamicResource VersionText}" HorizontalAlignment="Center"
+                 TextWrapping="Wrap" TextAlignment="Center" />
+
+      <Border Height="10" CornerRadius="5" Background="{DynamicResource CardBarTrack}" ClipToBounds="True">
+        <Border Name="ProgressFill" Height="10" CornerRadius="5" Background="{DynamicResource CardBarFill}"
+                HorizontalAlignment="Left" Width="0" />
+      </Border>
+
+      <TextBlock Name="ProgressText" FontSize="14" Foreground="White" HorizontalAlignment="Center" FontFamily="Consolas,monospace" />
+      <TextBlock Name="PhaseText" FontSize="12" Foreground="{DynamicResource HelpSheetLabel}" HorizontalAlignment="Center" />
+
+      <Button Name="CancelButton" Content="Cancel  [Esc]" Height="44" Width="200" HorizontalAlignment="Center" FontSize="15" FontWeight="SemiBold"
+              Background="{DynamicResource ErrorBoxFill}" BorderBrush="{DynamicResource ErrorBoxBorder}" BorderThickness="1"
+              Foreground="{DynamicResource ErrorBoxText}" CornerRadius="10" />
+    </StackPanel>
+  </Grid>
+</UserControl>

@@ -299,6 +299,124 @@ public class RankingSessionTests
         Assert.Equal(impressions, session.Find(pair.Left).Impressions);
     }
 
+    // ---- Resync (SERVER_SPEC.md § 7.2, "Cancel or failure — the session effect") ---------------
+
+    /// <summary>
+    /// <c>Resync</c> is <c>Start</c> minus two lines. A rename that was cancelled or that failed
+    /// leaves the folder holding a mix of old and new filenames, so the records, the pair, the warm
+    /// queue and the undo point all have to be rebuilt — but the owner really did cast those votes,
+    /// and telling him he had cast none because a rename did not finish is the loss A1 recorded.
+    /// </summary>
+    [Fact]
+    public void Resync_rereads_the_folder_and_keeps_the_session_counters()
+    {
+        var catalog = new MemoryCatalog(
+            Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"), Rec("e.jpg"), Rec("f.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        session.VoteLeft();
+        Assert.Equal(1, session.SessionVotes);
+        Assert.Single(session.RecentCues);
+        Assert.True(session.CanUndoLastAction);
+
+        // The folder is renamed under the session, exactly as an interrupted rename leaves it.
+        catalog.Replace(Rec("000001-7f3a.jpg"), Rec("000002-7f3a.jpg"), Rec("000003-7f3a.jpg"),
+                        Rec("000004-7f3a.jpg"), Rec("000005-7f3a.jpg"), Rec("000006-7f3a.jpg"));
+
+        Assert.True(session.Resync());
+
+        Assert.Equal(1, session.SessionVotes);
+        Assert.Single(session.RecentCues);
+        Assert.False(session.CanUndoLastAction,
+            "the undo point refers to records that may no longer exist, so a resync clears it");
+
+        Assert.All(session.Records, r => Assert.StartsWith("00000", r.Filename));
+        Assert.NotNull(session.Current);
+        Assert.StartsWith("00000", session.Current!.Value.Left.Filename);
+        Assert.StartsWith("00000", session.Current.Value.Right.Filename);
+    }
+
+    /// <summary>The difference from <c>Start</c>, stated as a test so it cannot drift back.</summary>
+    [Fact]
+    public void Start_zeroes_the_counters_that_Resync_keeps()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+        session.VoteLeft();
+
+        Assert.True(session.Start());
+
+        Assert.Equal(0, session.SessionVotes);
+        Assert.Empty(session.RecentCues);
+    }
+
+    /// <summary>A folder that lost all but one file while the rename ran is no longer rankable.</summary>
+    [Fact]
+    public void Resync_reports_false_when_the_folder_can_no_longer_pair()
+    {
+        var catalog = new MemoryCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        catalog.Replace(Rec("a.jpg"));
+
+        Assert.False(session.Resync());
+        Assert.Null(session.Current);
+        Assert.Single(session.Records);
+    }
+
+    /// <summary>
+    /// AUDIT.md A8. The media layer copies <c>Records</c> without the session gate, so a wholesale
+    /// replacement must never be visible half-done. Every one of them assigns a complete new list in
+    /// one reference write; a <c>Clear()</c> + <c>AddRange()</c> would give a concurrent reader an
+    /// empty or partial view (a 500, or a transient 404 cached until the next pairSeq).
+    /// </summary>
+    [Fact]
+    public void A_rollback_swaps_the_record_list_rather_than_emptying_it_in_place()
+    {
+        var catalog = new ThrowOnSecondSaveCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.Start());
+
+        var held = session.Records;          // the reference a media request would have taken
+        var before = held.Count;
+
+        catalog.FailNextSave = true;
+        Assert.ThrowsAny<Exception>(() => session.VoteLeft());
+
+        Assert.Equal(4, session.Records.Count);
+        Assert.False(ReferenceEquals(held, session.Records),
+            "the rolled-back records are a new list, so the one a reader already holds is still whole");
+        Assert.Equal(before, held.Count);
+        Assert.All(held, Assert.NotNull);
+    }
+
+    private sealed class ThrowOnSecondSaveCatalog(params MediaRecord[] records) : ICatalog
+    {
+        private List<MediaRecord> _records = [.. records];
+
+        public bool FailNextSave;
+
+        public IReadOnlyList<MediaRecord> Scan(string folder) => _records;
+
+        public void Save(string folder, IReadOnlyList<MediaRecord> records)
+        {
+            if (FailNextSave)
+            {
+                FailNextSave = false;
+                throw new IOException("simulated");
+            }
+
+            _records = records.ToList();
+        }
+
+        public IReadOnlyList<MediaRecord> RemapIds(
+            IReadOnlyList<MediaRecord> records, IReadOnlyDictionary<MediaId, MediaId> map) =>
+            records.Select(r => map.TryGetValue(r.Id, out var n) ? r with { Id = n } : r).ToList();
+    }
+
     private static MediaRecord Rec(string name, double mu = RankingConstants.InitialMu, double sigma = RankingConstants.InitialSigma) =>
         new(new MediaId(name), MediaExtensions.KindOf(name) ?? MediaKind.Still, new Rating(mu, sigma), 0, 0, 0);
 
@@ -312,6 +430,9 @@ public class RankingSessionTests
 
         public void Save(string folder, IReadOnlyList<MediaRecord> records) =>
             _records = records.ToList();
+
+        /// <summary>Renames the folder under the session, the way an interrupted rename does.</summary>
+        public void Replace(params MediaRecord[] records) => _records = [.. records];
 
         public IReadOnlyList<MediaRecord> RemapIds(
             IReadOnlyList<MediaRecord> records,

@@ -115,4 +115,26 @@ public static class Notices
     /// *ranking* session must be abandoned, not about where an open failure is shown.</summary>
     public static Notice ForOpenFailure(Failure failure) =>
         Notice.ForStartScreen(string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}");
+
+    /// <summary>§ 3.13 item 2: "on succeeded, cancelled or failed one line says which"; a failed run
+    /// with <c>reunited:false</c> additionally "shows the journal path and 'open the folder again to
+    /// retry'". Always the start screen's box — the rename screen hands the operation off and
+    /// returns there the moment it is terminal.</summary>
+    public static string ForRenameTerminal(RenameOperation operation, string folder) => operation.State switch
+    {
+        "succeeded" => $"Renamed {operation.Total} file{(operation.Total == 1 ? "" : "s")} by rank in {folder}.",
+        "cancelled" => "Rename cancelled. Nothing already done was undone; every rating is still on its file, " +
+                       "whatever that file is named now.",
+        "failed" => ForRenameFailed(operation.Error),
+        _ => $"The rename ended in an unexpected state ({operation.State}).",
+    };
+
+    private static string ForRenameFailed(RenameOperationError? error)
+    {
+        if (error is null) return "Rename failed.";
+        return error.Reunited
+            ? "Rename failed, but nothing moved and nothing was renamed — every rating is exactly where it was."
+            : $"Rename failed and the journal at {error.Journal ?? "(unknown path)"} could not be read on its own. " +
+              "Open the folder again to retry.";
+    }
 }

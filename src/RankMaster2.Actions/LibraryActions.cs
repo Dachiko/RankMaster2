@@ -51,7 +51,14 @@ public sealed class LibraryActions : ILibraryActions
         if (string.IsNullOrEmpty(destDir))
             return false;
 
-        Directory.CreateDirectory(destDir);
+        // K14: never Directory.CreateDirectory here. This is the *media* folder — the one thing
+        // JsonCatalog.Save was taught not to recreate, because a folder that is gone (an unplugged
+        // drive, a folder renamed in Explorer) must look gone rather than be silently re-made empty.
+        // Creating it would put back a directory and then fail the move into it anyway, leaving a
+        // stray empty folder as the only trace.
+        if (!Directory.Exists(destDir))
+            throw new DirectoryNotFoundException("The folder this file came from is gone: " + destDir);
+
         var backName = FileOps.UniqueFileName(destDir, move.OriginalName);
         FileOps.MoveWithRetry(move.DestPath, Path.Combine(destDir, backName));
 

@@ -14,11 +14,22 @@ public static class RenameEndpoints
 
         // Start. 202 is an acknowledgement, not a completion (§ 13.1's named exception) — the
         // journal is already fsynced by the time this returns, but the moves and the database
-        // commit have not necessarily happened yet. Takes no pairToken and ignores one if sent:
-        // the request body, if any, is not read at all.
+        // commit have not necessarily happened yet.
+        //
+        // The body is optional and carries at most a clientRequestId; a pairToken sent in it is
+        // ignored, because a rename is not pair-scoped. "Ignored" is not the same as "never read":
+        // § 10.16 and openapi.yaml both promise that a body which is present and malformed is a 400
+        // like every other POST here, and a route that accepts `{ not json` with a 202 teaches a
+        // client that this one endpoint has different rules (C9).
         group.MapPost("", async (HttpContext http, CancellationToken cancellation) =>
         {
-            var outcome = await registry.StartRenameAsync(cancellation);
+            var (body, bodyError) = await SessionBody.ReadAsync(http, required: false);
+            var idError = SessionBody.OptionalClientRequestId(body, out var clientRequestId);
+            bodyError ??= idError;
+            if (bodyError is not null)
+                return SessionResults.Error(http, bodyError.Code, bodyError.Message, bodyError.Details);
+
+            var outcome = await registry.StartRenameAsync(clientRequestId, cancellation);
             if (!outcome.IsError)
                 http.Response.Headers.Location = $"{SessionRegistry.ApiBase}/session/rename";
             return Respond(http, outcome);

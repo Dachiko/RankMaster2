@@ -42,9 +42,16 @@ public sealed class RenameTests(Rm2Server server) : SessionTestBase(server)
         Assert.True(body.TryGetProperty("operationId", out _));
         Assert.True(body.TryGetProperty("phase", out _));
         Assert.True(body.TryGetProperty("done", out _));
-        Assert.True(body.TryGetProperty("total", out _));
 
-        await RenamePolling.PollToTerminalAsync(client);
+        // SERVER_SPEC.md § 10.16: total is N, the number of files in the plan — six files, six moves.
+        // It used to be 2 × N, from a two-phase engine whose second phase could never be needed, so a
+        // client's bar stopped at half way and then jumped (H1 on the wire).
+        Assert.Equal(6, body.GetProperty("total").GetInt32());
+
+        var final = await RenamePolling.PollToTerminalAsync(client);
+        Assert.Equal("succeeded", final.GetProperty("state").GetString());
+        Assert.Equal(6, final.GetProperty("total").GetInt32());
+        Assert.Equal(6, final.GetProperty("done").GetInt32());
     }
 
     [Fact]
@@ -126,6 +133,32 @@ public sealed class RenameTests(Rm2Server server) : SessionTestBase(server)
             "no_rename_operation", "GET /session/rename before any rename has run");
         (await client.CancelRenameAsync()).ShouldBeError(
             "no_rename_operation", "cancel before any rename has run");
+    }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.16: "<c>clientRequestId</c>, when given, follows § 15's rules and is echoed
+    /// in <c>lastAction</c> on success." It is how a client that lost the 202 tells whether the run
+    /// it started is the run that finished, and § 15's 64-character cap applies here as everywhere.
+    /// </summary>
+    [Fact]
+    public async Task Rename_echoes_the_clientRequestId_and_holds_it_to_the_same_limit()
+    {
+        using var folder = LibraryFolder.SixStills();
+        await OpenAsync(folder);
+        var client = await ClientAsync();
+
+        (await client.SendAsync(HttpMethod.Post, "/session/rename", new { clientRequestId = new string('x', 65) }))
+            .ShouldBeError("invalid_request", "SERVER_SPEC.md § 15: clientRequestId is 64 characters at most");
+
+        (await client.SendAsync(HttpMethod.Post, "/session/rename", new { clientRequestId = "tidy-up-1" }))
+            .ShouldHaveStatus(202, "start");
+        var final = await RenamePolling.PollToTerminalAsync(client);
+        Assert.Equal("succeeded", final.GetProperty("state").GetString());
+
+        var after = (await client.GetSessionAsync()).ShouldBeSnapshot(200, "after the rename");
+        var last = after.RequireLastAction("§ 9.4");
+        Assert.Equal("rename", last.Type);
+        Assert.Equal("tidy-up-1", last.ClientRequestId);
     }
 
     [Fact]
@@ -296,16 +329,27 @@ public sealed class GateCatalog : ICatalog
         _inner.RemapIds(records, map);
 }
 
-/// <summary><c>IRenameJournalWriter</c> that can hold the journal write open on a signal, so a
-/// cancel can be raced against "preparing" deterministically.</summary>
+/// <summary>
+/// <c>IRenameJournalWriter</c> with a gate on either side of the write.
+///
+/// <para><see cref="WriteGate"/> holds it <b>before</b> the journal exists, which is how a cancel is
+/// raced against the <c>preparing</c> phase deterministically. <see cref="AfterWriteGate"/> holds it
+/// <b>after</b> the journal has been fsynced and before the first file moves — the one moment at
+/// which a test can read <c>.rankmaster-rename.json</c>, learn the run's suffix and the exact names
+/// the moves are about to use, and arrange for one of them to be slow or impossible. That is what
+/// makes the <c>renaming</c>-phase cancel (§ 3.5) and the mid-move failure testable without racing
+/// a six-file rename that is over in a millisecond.</para>
+/// </summary>
 public sealed class GateJournalWriter : IRenameJournalWriter
 {
     public volatile TaskCompletionSource<bool>? WriteGate;
+    public volatile TaskCompletionSource<bool>? AfterWriteGate;
 
     public void Write(string folder, IReadOnlyList<PlanEntry> plan, DateTimeOffset createdAt)
     {
         WriteGate?.Task.GetAwaiter().GetResult();
         RenameEngine.WriteJournal(folder, plan, createdAt);
+        AfterWriteGate?.Task.GetAwaiter().GetResult();
     }
 }
 
@@ -363,9 +407,21 @@ public sealed class RenameGateServer : IAsyncLifetime
 
     public async Task ResetAsync()
     {
+        // Releasing the gates first: a run parked in `saving` or `preparing` would otherwise hold
+        // the session against the close below, which since H14 is refused rather than granted.
+        Catalog.SaveGate?.TrySetResult(true);
+        JournalWriter.WriteGate?.TrySetResult(true);
+        JournalWriter.AfterWriteGate?.TrySetResult(true);
+
         try
         {
-            await Client.CloseSessionAsync();
+            var close = await Client.CloseSessionAsync();
+            if (close.ErrorCode == "rename_in_progress")
+            {
+                await Client.CancelRenameAsync();
+                await RenamePolling.PollToTerminalAsync(Client);
+                await Client.CloseSessionAsync();
+            }
         }
         catch (Xunit.Sdk.XunitException)
         {
@@ -374,6 +430,7 @@ public sealed class RenameGateServer : IAsyncLifetime
 
         Catalog.SaveGate = null;
         JournalWriter.WriteGate = null;
+        JournalWriter.AfterWriteGate = null;
     }
 
     public Task DisposeAsync()

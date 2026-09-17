@@ -19,6 +19,7 @@ public partial class UiRoot : UserControl, IUiThread
     private readonly RankCoordinator? _coordinator;
     private StartView? _startView;
     private RankView? _rankView;
+    private RenameView? _renameView;
     private AppScreen? _renderedScreen;
     private DispatcherTimer? _repaintTimer;
 
@@ -70,9 +71,12 @@ public partial class UiRoot : UserControl, IUiThread
         if (_renderedScreen != _coordinator.Screen)
         {
             _renderedScreen = _coordinator.Screen;
-            root.Content = _coordinator.Screen == AppScreen.Rank
-                ? _rankView ??= new RankView(_coordinator)
-                : _startView ??= new StartView(_coordinator);
+            root.Content = _coordinator.Screen switch
+            {
+                AppScreen.Rank => _rankView ??= new RankView(_coordinator),
+                AppScreen.Rename => _renameView ??= new RenameView(_coordinator),
+                _ => _startView ??= new StartView(_coordinator),
+            };
         }
 
         (root.Content as IRefreshable)?.Refresh();
@@ -111,6 +115,17 @@ public partial class UiRoot : UserControl, IUiThread
             return;
         }
 
+        if (_coordinator.Screen == AppScreen.Rename)
+        {
+            // § 3.13: "Esc on this screen cancels the rename, not the program" — everything else
+            // (Enter/Space/Tab on the Yes/No/Cancel buttons) is Avalonia's own focused-button
+            // behaviour, the same rule the start screen follows.
+            if (key != UiKey.Escape) return;
+            e.Handled = true;
+            _coordinator.OnRenameEscape();
+            return;
+        }
+
         // Start screen: only O, F1, Esc and Ctrl+Z are ours (plan § 1.1, § 3.7); everything else,
         // including Enter/Space/Tab, is Avalonia's own focused-button behaviour.
         var isOurs = key is UiKey.O or UiKey.F1 or UiKey.Escape
@@ -126,7 +141,7 @@ public partial class UiRoot : UserControl, IUiThread
         if (_coordinator is null) return;
         var key = KeyMapping.Map(e.Key);
         if (_coordinator.Screen == AppScreen.Rank) _coordinator.OnCompareKeyUp(key);
-        else _coordinator.OnStartKeyUp(key);
+        else if (_coordinator.Screen != AppScreen.Rename) _coordinator.OnStartKeyUp(key);
     }
 }
 

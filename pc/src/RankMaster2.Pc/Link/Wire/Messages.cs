@@ -67,6 +67,12 @@ internal sealed record CancelRequest(
 
 internal sealed record SaveRequest();
 
+/// <summary>SERVER_SPEC.md § 10.16: the body is optional and `{}` means the same as no body; the link
+/// always sends its own generated id, exactly as every other action does (§ 5.1.1) — it is never
+/// taken from the caller.</summary>
+internal sealed record RenameStartRequest(
+    [property: JsonPropertyName("clientRequestId")] string ClientRequestId);
+
 internal sealed record PairRequest(
     [property: JsonPropertyName("code")] string Code,
     [property: JsonPropertyName("deviceName")] string DeviceName);

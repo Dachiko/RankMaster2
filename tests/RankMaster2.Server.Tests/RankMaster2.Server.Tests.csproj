@@ -24,5 +24,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\RankMaster2.Server\RankMaster2.Server.csproj" />
+    <!-- T1b: the folder-lock test holds .rankmaster.lock from a *second process*, because a lock
+         taken inside the test process proves only that .NET enforces it in-process. Referenced so
+         it is built and copied beside the tests; it is launched with `dotnet <dll> <folder>` and
+         never linked against. -->
+    <ProjectReference Include="..\RankMaster2.LockHolder\RankMaster2.LockHolder.csproj"
+                      ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 </Project>

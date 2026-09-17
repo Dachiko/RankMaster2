@@ -78,12 +78,17 @@ public sealed record BodyError(string Code, string Message, object? Details);
 
 /// <summary>
 /// Reads a <c>/session*</c> JSON body under the § 2 and § 15 transport rules: JSON content type
-/// only, 65536 bytes maximum, unknown fields ignored, missing and null optional fields treated as
-/// absent.
+/// only, <see cref="Security.Limits.MaxJsonBodyBytes"/> bytes maximum, unknown fields ignored,
+/// missing and null optional fields treated as absent.
 /// </summary>
 internal static class SessionBody
 {
-    public const int MaxBytes = 65536;
+    /// <summary>
+    /// SERVER_SPEC.md § 15's body limit, from the one place it is written (C14). It used to be a
+    /// second literal <c>65536</c> beside <c>Security.Limits</c>'s, which is how a limit ends up
+    /// enforced at two different values by two different layers.
+    /// </summary>
+    public const int MaxBytes = Security.Limits.MaxJsonBodyBytes;
     public const int MaxClientRequestId = 64;
 
     /// <summary>
@@ -111,8 +116,8 @@ internal static class SessionBody
                 null));
         }
 
-        // § 15: over 65536 bytes is 413. Read one byte past the limit so a body that is exactly at
-        // it still passes.
+        // § 15: over the limit is 413. Read one byte past it so a body that is exactly at the limit
+        // still passes.
         var buffer = new MemoryStream();
         var chunk = new byte[8192];
         while (true)
@@ -125,7 +130,7 @@ internal static class SessionBody
             {
                 return (null, new BodyError(
                     ErrorCodes.PayloadTooLarge,
-                    "The request body is larger than 65536 bytes.",
+                    $"The request body is larger than {MaxBytes} bytes.",
                     new { maxBytes = MaxBytes }));
             }
         }

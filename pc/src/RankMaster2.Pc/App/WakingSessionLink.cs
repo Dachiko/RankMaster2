@@ -99,6 +99,12 @@ public sealed class WakingSessionLink : ISessionLink
 
     public Task<ActionResult> RefreshAsync(CancellationToken ct = default) => _inner.RefreshAsync(ct);
 
+    // § 3.13 (PC-RENAME) grew ISessionLink by these three members; nothing about "when the video
+    // engine wakes" applies to a rename, so every one is a plain delegate like the pair actions above.
+    public Task<RenameOperationResult> StartRenameAsync(CancellationToken ct = default) => _inner.StartRenameAsync(ct);
+    public Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default) => _inner.GetRenameAsync(ct);
+    public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => _inner.CancelRenameAsync(ct);
+
     public Task CloseAsync(CancellationToken ct = default) => _inner.CloseAsync(ct);
 
     public ValueTask DisposeAsync() => _inner.DisposeAsync();

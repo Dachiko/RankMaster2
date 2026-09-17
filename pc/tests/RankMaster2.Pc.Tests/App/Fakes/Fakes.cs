@@ -35,6 +35,11 @@ public sealed class FakeSessionLink : ISessionLink
     public Task<ActionResult> SaveAsync(CancellationToken ct = default) => NotUsed();
     public Task<ActionResult> RefreshAsync(CancellationToken ct = default) => NotUsed();
 
+    // § 3.13 grew ISessionLink by these three members; A's own tests never exercise a rename.
+    public Task<RenameOperationResult> StartRenameAsync(CancellationToken ct = default) => NotUsedRename();
+    public Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default) => NotUsedRename();
+    public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => NotUsedRename();
+
     public async Task CloseAsync(CancellationToken ct = default)
     {
         CloseCalls++;
@@ -46,6 +51,7 @@ public sealed class FakeSessionLink : ISessionLink
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static Task<ActionResult> NotUsed() => throw new NotSupportedException("not exercised by these tests");
+    private static Task<RenameOperationResult> NotUsedRename() => throw new NotSupportedException("not exercised by these tests");
 }
 
 public sealed class FakeMediaProbe : RankMaster2.Pc.Stills.IMediaProbe

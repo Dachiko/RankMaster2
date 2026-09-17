@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace RankMaster2.Server.Security;
 
 /// <summary>
@@ -16,12 +14,18 @@ public sealed record SessionStatus(bool Open, string? SessionId, string? Folder,
 ///
 /// <para>
 /// <c>/ping</c> is documented as cheap and safe to poll, so it must never queue behind a vote that
-/// is mid-save. The session layer owns the real answer; registering an implementation of this
-/// interface in DI is the one line that lets it supply one. Until then
-/// <see cref="ReflectiveSessionStatusProvider"/> reads the lock-free "is a folder open" field if it
-/// can find it, and everything falls back to <see cref="SessionStatus.Closed"/> — a wrong "no
-/// session" is a client that asks again and gets a 404, which is recoverable; a ping that blocks is
-/// not.
+/// is mid-save. The session layer owns the real answer and implements this interface directly
+/// (<c>Sessions.SessionRegistry</c>, registered by <c>Rm2Host</c>); a host that maps no session
+/// routes at all gets <see cref="ClosedSessionStatusProvider"/>.
+/// </para>
+///
+/// <para>
+/// There used to be a third implementation here that found the registry by reflecting on a type
+/// name in this same assembly, so that this folder would not have to reference the next one. It
+/// could read only the open folder, which is why <c>sessionId</c> and <c>state</c> were <c>null</c>
+/// on every authenticated ping while § 14 and <c>openapi.yaml</c> promised both (A4, C15) — and the
+/// first rename of a property would have turned the whole block permanently closed, silently. A
+/// <c>using</c> is cheaper than that.
 /// </para>
 /// </summary>
 public interface ISessionStatusProvider
@@ -29,54 +33,8 @@ public interface ISessionStatusProvider
     SessionStatus Current { get; }
 }
 
+/// <summary>The answer when nothing in this application owns a session at all.</summary>
 internal sealed class ClosedSessionStatusProvider : ISessionStatusProvider
 {
     public SessionStatus Current => SessionStatus.Closed;
-}
-
-/// <summary>
-/// A deliberately loose bridge to the session layer: everything is looked up by name once and any
-/// failure degrades to "no session". This layer must not fail to start, or fail to answer
-/// <c>/ping</c>, because a neighbouring folder was refactored.
-/// </summary>
-internal sealed class ReflectiveSessionStatusProvider : ISessionStatusProvider
-{
-    private readonly object? _registry;
-    private readonly PropertyInfo? _openFolder;
-
-    public ReflectiveSessionStatusProvider()
-    {
-        try
-        {
-            var type = typeof(ReflectiveSessionStatusProvider).Assembly
-                .GetType("RankMaster2.Server.Sessions.SessionRegistry", throwOnError: false);
-
-            _registry = type?.GetProperty("Shared", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            _openFolder = type?.GetProperty("OpenFolder", BindingFlags.Public | BindingFlags.Instance);
-        }
-        catch (Exception)
-        {
-            _registry = null;
-            _openFolder = null;
-        }
-    }
-
-    public SessionStatus Current
-    {
-        get
-        {
-            if (_registry is null || _openFolder is null) return SessionStatus.Closed;
-
-            try
-            {
-                return _openFolder.GetValue(_registry) is string folder && folder.Length > 0
-                    ? new SessionStatus(true, null, folder, null)
-                    : SessionStatus.Closed;
-            }
-            catch (Exception)
-            {
-                return SessionStatus.Closed;
-            }
-        }
-    }
 }

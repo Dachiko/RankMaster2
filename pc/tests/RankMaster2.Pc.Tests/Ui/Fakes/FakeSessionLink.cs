@@ -91,6 +91,33 @@ public sealed class FakeSessionLink : ISessionLink
         return Task.CompletedTask;
     }
 
+    // ---- rename by rank (§ 3.13) -------------------------------------------------------------
+
+    public Queue<RenameOperationResult> StartRenameResults { get; } = new();
+    public Queue<RenameOperationResult> GetRenameResults { get; } = new();
+    public Queue<RenameOperationResult> CancelRenameResults { get; } = new();
+
+    public Task<RenameOperationResult> StartRenameAsync(CancellationToken ct = default)
+    {
+        Calls.Add(new Call(nameof(StartRenameAsync), null, null));
+        if (StartRenameResults.Count > 0) return Task.FromResult(StartRenameResults.Dequeue());
+        throw new InvalidOperationException("FakeSessionLink.StartRenameAsync: no scripted RenameOperationResult.");
+    }
+
+    public Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default)
+    {
+        Calls.Add(new Call(nameof(GetRenameAsync), null, null));
+        if (GetRenameResults.Count > 0) return Task.FromResult(GetRenameResults.Dequeue());
+        throw new InvalidOperationException("FakeSessionLink.GetRenameAsync: no scripted RenameOperationResult.");
+    }
+
+    public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default)
+    {
+        Calls.Add(new Call(nameof(CancelRenameAsync), null, null));
+        if (CancelRenameResults.Count > 0) return Task.FromResult(CancelRenameResults.Dequeue());
+        throw new InvalidOperationException("FakeSessionLink.CancelRenameAsync: no scripted RenameOperationResult.");
+    }
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private ActionResult NextActionResult()

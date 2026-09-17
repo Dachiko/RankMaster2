@@ -132,6 +132,7 @@ public sealed class WireTests(RealServer server)
     [InlineData("SideRequest")]
     [InlineData("UndoRequest")]
     [InlineData("PairRequest")]
+    [InlineData("RenameStartRequest")]
     public void W5_RequestBodyFieldSetsMatchOpenApi(string schemaName)
     {
         var expected = OpenApiSchema.PropertyNames(schemaName);
@@ -144,10 +145,26 @@ public sealed class WireTests(RealServer server)
             "SideRequest" => FieldsOf(new SideActionRequest("tok", "left", "id"), WireJsonContext.Default.SideActionRequest),
             "UndoRequest" => FieldsOf(new CancelRequest("id"), WireJsonContext.Default.CancelRequest),
             "PairRequest" => FieldsOf(new PairRequest("123456", "device"), WireJsonContext.Default.PairRequest),
+            "RenameStartRequest" => FieldsOf(new RenameStartRequest("id"), WireJsonContext.Default.RenameStartRequest),
             _ => throw new ArgumentOutOfRangeException(nameof(schemaName)),
         };
 
         Assert.Equal(expected.OrderBy(x => x), actual.OrderBy(x => x));
+    }
+
+    // W6: RenameOperation, the body of every 2xx from /session/rename* (§ 10.16), matches
+    // openapi.yaml's schema field-for-field -- both with and without an error, since `error` is the
+    // one field that is sometimes absent-as-null rather than merely optional.
+    [Fact]
+    public void W6_RenameOperationFieldSetMatchesOpenApi()
+    {
+        var expected = OpenApiSchema.PropertyNames("RenameOperation");
+
+        var succeeded = new RenameOperation("op-1", "succeeded", "done", 6, 6, "2026-09-17T18:00:00Z", "2026-09-17T18:00:01Z", null);
+        var failed = succeeded with { State = "failed", Error = new RenameOperationError("rename_failed", true, null) };
+
+        Assert.Equal(expected.OrderBy(x => x), FieldsOf(succeeded, WireJsonContext.Default.RenameOperation).OrderBy(x => x));
+        Assert.Equal(expected.OrderBy(x => x), FieldsOf(failed, WireJsonContext.Default.RenameOperation).OrderBy(x => x));
     }
 
     private static HashSet<string> FieldsOf<T>(T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)

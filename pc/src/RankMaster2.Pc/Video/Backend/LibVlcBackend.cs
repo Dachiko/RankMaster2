@@ -222,7 +222,18 @@ internal sealed class LibVlcPlayer : IBackendPlayer
         // still released here rather than leaking until some later, unrelated Parse() call.
         try
         {
-            if (ReferenceEquals(_player.Media, _media))
+            // Clear the player's reference before disposing ours, which is the order the comment
+            // above describes and the order native teardown wants.
+            //
+            // This used to read `if (ReferenceEquals(_player.Media, _media)) _player.Media = null;`
+            // — a guard that could never once be true. The getter constructs a **new** managed
+            // wrapper on every call (the same library fact A26 turns on, pinned by
+            // LibVlcSharpMediaGetterTests), so it never returns the instance we stored: the
+            // comparison was always false and the assignment never ran. The player was left holding
+            // a native reference to a Media we then disposed, until some later Play() replaced it.
+            // Disposing `_media` directly still released our own handle, which is why nothing
+            // visibly broke; it is still the wrong order.
+            if (_media is not null)
                 _player.Media = null;
         }
         catch

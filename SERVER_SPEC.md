@@ -1021,7 +1021,8 @@ is not pair-scoped. Any *other* path containing `rename` still falls through to 
 
 **The request body.** `POST /session/rename` takes an **optional** JSON body, `{ "clientRequestId"?:
 string }`. No body, an empty body, or `{}` are all valid and mean the same thing. A body that is present
-but is **not** well-formed JSON is rejected `400 invalid_json`, and one that exceeds the body limit is
+but is **not** well-formed JSON is rejected `400 invalid_request` (§ 5.2's code for exactly that: "body
+is not valid JSON"), and one that exceeds the body limit is
 rejected `413`, exactly as for every other POST in this contract (§ 15) — the body is read, not skipped.
 `clientRequestId`, when given, follows § 15's rules and is echoed in `lastAction` on success.
 `POST /session/rename/cancel` takes no body.

@@ -5,7 +5,7 @@ using RankMaster2.Pc.Link.Wire;
 using RankMaster2.Pc.Stills;
 using RankMaster2.Pc.Video;
 
-public enum AppScreen { Start, Rank }
+public enum AppScreen { Start, Rank, Rename }
 
 /// <summary>
 /// Intent → (release handles) → <see cref="ISessionLink"/> call → apply result → prefetch (plan
@@ -42,6 +42,7 @@ public sealed class RankCoordinator
 
     public RankModel Rank { get; } = new();
     public StartModel Start { get; } = new();
+    public RenameModel Rename { get; } = new();
     public AppScreen Screen { get; private set; } = AppScreen.Start;
 
     /// <summary>Raised after any change Views should repaint for.</summary>
@@ -110,6 +111,13 @@ public sealed class RankCoordinator
             && _clock.UtcNow - since >= Timings.LateActionLineAfterMs;
 
         if (toastChanged || _lastActionLate != wasLate) RaiseChanged();
+
+        // § 3.13 item 1: the rename progress bar is driven by the same 250 ms tick that already
+        // clears toasts and the late-action line -- not a second timer, and never a poll overlapping
+        // one already in flight (Busy guards that; a pending cancel rides the next poll's own
+        // finally, PollRenameOnceAsync).
+        if (Screen == AppScreen.Rename && Rename.Stage == RenameStage.Running && !Rename.Busy)
+            _ = PollRenameOnceAsync();
     }
 
     /// <summary>H10: the physical size of one pane, in device pixels -- forwarded to the still
@@ -132,6 +140,209 @@ public sealed class RankCoordinator
         if (Screen == AppScreen.Start) Start.DialogOpen = false; else Rank.DialogOpen = false;
         RaiseChanged();
     }
+
+    // ---- rename by rank (§ 3.13, SERVER_SPEC.md § 10.16) ------------------------------------------
+
+    /// <summary>The folder was just picked (the same native dialog Open uses). Moves to the rename
+    /// screen's confirmation stage — nothing is sent to the server yet.</summary>
+    public void BeginRenameConfirm(string folder)
+    {
+        Rename.BeginConfirm(folder);
+        Screen = AppScreen.Rename;
+        RaiseChanged();
+    }
+
+    /// <summary>"No" on the confirmation, or Esc while it is showing (§ 3.13: "Esc on this screen
+    /// cancels the rename, not the program" — before anything has started, that is simply not
+    /// starting it).</summary>
+    public void CancelRenameConfirm()
+    {
+        if (Screen != AppScreen.Rename || Rename.Stage != RenameStage.Confirming) return;
+        Screen = AppScreen.Start;
+        RaiseChanged();
+    }
+
+    /// <summary>"Yes": opens the folder if it is not already this client's open session (a rename is
+    /// one of the <c>/session*</c> routes, § 10.16), then <c>POST /session/rename</c>. From here the
+    /// 250 ms tick (<see cref="Tick"/>) polls <c>GET /session/rename</c> until a terminal state.</summary>
+    public async Task ConfirmRenameAsync(CancellationToken ct = default)
+    {
+        if (Screen != AppScreen.Rename || Rename.Stage != RenameStage.Confirming) return;
+        var folder = Rename.Folder;
+
+        Rename.EnterBusy();
+        RaiseChanged();
+
+        try
+        {
+            if (_link.Snapshot is not { } snapshot || !FolderEquals(snapshot.Folder, folder))
+            {
+                OpenResult opened;
+                try { opened = await _link.OpenAsync(folder, ct).ConfigureAwait(false); }
+                catch (Exception ex)
+                {
+                    ReturnToStartWithMessage($"Could not open the folder: {ex.Message}");
+                    return;
+                }
+
+                if (opened is OpenResult.Failed failed)
+                {
+                    ReturnToStartWithMessage(Notices.ForOpenFailure(failed.Failure).Text ?? failed.Failure.Title);
+                    return;
+                }
+            }
+
+            RenameOperationResult started;
+            try { started = await _link.StartRenameAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                ReturnToStartWithMessage($"Could not start the rename: {ex.Message}");
+                return;
+            }
+
+            switch (started)
+            {
+                case RenameOperationResult.Observed(var op):
+                    Rename.BeginRunning(op);
+                    if (op.IsTerminal) FinishRename(op);
+                    break;
+
+                default:
+                    ReturnToStartWithMessage(DescribeRenameRefusal(started));
+                    break;
+            }
+        }
+        finally
+        {
+            Rename.ExitBusy();
+            RaiseChanged();
+        }
+    }
+
+    /// <summary>Esc, or the Cancel button, while the run is in progress. Idempotent on this side
+    /// too: a second press while the first cancel is already in flight, or after the run is already
+    /// terminal, does nothing further (§ 10.16: cancel itself is idempotent). If a poll is already
+    /// in flight the cancel is sent the moment it returns (<see cref="PollRenameOnceAsync"/>) — never
+    /// queued behind a whole extra 250 ms tick, and never overlapped with it (the link is one call
+    /// at a time).</summary>
+    public void RequestCancelRename()
+    {
+        if (Screen != AppScreen.Rename || Rename.Stage != RenameStage.Running) return;
+        var alreadyRequested = Rename.CancelRequested;
+        Rename.RequestCancel();
+        if (!alreadyRequested && !Rename.Busy) _ = FireCancelRenameAsync();
+        RaiseChanged();
+    }
+
+    /// <summary>Esc on the rename screen, whichever stage it is in (§ 3.13: it cancels the rename,
+    /// not the program).</summary>
+    public void OnRenameEscape()
+    {
+        if (Rename.Stage == RenameStage.Confirming) CancelRenameConfirm();
+        else RequestCancelRename();
+    }
+
+    private async Task FireCancelRenameAsync()
+    {
+        Rename.EnterBusy();
+        RaiseChanged();
+        try
+        {
+            var result = await _link.CancelRenameAsync().ConfigureAwait(false);
+            ApplyRenamePollResult(result);
+        }
+        finally
+        {
+            Rename.ExitBusy();
+            RaiseChanged();
+        }
+    }
+
+    /// <summary>One <c>GET /session/rename</c>, called from <see cref="Tick"/> every 250 ms while
+    /// the run is in progress (§ 3.13 item 1: "the link polls ... every 250 ms" — done here, on the
+    /// same cadence the repaint tick already uses, rather than inside <c>ISessionLink</c> itself,
+    /// so Cancel stays a plain, un-overlapped call on that same one-at-a-time link).</summary>
+    private async Task PollRenameOnceAsync()
+    {
+        Rename.EnterBusy();
+        try
+        {
+            var result = await _link.GetRenameAsync().ConfigureAwait(false);
+            ApplyRenamePollResult(result);
+        }
+        finally
+        {
+            Rename.ExitBusy();
+        }
+
+        if (Rename.CancelRequested && Rename.Stage == RenameStage.Running)
+            await FireCancelRenameAsync().ConfigureAwait(false);
+
+        RaiseChanged();
+    }
+
+    private void ApplyRenamePollResult(RenameOperationResult result)
+    {
+        switch (result)
+        {
+            case RenameOperationResult.Observed(var op):
+                Rename.Apply(op);
+                if (op.IsTerminal) FinishRename(op);
+                break;
+
+            case RenameOperationResult.NoOperation:
+                // Nothing recorded yet (the POST landed after our journal fsync but before this GET,
+                // or the plan's own race) -- the next tick tries again. Not an error.
+                break;
+
+            case RenameOperationResult.Refused(var failure) when IsRenameScreenEnding(failure):
+                ReturnToStartWithMessage(string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}");
+                break;
+
+            case RenameOperationResult.Refused:
+                // Transient (busy, a lost response, ...): leave the last-known progress on screen
+                // and let the next tick try again, the same "say nothing on a recoverable hiccup"
+                // rule the compare screen already follows (plan § 3.5).
+                break;
+        }
+    }
+
+    /// <summary>A refusal while watching a rename is worth ending the screen over only when there is
+    /// nothing left to watch: the session is gone, or the failure is one <see cref="Failure.Fatal"/>
+    /// already marks as needing the start screen (a dead pairing, the wrong server). Everything else
+    /// -- busy, a lost response, a timeout -- is exactly the kind of hiccup a slow USB drive causes
+    /// and is not a reason to abandon the progress bar (§ 10.16's whole point).</summary>
+    private static bool IsRenameScreenEnding(Failure failure) =>
+        failure.Fatal || failure.Code == Codes.NoSession;
+
+    private static string DescribeRenameRefusal(RenameOperationResult result) => result switch
+    {
+        RenameOperationResult.Refused(var failure) =>
+            string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}",
+        RenameOperationResult.NoOperation => "The rename could not be started.",
+        _ => "The rename could not be started.",
+    };
+
+    /// <summary>A terminal operation, observed either by a poll or by the cancel call's own answer:
+    /// § 3.13 item 2 -- "one line says which and the start screen returns". The session the rename
+    /// used is closed (fire-and-forget, matching Esc's own DELETE /session, § 2.2) so the folder's
+    /// lock is free the moment the owner might want it back in Rank Master 2 (§ 6's checklist).</summary>
+    private void FinishRename(RenameOperation operation)
+    {
+        var message = Notices.ForRenameTerminal(operation, Rename.Folder);
+        _ = _link.CloseAsync();
+        ReturnToStartWithMessage(message);
+    }
+
+    private void ReturnToStartWithMessage(string message)
+    {
+        Screen = AppScreen.Start;
+        Start.ShowMessage(message);
+        RaiseChanged();
+    }
+
+    private static bool FolderEquals(string a, string b) =>
+        string.Equals(a, b, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     public async Task<bool> OpenFolderAsync(string folder, CancellationToken ct = default)
     {

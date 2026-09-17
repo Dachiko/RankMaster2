@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -28,13 +27,13 @@ internal sealed class FolderLock : IDisposable
 
     /// <summary>
     /// Takes the lock and stamps the holder record into it. Returns null when another process holds
-    /// it, with <paramref name="holder"/> filled in on a best-effort basis — every field of it may
-    /// be null, because the holder may well be refusing us read access too.
+    /// it — and says nothing about who, because it cannot: the file is open
+    /// <c>FileShare.None</c>, so no one else can read it either (SERVER_SPEC.md § 5.3.1, which
+    /// spends a paragraph telling implementers not to try).
     /// </summary>
-    public static FolderLock? TryAcquire(string folder, string serverVersion, out LockHolder? holder)
+    public static FolderLock? TryAcquire(string folder, string serverVersion)
     {
         var path = System.IO.Path.Combine(folder, FileName);
-        holder = null;
 
         FileStream stream;
         try
@@ -43,14 +42,14 @@ internal sealed class FolderLock : IDisposable
         }
         catch (IOException)
         {
-            holder = ReadHolder(path);
             return null;
         }
         catch (UnauthorizedAccessException)
         {
-            holder = ReadHolder(path);
             return null;
         }
+
+        HideOnWindows(path);
 
         try
         {
@@ -98,29 +97,27 @@ internal sealed class FolderLock : IDisposable
         }
     }
 
-    private static LockHolder? ReadHolder(string path)
+    /// <summary>
+    /// K7: on Windows the lock file sits in the owner's pictures folder in plain sight. It is
+    /// bookkeeping, not a photograph, so it is marked Hidden — the same treatment Explorer gives its
+    /// own <c>desktop.ini</c>. Nothing depends on this: the attribute is cosmetic, the exclusion is
+    /// the open handle, and a filesystem that refuses the attribute (a FAT-formatted USB stick, a
+    /// network share) is no reason to refuse the folder.
+    /// </summary>
+    private static void HideOnWindows(string path)
     {
+        if (!OperatingSystem.IsWindows())
+            return;
+
         try
         {
-            using var read = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(read, Encoding.UTF8);
-            var text = reader.ReadToEnd();
-            if (string.IsNullOrWhiteSpace(text))
-                return null;
-            return JsonSerializer.Deserialize<LockHolder>(text);
+            File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Hidden);
         }
         catch (IOException)
         {
-            return null;
         }
         catch (UnauthorizedAccessException)
         {
-            return null;
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 }

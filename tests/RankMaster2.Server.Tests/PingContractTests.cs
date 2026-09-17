@@ -11,7 +11,7 @@ namespace RankMaster2.Server.Tests;
 /// subset is load-bearing, not a convenience.
 /// </summary>
 [Collection(Rm2ServerCollection.Name)]
-public class PingContractTests(Rm2Server server)
+public class PingContractTests(Rm2Server server) : SessionTestBase(server)
 {
     [Fact]
     public async Task Public_subset_needs_no_token_and_hides_the_session()
@@ -95,25 +95,88 @@ public class PingContractTests(Rm2Server server)
         Assert.Equal(5, limits.GetProperty("sessionLockTimeoutSeconds").GetInt32());
     }
 
+    /// <summary>
+    /// SERVER_SPEC.md § 14 and <c>openapi.yaml</c>: with a session open, the authenticated ping's
+    /// <c>session</c> block is <c>{ open, sessionId, folder, state }</c> — every member required,
+    /// nulls written as null and never omitted. With none open it is
+    /// <c>{ open: false, null, null, null }</c>.
+    ///
+    /// <para>This test used to guard its one structural assertion with
+    /// <c>if (session.ValueKind == JsonValueKind.Object)</c> and assert no field at all, so it passed
+    /// green for as long as the server answered <c>{'open': true, 'sessionId': null, 'folder': …,
+    /// 'state': null}</c> — which is what it had been answering, because <c>/ping</c> was fed by a
+    /// reflection bridge that could read only the folder (AUDIT.md A4, C15, T1a). The <c>if</c> is
+    /// gone and the fields are named.</para>
+    /// </summary>
     [Fact]
-    public async Task Authenticated_ping_summarises_the_session_without_a_404()
+    public async Task Authenticated_ping_summarises_the_open_session()
     {
         var credentials = await server.AuthenticateAsync();
         if (credentials.Mode != AuthMode.Bearer)
             throw new Xunit.Sdk.XunitException(
                 "This test needs a bearer token.\n" + credentials.Diagnostic);
 
-        var response = await server.Client.PingAsync();
-        response.ShouldHaveStatus(200, "GET /ping with a valid token");
+        using var folder = Fixtures.LibraryFolder.SixStills();
+        var client = await server.AuthenticatedAsync();
 
-        var body = response.JsonBody;
-        Assert.True(body.GetProperty("authenticated").GetBoolean(),
-            "An authenticated ping reports authenticated: true (SERVER_SPEC.md § 14).");
+        var snapshot = (await client.OpenSessionAsync(folder.Path)).ShouldBeSnapshot(201, "open");
+        try
+        {
+            var response = await client.PingAsync();
+            response.ShouldHaveStatus(200, "GET /ping with a valid token");
 
-        var session = body.GetProperty("session");
-        if (session.ValueKind == JsonValueKind.Object)
+            var body = response.JsonBody;
+            Assert.True(body.GetProperty("authenticated").GetBoolean(),
+                "An authenticated ping reports authenticated: true (SERVER_SPEC.md § 14).");
+
+            var session = body.GetProperty("session");
+            Assert.True(session.ValueKind == JsonValueKind.Object,
+                "SERVER_SPEC.md § 14: an authenticated ping while a session is open carries the session " +
+                $"block. Got {session.ValueKind}: {response.Text}");
+
             ContractShape.RequireExactKeys(session, "PingSession", ContractShape.PingSessionKeys,
                                            "GET /ping (SERVER_SPEC.md § 14)", response);
+
+            Assert.True(session.GetProperty("open").GetBoolean(), "a session is open, so open is true");
+            Assert.Equal(snapshot.SessionId, session.GetProperty("sessionId").GetString());
+            Assert.Equal(snapshot.Folder, session.GetProperty("folder").GetString());
+            Assert.Equal("ranking", session.GetProperty("state").GetString());
+        }
+        finally
+        {
+            (await client.CloseSessionAsync()).ShouldHaveStatus(204, "close");
+        }
+
+        // And with nothing open: open false, the other three null — written, not omitted.
+        var closed = await client.PingAsync();
+        closed.ShouldHaveStatus(200, "GET /ping after the session closed");
+
+        var closedSession = closed.JsonBody.GetProperty("session");
+        Assert.True(closedSession.ValueKind == JsonValueKind.Object,
+            $"SERVER_SPEC.md § 14: the session block is an object even with nothing open. Got {closed.Text}");
+        ContractShape.RequireExactKeys(closedSession, "PingSession", ContractShape.PingSessionKeys,
+                                       "GET /ping (SERVER_SPEC.md § 14)", closed);
+
+        Assert.False(closedSession.GetProperty("open").GetBoolean());
+        foreach (var field in new[] { "sessionId", "folder", "state" })
+        {
+            Assert.True(closedSession.GetProperty(field).ValueKind == JsonValueKind.Null,
+                $"SERVER_SPEC.md § 14: with no session open, session.{field} is null. Got {closed.Text}");
+        }
+
+        // The exhausted state reaches the ping too — it is `state`, not a second "is it open" flag.
+        using var two = Fixtures.LibraryFolder.TwoStills();
+        var opened = (await client.OpenSessionAsync(two.Path)).ShouldBeSnapshot(201, "open a two-file folder");
+        try
+        {
+            (await client.DiscardAsync(opened.RequireToken("open"), "left")).ShouldBeSnapshot(200, "discard");
+            var exhausted = await client.PingAsync();
+            Assert.Equal("exhausted", exhausted.JsonBody.GetProperty("session").GetProperty("state").GetString());
+        }
+        finally
+        {
+            await client.CloseSessionAsync();
+        }
     }
 
     [Fact]

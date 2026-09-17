@@ -58,6 +58,33 @@ public interface ISessionLink : IAsyncDisposable
     Task<ActionResult> SaveAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// SERVER_SPEC.md § 10.16: POST /session/rename. No token — a rename is not pair-scoped. The
+    /// 202 this carries is an acknowledgement, not a completion (durability is asserted only once
+    /// <see cref="GetRenameAsync"/> observes <c>succeeded</c>); the caller polls
+    /// <see cref="GetRenameAsync"/> for progress from there, on its own cadence (§ 3.13: every
+    /// 250 ms, matching the surface's repaint tick), and may call <see cref="CancelRenameAsync"/>
+    /// at any point in between — this call does not itself wait for the run to finish.
+    /// </summary>
+    Task<RenameOperationResult> StartRenameAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// GET /session/rename — a pure read, no lock taken. Returns the operation whatever its state,
+    /// including a terminal one (<c>succeeded</c>/<c>cancelled</c>/<c>failed</c>); the caller reads
+    /// <see cref="RenameOperation.State"/> and <see cref="RenameOperation.Error"/> to decide what to
+    /// show. <see cref="RenameOperationResult.NoOperation"/> means no rename has ever been started
+    /// in this session — not an error.
+    /// </summary>
+    Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// POST /session/rename/cancel. Idempotent (a second press just returns the current operation).
+    /// In <c>preparing</c> this aborts cleanly with nothing touched; in <c>renaming</c> it stops
+    /// issuing moves and reunites in place; in <c>saving</c> or later it is too late and this just
+    /// reports the state the run is already in.
+    /// </summary>
+    Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// GET /session — a pure read. Reconnects (and may start the server) if the server is
     /// unreachable; re-opens the same folder if the server answers no_session. Never sends an action.
     /// This is what "Try again" calls after Unknown.
@@ -131,6 +158,24 @@ public abstract record ActionResult
 
     /// <summary>Nothing was transmitted. Not an error; the surface repaints from Snapshot.</summary>
     public sealed record NotSent(NotSentReason Why) : ActionResult;
+}
+
+/// <summary>What StartRenameAsync, GetRenameAsync and CancelRenameAsync each end with.</summary>
+public abstract record RenameOperationResult
+{
+    /// <summary>The server answered with the operation, whatever its state — including a terminal
+    /// one. Always look at <see cref="Wire.RenameOperation.State"/> first.</summary>
+    public sealed record Observed(RenameOperation Operation) : RenameOperationResult;
+
+    /// <summary>404 no_rename_operation: no rename has ever been started in this session (or the
+    /// session was reopened since the last one finished). Not an error.</summary>
+    public sealed record NoOperation : RenameOperationResult;
+
+    /// <summary>The server refused with the current state attached (rename_in_progress with the
+    /// running operation's id; the session closed underneath it) or answered no, and the owner can
+    /// do something about it (rename_failed with the session left untouched — StartRenameAsync
+    /// only; the flag is set after the journal write succeeds, never before). Show Failure.</summary>
+    public sealed record Refused(Failure Failure) : RenameOperationResult;
 }
 
 public enum ResyncReason

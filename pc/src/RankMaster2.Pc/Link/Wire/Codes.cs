@@ -36,6 +36,11 @@ internal static class Codes
     public const string MoveFailed = "move_failed";
     public const string SaveFailed = "save_failed";
 
+    // SERVER_SPEC.md § 10.16 rename by rank
+    public const string RenameInProgress = "rename_in_progress";
+    public const string RenameFailed = "rename_failed";
+    public const string NoRenameOperation = "no_rename_operation";
+
     // § 5.6 server
     public const string InternalError = "internal_error";
 

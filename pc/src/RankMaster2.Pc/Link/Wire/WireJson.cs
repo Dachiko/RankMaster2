@@ -33,6 +33,9 @@ namespace RankMaster2.Pc.Link.Wire;
 [JsonSerializable(typeof(CancelRequest))]
 [JsonSerializable(typeof(SaveRequest))]
 [JsonSerializable(typeof(PairRequest))]
+[JsonSerializable(typeof(RenameOperation))]
+[JsonSerializable(typeof(RenameOperationError))]
+[JsonSerializable(typeof(RenameStartRequest))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class WireJsonContext : JsonSerializerContext
 {

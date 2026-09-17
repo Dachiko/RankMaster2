@@ -75,7 +75,7 @@ public static class SecurityEndpoints
             listenAddress.ToString(), options.Port);
 
         var sessions = app.Services.GetService<ISessionStatusProvider>()
-                       ?? new ReflectiveSessionStatusProvider();
+                       ?? new ClosedSessionStatusProvider();
 
         var version = typeof(SecurityEndpoints).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 

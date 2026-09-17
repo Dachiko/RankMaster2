@@ -33,6 +33,10 @@
               Background="{DynamicResource ResumeButtonFill}" BorderBrush="{DynamicResource ResumeButtonBorder}" BorderThickness="1"
               CornerRadius="12" IsVisible="False" />
 
+      <Button Name="RenameButton" Content="Rename Files by Rank" HorizontalContentAlignment="Center" Height="52" FontSize="18" FontWeight="SemiBold"
+              Background="{DynamicResource RenameButtonFill}" BorderBrush="{DynamicResource RenameButtonBorder}" BorderThickness="1"
+              Foreground="{DynamicResource RenameButtonText}" CornerRadius="12" />
+
       <TextBlock Name="OpeningLine" Foreground="{DynamicResource VersionText}" HorizontalAlignment="Center" IsVisible="False" FontSize="13" />
 
       <Border Name="ErrorBox" Background="{DynamicResource ErrorBoxFill}" BorderBrush="{DynamicResource ErrorBoxBorder}" BorderThickness="1"

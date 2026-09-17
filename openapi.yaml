@@ -757,7 +757,7 @@ paths:
         are unaffected.
 
         The body is optional. A body that is present but is not well-formed JSON is `400
-        invalid_json`, like every other POST here.
+        invalid_request`, like every other POST here.
 
         On a local disk a rename is near-instant, because these are directory-entry moves and not
         byte copies. The progress bar and the Cancel button are not for large folders: they are there
