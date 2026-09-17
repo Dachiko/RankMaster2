@@ -327,10 +327,12 @@ public sealed class NegativeTests(RealServer server)
         var snapshot = opened.Snapshot;
 
         var credentialBefore = Credential.Load(credentialDir)!;
-        var revoker = await server.PairSecondDeviceAsync("n9-revoker");
-        using var revokerHttp = revoker.CreateClient();
-        var revoke = await revokerHttp.DeleteAsync(server.BaseUrl + "/pair/" + Uri.EscapeDataString(credentialBefore.DeviceId));
-        revoke.EnsureSuccessStatusCode();
+
+        // The owner revokes this device from his own PC. This used to pair a second device and have
+        // it unpair the first, which the server now refuses: over HTTP a device may revoke only
+        // itself (AUDIT2.md § 3.13). What the test is about — a token that stops working mid-session —
+        // is unchanged; only the way the owner does it is.
+        await server.RevokeDeviceAsOwnerAsync(credentialBefore.DeviceId);
 
         tap.ClearSent();
         var result = await link.VoteAsync(Side.Left, snapshot.PairSeq);

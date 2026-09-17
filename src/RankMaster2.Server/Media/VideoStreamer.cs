@@ -42,7 +42,7 @@ public static class VideoStreamer
         response.Headers.AcceptRanges = "bytes";
 
         var rangeHeader = context.Request.Headers.Range.ToString();
-        var range = MediaHttp.IfRangeAllowsRange(context, etag)
+        var range = MediaHttp.IfRangeAllowsRange(context, etag, TryGetLastWriteTimeUtc(path))
             ? RangeParser.Parse(rangeHeader, length)
             : RangeResult.None;
 
@@ -76,6 +76,30 @@ public static class VideoStreamer
                 if (length > 0)
                     await SendFileAsync(context, path, 0, length, cancellationToken).ConfigureAwait(false);
                 return;
+        }
+    }
+
+    /// <summary>
+    /// The file's actual last-write time, for the HTTP-date form of <c>If-Range</c>
+    /// (<see cref="MediaHttp.IfRangeAllowsRange"/>). Best-effort: a stat that fails here (the file
+    /// vanished between the caller's own check and this one) just means that form of <c>If-Range</c>
+    /// is not honoured for this response, not a reason to fail the request — the entity-tag form
+    /// still works, and § 12.4's ordinary "no Range" and "unconditional Range" paths never call
+    /// this at all.
+    /// </summary>
+    private static DateTimeOffset? TryGetLastWriteTimeUtc(string path)
+    {
+        try
+        {
+            return new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

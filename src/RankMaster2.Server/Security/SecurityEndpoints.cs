@@ -67,7 +67,7 @@ public static class SecurityEndpoints
         var listenAddress = options.ResolveListenAddress();
 
         DataDirectory.Ensure(dataDirectory);
-        var certificates = CertificateStore.LoadOrCreate(dataDirectory, listenAddress);
+        var certificates = CertificateStore.LoadOrCreate(dataDirectory, listenAddress, logger);
         var tokens = TokenStore.Open(dataDirectory, logger);
         var limiter = new PairingRateLimiter(options.PairingAttemptsPerMinute);
         var pairing = new PairingService(
@@ -92,6 +92,22 @@ public static class SecurityEndpoints
         MapPing(app, state);
         MapPairing(app, state);
         MapLibraries(app, state);
+
+        // AUDIT2.md § 2.4: a rotated certificate strands every paired phone with no explanation
+        // from the server that this is why, so a regeneration triggered by a problem with the file
+        // that was already there — as opposed to a genuinely fresh install with nothing to lose —
+        // gets its own loud, dedicated line, not just a fingerprint buried mid-sentence at
+        // Information alongside every ordinary startup. The tray's own re-pair prompt (TrayApp.cs)
+        // covers the desktop; this is the server's own record of the same event.
+        if (certificates.RegeneratedAfterProblem)
+        {
+            logger.LogWarning(
+                "The TLS certificate identity changed: {DataDirectory}/certificate.pfx was present " +
+                "but unusable (missing, corrupt, expired or not yet valid) and has been replaced. " +
+                "New fingerprint {Fingerprint}. Every paired device will show a certificate error " +
+                "until it is re-paired.",
+                dataDirectory, certificates.FingerprintHeaderValue);
+        }
 
         logger.LogInformation(
             "Security layer ready. Data directory {DataDirectory}, certificate {Fingerprint}.",
@@ -160,10 +176,12 @@ public static class SecurityEndpoints
     }
 
     /// <summary>
-    /// The out-of-band channel that opens a pairing window: a file in the data directory, which only
-    /// a process running as the owner can create. Deliberately not an HTTP route — an HTTP route
-    /// would let anyone on the LAN start a pairing window and then spend the rest of the day
-    /// guessing at it.
+    /// The out-of-band channel for two things only the owner's OS account may do: open a pairing
+    /// window (<c>pair.request</c>, § 10.1.1) and revoke a device other than the caller's own
+    /// (<c>revoke.request</c>, <see cref="RevocationChannel"/>, AUDIT2.md § 3.13). Both are files in
+    /// the data directory, which only a process running as the owner can create. Deliberately not
+    /// HTTP routes — an HTTP route would let anyone on the LAN do either and then spend the rest of
+    /// the day guessing or forging its way to the same result.
     /// </summary>
     private static async Task WatchPairRequestsAsync(SecurityState state, ILogger logger, CancellationToken cancellation)
     {
@@ -172,8 +190,30 @@ public static class SecurityEndpoints
         {
             while (await timer.WaitForNextTickAsync(cancellation))
             {
-                if (state.Pairing.ConsumePairRequestFile())
-                    OpenPairingWindow(state, logger, "requested via " + Path.GetFileName(state.Pairing.RequestFilePath));
+                var now = DateTimeOffset.UtcNow;
+
+                switch (state.Pairing.ConsumePairRequestFile(now))
+                {
+                    case PairRequestPickup.Fresh:
+                        OpenPairingWindow(state, logger, "requested via " + Path.GetFileName(state.Pairing.RequestFilePath));
+                        break;
+                    case PairRequestPickup.Stale:
+                        logger.LogInformation(
+                            "Ignored a pairing request file older than {MaxAgeSeconds:0}s — already " +
+                            "answered by an earlier poll, or left behind by a process that did not " +
+                            "clean up after itself.", PairingService.MaxPairRequestAge.TotalSeconds);
+                        break;
+                }
+
+                if (RevocationChannel.Consume(state.DataDirectory, now) is { } deviceId)
+                {
+                    if (state.Tokens.Revoke(deviceId, now))
+                        logger.LogInformation(
+                            "Device {DeviceId} revoked via revoke.request (owner OS-account request).", deviceId);
+                    else
+                        logger.LogInformation(
+                            "revoke.request named a device that is not enrolled (or already revoked); ignored.");
+                }
             }
         }
         catch (OperationCanceledException)
@@ -326,8 +366,19 @@ public static class SecurityEndpoints
 
         app.MapDelete($"{ApiBase}/pair/{{deviceId}}", async (HttpContext context, string deviceId) =>
         {
-            // A device may revoke itself (§ 10.12); revocation does not close an open session.
+            // A device may revoke itself over HTTP (§ 10.12) — "Forget this PC" — and that keeps
+            // working unconditionally: it proves nothing beyond what the caller already had the
+            // authority to do to its own session. Revoking a *different* device is not something a
+            // bearer token alone may prove: any paired device — a lent phone, one paired once and
+            // forgotten, a stolen one — would otherwise be able to log out every other device on
+            // the account (AUDIT2.md § 3.13). That decision needs the owner's OS-account control,
+            // the same proof opening a pairing window needs (§ 10.1.1), via
+            // RevocationChannel/<data>/revoke.request — never this route. A caller naming any id but
+            // its own gets exactly the answer it would get for an id that does not exist, so the
+            // response never confirms or denies another device's existence to it.
+            var caller = SecurityMiddleware.AuthenticatedDevice(context);
             if (string.IsNullOrWhiteSpace(deviceId) || deviceId.Length > 64 ||
+                caller is null || !string.Equals(caller.DeviceId, deviceId, StringComparison.Ordinal) ||
                 !state.Tokens.Revoke(deviceId, DateTimeOffset.UtcNow))
             {
                 await ApiResults.WriteErrorAsync(context, ErrorCodes.NotFound, "No such device.");

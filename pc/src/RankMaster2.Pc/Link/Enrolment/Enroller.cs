@@ -47,8 +47,14 @@ internal static class Enroller
                 outcome = await TryPair(httpFor, fresh, deviceName, connectTimeout, ct).ConfigureAwait(false);
         }
 
-        if (outcome is EnrolOutcome.Enrolled enrolled && previous is { DeviceId.Length: > 0 })
-            await RevokeBestEffort(httpFor, offer, enrolled.Credential.Token, previous.DeviceId, connectTimeout, ct)
+        // Retire the old enrolment with the OLD token, not the new one. A device may revoke only
+        // itself (SERVER_SPEC.md § 10.12) — revoking a *different* device needs the owner's OS
+        // account, because otherwise any paired phone could unpair his PC. Re-enrolment is this
+        // device replacing its own credential, so the honest way to say that is to authenticate as
+        // the identity being retired. Using the new token made this a cross-device revoke, which
+        // the server now refuses with a 404, leaving the old token alive for ever.
+        if (outcome is EnrolOutcome.Enrolled enrolled && previous is { DeviceId.Length: > 0, Token.Length: > 0 })
+            await RevokeBestEffort(httpFor, offer, previous.Token, previous.DeviceId, connectTimeout, ct)
                 .ConfigureAwait(false);
 
         return outcome;
@@ -100,14 +106,16 @@ internal static class Enroller
     }
 
     /// <summary>§ 5.2.3 step 4: so re-enrolment does not grow the server's device list. Best effort —
-    /// its result is never surfaced to the owner.</summary>
+    /// its result is never surfaced to the owner. <paramref name="oldToken"/> is the credential of the
+    /// device being retired: only it can revoke that device (§ 10.12), and it is still valid here
+    /// because what changed was the server's address, not the enrolment.</summary>
     private static async Task RevokeBestEffort(
-        Func<string, string, Rm2Http> httpFor, Offer offer, string newToken, string oldDeviceId, TimeSpan timeout, CancellationToken ct)
+        Func<string, string, Rm2Http> httpFor, Offer offer, string oldToken, string oldDeviceId, TimeSpan timeout, CancellationToken ct)
     {
         try
         {
             using var http = httpFor(offer.BaseUrl, offer.CertificateFingerprint);
-            http.BearerToken = newToken;
+            http.BearerToken = oldToken;
             await http.Send(FrozenRequest.Delete("/pair/" + Uri.EscapeDataString(oldDeviceId)), timeout, ct)
                 .ConfigureAwait(false);
         }

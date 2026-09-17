@@ -180,6 +180,199 @@ public sealed class PairingWindowSecurityTests(Rm2Server server) : AuditTestBase
         try { Directory.Delete(dataDir, recursive: true); } catch (IOException) { }
     }
 
+    /// <summary>
+    /// AUDIT2.md § 3.2 / § 3.3. One address exhausting its own five-guess budget must lock out only
+    /// that address (proven already, above) — but until this fix it also took <c>pairing.json</c>
+    /// down with it, which let a single stranger repeat that forever (§ 3.3: "he clicks 'New code';
+    /// the stranger spends another five; repeat") and made the tray misreport the one other thing
+    /// that removes the file — a successful pair — as an attack every single time (§ 3.2). Proven
+    /// directly against <see cref="PairingService"/>, like the budget test above.
+    /// </summary>
+    [Fact]
+    public void An_exhausted_address_does_not_delete_the_offer_file_and_only_a_successful_pair_does()
+    {
+        var dataDir = Path.Combine(Path.GetTempPath(), "rm2-pairing-offerfile-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataDir);
+
+        try
+        {
+            var options = new Rm2SecurityOptions { DataDirectory = dataDir };
+            var tokens = TokenStore.Open(dataDir);
+            var limiter = new PairingRateLimiter(perMinute: 1000);
+            var pairing = new PairingService(options, tokens, limiter, dataDir, "deadbeef", "127.0.0.1", 18611);
+
+            var now = DateTimeOffset.UtcNow;
+            var offer = pairing.OpenWindow(now);
+            Assert.True(File.Exists(pairing.OfferFilePath), "OpenWindow must publish the offer file");
+
+            var wrong = offer.Code == "000000" ? "111111" : "000000";
+            const string stranger = "203.0.113.9";
+            for (var i = 0; i < 5; i++)
+                pairing.Redeem(wrong, "stranger", stranger, now);
+
+            Assert.True(File.Exists(pairing.OfferFilePath),
+                "AUDIT2.md § 3.3: a stranger exhausting their own address's budget must not delete " +
+                "pairing.json — the owner's own QR/code must still be readable afterwards, and it must " +
+                "not be repeatable to deny him a second time with a fresh window");
+
+            // The window itself still redeems for a different address, exactly as the per-address
+            // budget always intended.
+            var paired = pairing.Redeem(offer.Code, "owner phone", "192.168.1.50", now);
+            Assert.Equal(PairOutcome.Paired, paired.Outcome);
+
+            // Only the successful pair takes the file down — the one event the tray should ever
+            // read as "the file is gone" (AUDIT2.md § 3.2).
+            Assert.False(File.Exists(pairing.OfferFilePath),
+                "a successful pairing still removes the offer file — it is now the only thing that does");
+        }
+        finally
+        {
+            try { Directory.Delete(dataDir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// AUDIT2.md § 3.13: <c>pair.request</c> used to be consumed (deleted) the instant it was found,
+    /// with no regard for how long it had been sitting there — so a request already answered by an
+    /// earlier poll and left behind, or one dropped by a tray that crashed before it could clean up
+    /// after itself, could re-open an unattended window at a much later, unrelated server start. A
+    /// fresh sentinel is still honoured; a stale one is consumed (never fires twice) but reported
+    /// separately so the caller knows not to open anything for it.
+    /// </summary>
+    [Fact]
+    public void A_fresh_pair_request_opens_and_a_stale_one_is_dropped_without_opening()
+    {
+        var dataDir = Path.Combine(Path.GetTempPath(), "rm2-pairing-request-age-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataDir);
+
+        try
+        {
+            var options = new Rm2SecurityOptions { DataDirectory = dataDir };
+            var tokens = TokenStore.Open(dataDir);
+            var limiter = new PairingRateLimiter(perMinute: 1000);
+            var pairing = new PairingService(options, tokens, limiter, dataDir, "deadbeef", "127.0.0.1", 18611);
+            var requestPath = pairing.RequestFilePath;
+
+            Assert.Equal(PairRequestPickup.None, pairing.ConsumePairRequestFile(DateTimeOffset.UtcNow));
+
+            File.WriteAllBytes(requestPath, []);
+            Assert.Equal(PairRequestPickup.Fresh, pairing.ConsumePairRequestFile(DateTimeOffset.UtcNow));
+            Assert.False(File.Exists(requestPath), "a fresh request is consumed once picked up");
+
+            File.WriteAllBytes(requestPath, []);
+            var stampedOld = DateTime.UtcNow - PairingService.MaxPairRequestAge - TimeSpan.FromSeconds(10);
+            File.SetLastWriteTimeUtc(requestPath, stampedOld);
+
+            Assert.Equal(PairRequestPickup.Stale, pairing.ConsumePairRequestFile(DateTimeOffset.UtcNow));
+            Assert.False(File.Exists(requestPath),
+                "a stale request must still be consumed — never left to be picked up again later");
+        }
+        finally
+        {
+            try { Directory.Delete(dataDir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// AUDIT2.md § 3.13, end to end: a <c>pair.request</c> left behind by a process that crashed
+    /// before it could clean up after itself must not open a live, unattended pairing window at the
+    /// next, unrelated server start. The first start pairs a device (so the second start is not a
+    /// fresh install, and would not auto-open a window by itself); a stale sentinel is then dropped
+    /// where the crashed process would have left it, and the second start proves no window opens.
+    /// </summary>
+    [Fact]
+    public async Task A_pair_request_left_behind_by_a_crash_does_not_open_a_window_at_the_next_start()
+    {
+        var dataDir = Path.Combine(Path.GetTempPath(), "rm2-audit-crash-request-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataDir);
+
+        try
+        {
+            using (var first = Factory(dataDir))
+            {
+                var anon = new Rm2Client(first.CreateClient());
+                var code = await WaitForOfferCode(dataDir);
+                Assert.NotNull(code);   // fresh install: window auto-opened
+                (await anon.PairAsync(code!, "audit phone")).ShouldHaveStatus(201, "first-run pair");
+            }
+
+            var requestPath = Path.Combine(dataDir, "pair.request");
+            File.WriteAllBytes(requestPath, []);
+            File.SetLastWriteTimeUtc(requestPath,
+                DateTime.UtcNow - PairingService.MaxPairRequestAge - TimeSpan.FromSeconds(10));
+
+            using (var second = Factory(dataDir))
+            {
+                _ = second.CreateClient(); // starts the host
+
+                // Long enough for several 1 s polls; no window must appear.
+                var code = await WaitForOfferCode(dataDir, TimeSpan.FromSeconds(4));
+                Assert.Null(code);
+
+                // And the stale sentinel was still consumed, not merely ignored in place.
+                var deadline = DateTime.UtcNow.AddSeconds(4);
+                while (File.Exists(requestPath) && DateTime.UtcNow < deadline)
+                    await Task.Delay(150);
+                Assert.False(File.Exists(requestPath), "the stale sentinel must be consumed even though it is dropped");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(dataDir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>
+    /// AUDIT2.md § 3.13: the out-of-band channel for revoking a device other than the caller's own —
+    /// the same OS-account proof opening a pairing window needs (§ 10.1.1), since a bearer token
+    /// alone is not proof of the owner's say-so over a *different* device
+    /// (<c>SecurityEndpoints</c>'s <c>DELETE /pair/{deviceId}</c> now refuses that; see
+    /// <c>AuthGateTests</c>/<c>AuthenticationTests</c>). Proven end to end: dropping
+    /// <c>revoke.request</c> naming a paired device's id revokes it within the server's own 1 s poll.
+    /// </summary>
+    [Fact]
+    public async Task Writing_revoke_request_revokes_the_named_device()
+    {
+        var dataDir = Path.Combine(Path.GetTempPath(), "rm2-audit-revoke-request-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataDir);
+
+        try
+        {
+            using var factory = Factory(dataDir);
+            var http = factory.CreateClient();
+            var anon = new Rm2Client(http);
+
+            var code = await WaitForOfferCode(dataDir);
+            Assert.NotNull(code);
+            var paired = await anon.PairAsync(code!, "device to be revoked remotely");
+            paired.ShouldHaveStatus(201, "pair against the auto-opened first-run window");
+            var deviceId = paired.Json!.Value.GetProperty("deviceId").GetString()!;
+            var token = paired.Json!.Value.GetProperty("token").GetString()!;
+            var target = anon.WithToken(token);
+
+            (await target.PingAsync()).ShouldHaveStatus(200, "the device is enrolled before the revoke request");
+
+            var revokeRequestPath = Path.Combine(dataDir, "revoke.request");
+            await File.WriteAllTextAsync(revokeRequestPath, deviceId);
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            Rm2Response? after = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                after = await target.PingAsync();
+                if (after.ErrorCode == "token_revoked") break;
+                await Task.Delay(150);
+            }
+
+            Assert.Equal("token_revoked", after?.ErrorCode);
+            Assert.False(File.Exists(revokeRequestPath), "the sentinel is consumed once picked up, like pair.request");
+        }
+        finally
+        {
+            try { Directory.Delete(dataDir, recursive: true); } catch (IOException) { }
+        }
+    }
+
     /// <summary>SERVER_SPEC.md § 4: no snapshot on a 401 even while a session is open.</summary>
     [Fact]
     public async Task A_401_while_a_session_is_open_carries_no_snapshot()

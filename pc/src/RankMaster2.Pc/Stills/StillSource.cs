@@ -103,7 +103,7 @@ public sealed class StillSource : IStillSource
         {
             _queue.CancelQueued(id);
             inFlight = _queue.InFlight(id);
-            _cache.RemoveOne(id);
+            _cache.RemoveOne(folder, id);
             _warmIds.Remove(id);
             // _visible is deliberately left alone: real callers always issue a fresh Show() with
             // the next pair right after a release (E's contract per PC_CLIENT_PLAN.md section
@@ -155,7 +155,11 @@ public sealed class StillSource : IStillSource
             wanted.Add(v.Right);
         }
 
-        var removed = _cache.SetWanted(wanted);
+        // _folder was just set by the caller (Show/Warm) before this runs, so every id above
+        // names a file in it. Keying the wanted set by (folder, id) -- second audit, § 3.13 --
+        // means switching folders naturally evicts the previous folder's entries here: they are
+        // simply not part of `wanted` under the new folder's key.
+        var removed = _cache.SetWanted(_folder ?? "", wanted);
         foreach (var id in removed)
             _queue.CancelQueued(id);
     }
@@ -172,28 +176,28 @@ public sealed class StillSource : IStillSource
 
         if (key is null)
         {
-            _cache.SetFailure(id, StillFailure.Missing, $"{id}: file is gone.");
+            _cache.SetFailure(folder, id, StillFailure.Missing, $"{id}: file is gone.");
             _queue.CancelQueued(id);
             return;
         }
 
-        var cachedKey = _cache.TryGetStatKey(id);
+        var cachedKey = _cache.TryGetStatKey(folder, id);
         if (cachedKey is not null && cachedKey.Value.Equals(key.Value))
         {
-            var frame = _cache.TryGetFrame(id);
+            var frame = _cache.TryGetFrame(folder, id);
             if (frame is not null)
             {
                 if (DecodeGeometry.FrameCovers(frame.Width, frame.Height, frame.SourceWidth, frame.SourceHeight, _paneW, _paneH))
                     return; // fresh, and big enough for the current pane
             }
-            else if (_cache.TryGetFailure(id) is not null)
+            else if (_cache.TryGetFailure(folder, id) is not null)
             {
                 return; // a fresh, already-known failure -- no need to redecode
             }
         }
 
-        _cache.ClearResult(id);
-        _cache.SetStatKey(id, key.Value);
+        _cache.ClearResult(folder, id);
+        _cache.SetStatKey(folder, id, key.Value);
         _queue.Enqueue(folder, id, path, _paneW, _paneH, rank, OnDecoded);
     }
 
@@ -203,14 +207,14 @@ public sealed class StillSource : IStillSource
         bool isVisible;
         lock (_gate)
         {
-            wanted = folder == _folder && _cache.IsWanted(id);
+            wanted = folder == _folder && _cache.IsWanted(folder, id);
             isVisible = _visible is { } v && (v.Left == id || v.Right == id);
             if (wanted)
             {
                 if (result.IsSuccess)
-                    _cache.SetFrame(id, result.Frame!);
+                    _cache.SetFrame(folder, id, result.Frame!);
                 else
-                    _cache.SetFailure(id, result.Failure, result.Detail!);
+                    _cache.SetFailure(folder, id, result.Failure, result.Detail!);
             }
         }
 
@@ -244,11 +248,16 @@ public sealed class StillSource : IStillSource
 
     private StillState StateOfLocked(string id)
     {
-        var frame = _cache.TryGetFrame(id);
+        // Always the currently open folder: StateOf/RaiseChanged only ever mean "how does this id
+        // look in the folder that's open right now" (plan interface), so the cache lookup keys on
+        // _folder rather than taking a folder parameter through the public IStillSource surface.
+        var folder = _folder ?? "";
+
+        var frame = _cache.TryGetFrame(folder, id);
         if (frame is not null)
             return new StillState.Ready(frame.Lease());
 
-        var failure = _cache.TryGetFailure(id);
+        var failure = _cache.TryGetFailure(folder, id);
         if (failure is { } f)
             return new StillState.Failed(f.Failure, f.Detail);
 

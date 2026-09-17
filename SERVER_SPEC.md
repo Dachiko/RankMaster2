@@ -689,8 +689,9 @@ Both files are **named normatively**, because three separate clients guessed dif
 
 | Path | Role |
 |---|---|
-| `<data>/pair.request` | Sentinel. Create it to ask for a window; the server deletes it on pickup |
+| `<data>/pair.request` | Sentinel. Create it to ask for a window; the server deletes it on pickup, and **ignores one older than 30 seconds** — a request left behind by a crash must not open a window later with nobody watching |
 | `<data>/pairing.json` | The published offer: `code`, `expiresAt`, `host`, `port`, `fingerprint`. Owner-only (`0600`) |
+| `<data>/revoke.request` | The same channel used to revoke a device the caller is not (§ 10.12) |
 
 `<data>` is the server data directory (§ 2.4). The offer is what `rm2ctl` renders as text and as a
 QR code.
@@ -966,8 +967,10 @@ numeric code) for a long-lived device token.
   with `details.attemptsRemaining`.
 - **The guess budget is 5 attempts per source address, per window.** Each address that guesses at a
   window has its own budget of five; `details.attemptsRemaining` is **that caller's** remaining count, not
-  a global one. When an address exhausts its five, **the window is destroyed** and the correct code is
-  refused thereafter — but only the exhausting address can do that, and only by spending its own five.
+  a global one. When an address exhausts its five, **that address alone is locked out of this window for
+  the rest of its life**. The window, the code and `pairing.json` stay live for every other address — in
+  particular for the owner's own devices. **No address, however many guesses it spends, can end the
+  window for anyone else**; only a successful pairing, or the window's own five-minute expiry, closes it.
   One address cannot consume another's budget, so a stranger on the LAN cannot silently burn the owner's
   five tries out from under him while he is typing; his phone still has all five.
 - This replaces an earlier per-window total of five counted across all addresses. That version made a
@@ -976,17 +979,41 @@ numeric code) for a long-lived device token.
   guessing cost where it belongs, because **the per-address rate limit still stands**: more than
   **5 attempts per minute per source address** → `429 too_many_requests` with `Retry-After`. An attacker
   with several addresses gets five guesses per address per minute against a code of a million values in a
-  five-minute window; the first address to spend its five ends the window anyway.
-- The tray tells the owner when a window died this way, so "it stopped working" is never a mystery.
+  five-minute window, and cannot deny the owner his own pairing while doing it.
+- An earlier build deleted `pairing.json` as soon as any one address spent its five. That kept the
+  denial this section exists to prevent, and it made the tray report "too many wrong codes" on a
+  **successful** pair, because the tray reads the offer file disappearing as the window having died.
+  The offer file now disappears only on a successful pairing or at shutdown, so its absence means what
+  the tray always claimed it meant.
 - Success → `201` with `{ deviceId, deviceName, token, issuedAt, expiresAt }`. `expiresAt` is `null`
   for a non-expiring token. The token is returned **once** and is never readable again.
 - Whitespace in `code` MUST be ignored when comparing. The comparison MUST be constant-time.
 
 ### 10.12 `DELETE /pair/{deviceId}`
 
-Authenticated. Revokes a device token; the revoked device's next call gets `401 token_revoked`. A
-device MAY revoke itself. `204` on success, `404 not_found` for an unknown `deviceId`. Revocation
-does **not** close an open session — `DELETE /session` is the only thing that does.
+Authenticated. Revokes a device token; the revoked device's next call gets `401 token_revoked`.
+`204` on success. Revocation does **not** close an open session — `DELETE /session` is the only thing
+that does.
+
+**A device may revoke only itself.** `deviceId` MUST equal the authenticated caller's own device, and
+any other value answers `404 not_found` — the same answer an id that does not exist gets, so the route
+never confirms which devices are enrolled. This is the "Forget this PC" button, and nothing more.
+
+Without that rule any enrolled device could unpair any other: a phone could unpair the PC client, and
+a device paired once and forgotten could unpair everything. Whoever holds one token would decide who
+else is allowed in, which is not a decision a token should carry.
+
+**Revoking a different device is the owner's, and goes through his OS account**, the same proof § 10.1.1
+already uses for opening a window:
+
+| Path | Role |
+|---|---|
+| `<data>/revoke.request` | One line of UTF-8: the `deviceId` to revoke. The server polls at the same one-second cadence as `pair.request`, revokes the device it names, and deletes the file. A request naming an unknown or already-revoked device is consumed and ignored |
+
+Writing that file needs write access to the server's data directory, which is the OS-account check.
+A re-enrolling client that wants to retire its own previous identity does **not** need it: it still
+holds the old token at that moment, so it authenticates as the device being retired and the ordinary
+self-revoke applies.
 
 ### 10.13 `GET /ping`
 
@@ -1491,6 +1518,8 @@ in a snapshot are stable, distinct URLs whenever the bytes change.
 | syntactically invalid `Range` | ignored; serve `200` full, per RFC 9110 |
 | `If-Range` matching the ETag | the range is served |
 | `If-Range` not matching | `200` full body |
+| `If-Range` as an HTTP-date, at or after the file's last-modified time | the range is served (RFC 9110 § 13.1.5) |
+| `If-Range` as an HTTP-date older than the file's last-modified time | `200` full body — the file changed under the client, so its partial copy is stale |
 
 Open-ended (`bytes=500-`) and suffix (`bytes=-500`) forms MUST both be supported. `Content-Type` is
 by extension: `video/mp4`, `video/webm`, `video/x-matroska`, `video/x-msvideo`, `video/quicktime`.
@@ -1736,7 +1765,7 @@ Unauthenticated (public subset) or authenticated (full). Never requires a sessio
 | media id | 255 UTF-16 code units | `400 invalid_media_id` |
 | session semaphore wait | 5 s | `503 session_busy`, `Retry-After: 1` |
 | pairing rate | 5 per minute per source address | `429`, `Retry-After` |
-| pairing guesses | 5 per source address **per window**; the window dies when an address spends its five (§ 10.11) | `401 invalid_pairing_code` with `details.attemptsRemaining` |
+| pairing guesses | 5 per source address **per window**; an address that spends its five is locked out of that window, which stays open for everyone else (§ 10.11) | `401 invalid_pairing_code` with `details.attemptsRemaining` |
 | pairing window | 5 minutes, single use | `401 invalid_pairing_code` |
 | concurrent sessions | 1 | `409 session_already_open` |
 

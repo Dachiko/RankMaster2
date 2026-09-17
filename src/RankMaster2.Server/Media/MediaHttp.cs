@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
+using Microsoft.Net.Http.Headers;
 using RankMaster2.Server.Contracts;
 
 namespace RankMaster2.Server.Media;
@@ -123,13 +124,39 @@ public static class MediaHttp
     /// <summary>
     /// § 12.4: an <c>If-Range</c> that matches the ETag lets the range through; one that does not
     /// match yields the whole body with 200. Absent means the range stands on its own.
+    /// <para/>
+    /// RFC 9110 § 13.1.5 lets a client send either an entity-tag or an HTTP-date in <c>If-Range</c>,
+    /// and this server never advertises a <c>Last-Modified</c> for a compliant client to have
+    /// echoed back — but a video's actual on-disk modification time is exactly what
+    /// <paramref name="lastModifiedUtc"/> is when the caller has it (§ 12.2 already hashes the same
+    /// timestamp into the ETag), so a date-form <c>If-Range</c> is honoured against it rather than
+    /// always falling through to a full re-download (AUDIT2.md § 3.13). When
+    /// <paramref name="lastModifiedUtc"/> is not supplied, only the entity-tag form is understood,
+    /// exactly as before.
     /// </summary>
-    public static bool IfRangeAllowsRange(HttpContext context, string etag)
+    public static bool IfRangeAllowsRange(HttpContext context, string etag, DateTimeOffset? lastModifiedUtc = null)
     {
         if (!context.Request.Headers.TryGetValue("If-Range", out var header) || StringValues.IsNullOrEmpty(header))
             return true;
 
         var value = header.ToString().Trim();
+
+        // An entity-tag is always a DQUOTE-delimited token (§ 12.2: this server's ETags are always
+        // quoted and always strong); anything else that parses as an HTTP-date is the date form.
+        if (value.Length == 0 || value[0] != '"')
+        {
+            if (lastModifiedUtc is { } modified && HeaderUtilities.TryParseDate(value, out var since))
+            {
+                // HTTP-date has one-second resolution (RFC 9110 § 5.6.7), so truncate the file's
+                // own timestamp to the second before comparing — otherwise a file untouched since
+                // the very second named in the header would wrongly appear "newer" than it.
+                var truncated = new DateTimeOffset(
+                    modified.UtcDateTime.Ticks - modified.UtcDateTime.Ticks % TimeSpan.TicksPerSecond,
+                    TimeSpan.Zero);
+                return truncated <= since;
+            }
+        }
+
         return string.Equals(value, etag, StringComparison.Ordinal);
     }
 

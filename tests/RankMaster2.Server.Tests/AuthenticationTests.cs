@@ -100,8 +100,12 @@ public class AuthenticationTests(Rm2Server server) : SessionTestBase(server)
     /// a different code from `invalid_token`, so a client can tell "you were thrown out" from "that
     /// token means nothing here" and stop retrying.
     ///
-    /// The device revoked here is a spare, paired at startup for exactly this: revoking the suite's
-    /// own token would end the run.
+    /// The device revoked here is a spare, paired at startup for exactly this: revoking it — and it
+    /// is revoked only once, by the end of this test — would end the run for any other test that
+    /// still expected it enrolled, so both halves of AUDIT2.md § 3.13's fix live in this one test
+    /// rather than being split across two that could run in either order: first that a *different*
+    /// device cannot revoke it (the vulnerability), then that it can still revoke *itself* (the
+    /// feature that must keep working — "Forget this PC").
     /// </summary>
     [Fact]
     public async Task A_revoked_device_is_told_it_was_revoked()
@@ -113,16 +117,30 @@ public class AuthenticationTests(Rm2Server server) : SessionTestBase(server)
                 $"{nameof(TestAuth)}.{nameof(TestAuth.PairSpareDeviceAsync)}.");
 
         var spareClient = Anonymous.WithToken(spare.Token);
+        var client = await ClientAsync();
 
-        // It works before the revocation, or the test proves nothing afterwards.
+        // It works before anything below, or the test proves nothing afterwards.
         var before = await spareClient.PingAsync();
         before.ShouldHaveStatus(200, "the spare device's token works before it is revoked");
         Assert.True(before.JsonBody.GetProperty("authenticated").GetBoolean(),
             "SERVER_SPEC.md § 14: a valid token makes the ping authenticated.");
 
-        var client = await ClientAsync();
-        var revoked = await client.RevokeAsync(spare.DeviceId);
-        revoked.ShouldHaveStatus(204, "SERVER_SPEC.md § 10.12: DELETE /pair/{deviceId} answers 204");
+        // AUDIT2.md § 3.13: the suite's own device — a valid token, just not the spare's own — tries
+        // to revoke the spare. That must not be enough: any paired device revoking any other was
+        // exactly the hole (a lent phone, one paired once and forgotten, a stolen one, could all log
+        // out someone else's device with nothing more than their own still-valid token).
+        var crossDevice = await client.RevokeAsync(spare.DeviceId);
+        crossDevice.ShouldBeError("not_found",
+            "AUDIT2.md § 3.13: a device may revoke itself, never another — naming a different, " +
+            "genuinely enrolled device answers the same 404 an unknown one would, not 204.");
+
+        var stillGood = await spareClient.PingAsync();
+        stillGood.ShouldHaveStatus(200, "the attempted cross-device revoke must not have taken effect");
+        Assert.True(stillGood.JsonBody.GetProperty("authenticated").GetBoolean());
+
+        // Now the spare revokes itself — "Forget this PC" — which must keep working.
+        var revoked = await spareClient.RevokeAsync(spare.DeviceId);
+        revoked.ShouldHaveStatus(204, "SERVER_SPEC.md § 10.12: a device revoking itself answers 204");
 
         var after = await spareClient.GetSessionAsync();
         after.ShouldBeError("token_revoked",
@@ -135,7 +153,8 @@ public class AuthenticationTests(Rm2Server server) : SessionTestBase(server)
             "SERVER_SPEC.md § 3: GET /ping with a revoked token is 401, not the public subset — a client with " +
             "a bad token must learn that it is bad");
 
-        // And the suite's own token is untouched.
+        // And the suite's own token is untouched, whether by the refused cross-device attempt or by
+        // the spare's own successful self-revoke.
         var ours = await client.PingAsync();
         ours.ShouldHaveStatus(200, "revoking one device does not affect another");
     }

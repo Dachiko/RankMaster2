@@ -61,9 +61,10 @@ public sealed class Rm2SecurityOptions
     public bool AutoOpenPairingWhenUnenrolled { get; set; } = true;
 
     /// <summary>
-    /// Watch <c>&lt;data&gt;/pair.request</c> and open a pairing window when it appears. This is the
-    /// out-of-band channel SERVER_SPEC.md § 10.11 assumes: it is reachable only by a process running
-    /// as the same OS user, never over the network.
+    /// Watch <c>&lt;data&gt;/pair.request</c> and open a pairing window when it appears, and
+    /// <c>&lt;data&gt;/revoke.request</c> and revoke the device it names (AUDIT2.md § 3.13). Both are
+    /// the out-of-band channel SERVER_SPEC.md § 10.11 / § 10.1.1 assumes: reachable only by a
+    /// process running as the same OS user, never over the network.
     /// </summary>
     public bool WatchPairRequestFile { get; set; } = true;
 

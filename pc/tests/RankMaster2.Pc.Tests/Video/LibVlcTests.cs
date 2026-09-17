@@ -1,6 +1,7 @@
 namespace RankMaster2.Pc.Tests.Video;
 
 using System.Diagnostics;
+using RankMaster2.Pc.App;
 using RankMaster2.Pc.Video;
 using RankMaster2.Pc.Video.Backend;
 using Xunit;
@@ -351,17 +352,50 @@ public sealed class LibVlcTests : IDisposable
 
 /// <summary>True iff a real LibVLC could be initialised on this host. Backed by a fresh
 /// <see cref="LibVlcBackend"/> probed once per process; every LibVlc-category test gates on it so
-/// this suite skips cleanly instead of failing outside the container.</summary>
+/// this suite skips cleanly instead of failing outside the container.
+/// <para/>
+/// <b>Second audit, § 5.</b> This used to try only <c>Initialize(null, ...)</c> — "find a
+/// system-installed VLC" — which is the container's story but never the product's: on Windows,
+/// where the app actually ships, libvlc lives beside the exe at
+/// <see cref="LibVlcLayout.NativeDir"/> (<see cref="Composition"/> passes exactly that to the real
+/// <see cref="VideoEngine"/>), and nothing installs a *system* VLC there. Combined with the test
+/// project's own <c>VideoLAN.LibVLC.Windows</c> reference being <c>ExcludeAssets="all"</c> (so
+/// nothing is ever copied beside the test output to probe), the old probe could never succeed on
+/// Windows even after a real <c>dotnet publish</c> laid libvlc down next to the built app -- this
+/// whole 25-test suite would skip there too, which is the biggest evidence gap the audit named.
+/// Trying the shipped layout first now matches <see cref="Composition"/>'s own resolution order
+/// ("the shipped layout first, the old build-layout fallback second" -- <see cref="LibVlcLayout"/>'s
+/// own header) and gives a real dotnet-published Windows box its own libvlc to find. Proven here
+/// (not merely reasoned): this box has neither a shipped layout (<see cref="LibVlcLayout.NativeDir"/>
+/// is null on Linux) nor, outside <c>run-video-linux.sh</c>'s container, a system one, so the suite
+/// keeps skipping cleanly exactly as before -- the Windows half of this fix is read and reasoned
+/// from <see cref="LibVlcLayout"/>'s own resolution rule, not run, because nothing here runs
+/// Windows.</summary>
 internal static class LibVlcProbe
 {
     public static bool Available { get; } = Probe();
 
     private static bool Probe()
     {
+        var nativeDir = LibVlcLayout.NativeDir;
+
+        // The shipped layout is what the product actually uses (Composition.cs); try it first.
+        if (ProbeWith(nativeDir))
+            return true;
+
+        // Fall back to "find a system-installed VLC" -- the Linux container's story
+        // (run-video-linux.sh). Skipped when nativeDir was already null (this platform has no
+        // shipped-layout candidate at all, e.g. Linux): that case already tried null above, and a
+        // second identical attempt would prove nothing new.
+        return nativeDir is not null && ProbeWith(null);
+    }
+
+    private static bool ProbeWith(string? nativeDirectory)
+    {
         var backend = new LibVlcBackend();
         try
         {
-            return backend.Initialize(null, new VideoOptions(), _ => { }).Success;
+            return backend.Initialize(nativeDirectory, new VideoOptions(), _ => { }).Success;
         }
         catch
         {

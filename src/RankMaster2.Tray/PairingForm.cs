@@ -22,9 +22,14 @@ internal sealed class PairingForm : Form
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 500 };
     private PairingOffer? _offer;
 
-    /// <summary>Set once the window's offer file has been destroyed out from under it (five wrong
-    /// guesses from somewhere on the LAN, A30/H12) — stops the countdown from overwriting the
-    /// message with a stale time-left.</summary>
+    /// <summary>Set once the offer file this window is showing has gone from disk — stops the
+    /// countdown from overwriting the message with a stale time-left. AUDIT2.md § 3.2/§ 3.3: as of
+    /// the server-side fix, guessing wrong — from this phone or from a stranger on the LAN — never
+    /// removes this file any more (SERVER_SPEC.md § 10.11's per-address budget already kept the
+    /// *window* alive; now the file agrees). The file's disappearance while this dialog is open is
+    /// therefore, in the ordinary course of things, exactly one event: a device just paired
+    /// successfully with this code. A server shutdown mid-dialog can also take it down, but that is
+    /// not something this owner-facing message needs to distinguish.</summary>
     private bool _closedByServer;
 
     public PairingForm(string dataDirectory)
@@ -130,11 +135,13 @@ internal sealed class PairingForm : Form
     }
 
     /// <summary>
-    /// Ticks the visible countdown and — the same poll, so a stranger burning the window's guess
-    /// budget is noticed within one tick — checks that the offer file this window is showing is
-    /// still the one on disk. Five wrong guesses from anywhere on the LAN destroy it before
-    /// <see cref="PairingOffer.ExpiresAt"/> arrives (H12); without this the window would keep
-    /// counting down a code the server has already refused (A30).
+    /// Ticks the visible countdown and — the same poll — checks whether the offer file this window
+    /// is showing is still the one on disk. AUDIT2.md § 3.2/§ 3.3: this file no longer disappears
+    /// just because someone guessed wrong (SERVER_SPEC.md § 10.11's per-address budget locks out
+    /// only the guesser, and no longer takes the file down with it), so its disappearance while
+    /// this dialog is watching now means the code was used — a device just paired. That is success,
+    /// not an attack, and the message below says so instead of accusing the owner of having been
+    /// attacked at the exact moment his own phone finished pairing.
     /// </summary>
     private void Countdown()
     {
@@ -144,8 +151,8 @@ internal sealed class PairingForm : Form
         if (!File.Exists(PairingChannel.OfferPath(_dataDirectory)))
         {
             _closedByServer = true;
-            _expiry.ForeColor = Color.FromArgb(160, 60, 60);
-            _expiry.Text = "Closed: too many wrong codes. Open a new one.";
+            _expiry.ForeColor = Color.FromArgb(60, 140, 60);
+            _expiry.Text = "Paired. You can close this window, or open a new code for another device.";
             return;
         }
 

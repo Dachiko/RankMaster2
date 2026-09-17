@@ -251,6 +251,31 @@ public sealed class RealServer : IAsyncLifetime
     /// <summary>Pairs a second device against this server, playing "the phone" in lifecycle tests.
     /// Writes its own <c>pair.request</c>, reads the fresh offer, posts the code with a plain,
     /// pinned <see cref="HttpClient"/>, and returns the bearer token.</summary>
+    /// <summary>
+    /// Revokes a device the way the owner does: by writing <c>&lt;data&gt;/revoke.request</c>, the
+    /// out-of-band channel only his OS account can reach (SERVER_SPEC.md § 10.12). Over HTTP a device
+    /// may revoke only itself, so a test cannot pair a second device and unpair the first — that was
+    /// the fault AUDIT2.md § 3.13 named, and closing it is why this helper exists.
+    /// Returns when the server has actually acted on the file.
+    /// </summary>
+    public async Task RevokeDeviceAsOwnerAsync(string deviceId, TimeSpan? timeout = null)
+    {
+        var path = Path.Combine(DataDirectory, "revoke.request");
+        await File.WriteAllTextAsync(path, deviceId).ConfigureAwait(false);
+
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(15));
+        while (DateTime.UtcNow < deadline)
+        {
+            // The server consumes the file when it acts on it; that is the observable signal.
+            if (!File.Exists(path))
+                return;
+            await Task.Delay(50).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException(
+            $"The server did not consume revoke.request for '{deviceId}' within the deadline.");
+    }
+
     public async Task<SecondDevice> PairSecondDeviceAsync(string deviceName = "phone")
     {
         var offerPath = Path.Combine(DataDirectory, "pairing.json");

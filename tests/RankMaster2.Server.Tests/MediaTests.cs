@@ -1,3 +1,4 @@
+using System.Globalization;
 using RankMaster2.Server.Tests.Fixtures;
 using RankMaster2.Server.Tests.Harness;
 using Xunit;
@@ -949,6 +950,37 @@ public class MediaTests(Rm2Server server, ITestOutputHelper output) : SessionTes
             "SERVER_SPEC.md § 12.4: If-Range that does not match yields 200 with the full body — the client's " +
             "cached prefix is stale, so a range on top of it would be corrupt");
         Assert.Equal(size, mismatched.Body.Length);
+    }
+
+    /// <summary>
+    /// AUDIT2.md § 3.13: RFC 9110 § 13.1.5 lets a client send an HTTP-date in <c>If-Range</c>, not
+    /// only an entity-tag — and this server, which never advertises a <c>Last-Modified</c> of its
+    /// own for a compliant client to have echoed back, now honours that form against the video's
+    /// actual on-disk modification time (the same timestamp § 12.2 already hashes into the ETag)
+    /// rather than always falling through to a full re-download.
+    /// </summary>
+    [Fact]
+    public async Task If_range_with_an_http_date_honours_the_files_actual_modification_time()
+    {
+        var (folder, client) = await OpenMenagerieAsync();
+        using var _ = folder;
+
+        var path = folder.File(MediaFixtures.Video);
+        var size = new FileInfo(path).Length;
+        var mtime = File.GetLastWriteTimeUtc(path);
+
+        var atOrAfter = mtime.AddSeconds(1).ToString("R", CultureInfo.InvariantCulture);
+        var onTime = await client.VideoAsync(MediaFixtures.Video, range: "bytes=0-99", ifRange: atOrAfter);
+        onTime.ShouldHaveStatus(206,
+            "an If-Range HTTP-date at or after the file's actual mtime must serve the range, not the whole body");
+        Assert.Equal(100, onTime.Body.Length);
+
+        var before = mtime.AddHours(-1).ToString("R", CultureInfo.InvariantCulture);
+        var stale = await client.VideoAsync(MediaFixtures.Video, range: "bytes=0-99", ifRange: before);
+        stale.ShouldHaveStatus(200,
+            "an If-Range HTTP-date before the file's actual mtime must yield the whole body — the client's " +
+            "cached prefix predates a change it does not know about");
+        Assert.Equal(size, stale.Body.Length);
     }
 
     [Fact]

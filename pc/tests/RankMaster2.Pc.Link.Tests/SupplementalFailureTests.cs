@@ -103,10 +103,11 @@ public sealed class SupplementalFailureTests(RealServer server)
         var snapshot = opened.Snapshot;
 
         var credential = Credential.Load(credentialDir)!;
-        var revoker = await server.PairSecondDeviceAsync("pairing-lost-revoker");
-        using var revokerHttp = revoker.CreateClient();
-        var revoke = await revokerHttp.DeleteAsync(server.BaseUrl + "/pair/" + Uri.EscapeDataString(credential.DeviceId));
-        revoke.EnsureSuccessStatusCode();
+
+        // The owner revokes this device from his own PC (AUDIT2.md § 3.13: over HTTP a device may
+        // revoke only itself, so a second device can no longer unpair the first). What this test is
+        // about — re-enrolment failing after the token dies — is unchanged.
+        await server.RevokeDeviceAsOwnerAsync(credential.DeviceId);
 
         // The 401 triggers re-enrolment; make that attempt itself fail (a lost /pair response is
         // never retried, N12), so the credential cannot be replaced either.

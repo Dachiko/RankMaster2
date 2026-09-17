@@ -12,6 +12,24 @@ public enum PairOutcome
     InvalidCode,
 }
 
+/// <summary>What polling <c>&lt;data&gt;/pair.request</c> found.</summary>
+public enum PairRequestPickup
+{
+    /// <summary>No sentinel file was there.</summary>
+    None,
+
+    /// <summary>A sentinel young enough to be a live request. Open a window for it.</summary>
+    Fresh,
+
+    /// <summary>
+    /// A sentinel older than any asker still waiting on it — already answered by an earlier poll
+    /// and left behind, or dropped by a process that crashed before it could clean up after
+    /// itself. Consumed (deleted) the same as a fresh one, but it must not open a window: that
+    /// would be a pairing window nobody is watching (AUDIT2.md § 3.13).
+    /// </summary>
+    Stale,
+}
+
 public sealed record PairAttemptResult(
     PairOutcome Outcome,
     IssuedToken? Issued = null,
@@ -64,6 +82,17 @@ public sealed class PairingService
     /// honest answer is <c>403 pairing_not_open</c>.
     /// </summary>
     private static readonly TimeSpan Grace = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// How old <c>pair.request</c> may be and still be treated as a live ask. The tray waits up to
+    /// 8 s for its own request to be answered (<c>PairingChannel.Timeout</c>) and this server polls
+    /// once a second, so anything left after several times that margin was not written by an asker
+    /// still watching for the answer — it was already served by an earlier poll (the ordinary case;
+    /// the file should already be gone by then) or left behind by a process that never got to clean
+    /// up after itself, and opening a window for it now would be a window nobody is at the screen
+    /// for (AUDIT2.md § 3.13).
+    /// </summary>
+    public static readonly TimeSpan MaxPairRequestAge = TimeSpan.FromSeconds(30);
 
     private readonly object _gate = new();
     private readonly Rm2SecurityOptions _options;
@@ -159,15 +188,16 @@ public sealed class PairingService
             {
                 var remaining = remainingForAddress - 1;
                 window.SetAttemptsRemaining(addressKey, remaining);
-                if (remaining <= 0)
-                {
-                    // This address's own budget is what makes six digits safe against it. Once it
-                    // is gone the window is dead for this address only; every other address (in
-                    // particular the owner's own devices) keeps its own five and the code itself
-                    // still redeems. The offer file is still taken down: it is this address's own
-                    // doing, and nothing but the human-read code on the tray's screen survives it.
-                    TryDelete(OfferFilePath);
-                }
+
+                // AUDIT2.md § 3.3 / § 3.2: this address's own budget is what makes six digits safe
+                // against it. Once it is gone the window is dead for this address only — every
+                // other address (in particular the owner's own devices) keeps its own five and the
+                // code itself still redeems (SERVER_SPEC.md § 10.11's per-address fix). The offer
+                // file MUST NOT come down here: it used to, which let a single stranger repeat this
+                // forever and delete the owner's own QR/code out from under him every time, and it
+                // is also what the tray was reading "gone" as "attacked" from on the one occasion
+                // the file legitimately disappears for a happy reason (§ 3.2) — a successful pair,
+                // below. Only a successful redemption or an explicit close ever removes the file now.
 
                 return new PairAttemptResult(PairOutcome.InvalidCode, AttemptsRemaining: Math.Max(0, remaining));
             }
@@ -199,22 +229,33 @@ public sealed class PairingService
     /// <summary>
     /// Polls for the out-of-band open request. A file, not a socket: the only principal that can
     /// create it is one already running as the owner's user account.
+    /// <para/>
+    /// Consumed (deleted) whenever it is found, fresh or stale alike — a spent or abandoned request
+    /// must never survive to be picked up again by a later poll, possibly long after this one, with
+    /// nobody watching (AUDIT2.md § 3.13). Only a fresh one tells the caller to actually open a
+    /// window; see <see cref="PairRequestPickup"/>.
     /// </summary>
-    public bool ConsumePairRequestFile()
+    public PairRequestPickup ConsumePairRequestFile(DateTimeOffset now)
     {
         try
         {
-            if (!File.Exists(RequestFilePath)) return false;
+            if (!File.Exists(RequestFilePath)) return PairRequestPickup.None;
+
+            // Age first, delete second: whichever of "read the age" and "the writer's own 8 s
+            // give-up" loses the race just means both sides agree the request is spent, which is
+            // the safe direction either way.
+            var age = now - new DateTimeOffset(File.GetLastWriteTimeUtc(RequestFilePath), TimeSpan.Zero);
             File.Delete(RequestFilePath);
-            return true;
+
+            return age <= MaxPairRequestAge ? PairRequestPickup.Fresh : PairRequestPickup.Stale;
         }
         catch (IOException)
         {
-            return false;
+            return PairRequestPickup.None;
         }
         catch (UnauthorizedAccessException)
         {
-            return false;
+            return PairRequestPickup.None;
         }
     }
 

@@ -16,16 +16,26 @@ using Xunit;
 /// </summary>
 public sealed class CompositionTests
 {
-    [Fact]
+    // Second audit, § 5: this used to be a plain [Fact] that wrapped the load-check half in
+    // `if (!alreadyLoaded)`, so in a full run — where Video/LibVlcTests.cs has usually already
+    // loaded LibVLCSharp somewhere earlier in this shared test process — that half silently never
+    // ran and the test still reported Passed, exactly the "counted as passing without proving
+    // what its name says" pattern the first audit named. Same fix ShellTests.FirstFrame_LoadsNoVideoEngine
+    // already uses for the identical condition: a visible, counted [SkippableFact] skip instead of
+    // a silent no-op assertion.
+    [SkippableFact]
     public void Composition_Build_IsFastAndLoadsNoVideoEngine()
     {
         // See ShellTests.FirstFrame_LoadsNoVideoEngine's comment: this assembly also carries
         // Video/LibVlcTests.cs, whose LibVlcProbe.Available loads LibVLCSharp on any platform the
         // first time any LibVlc-category test runs, regardless of test order. That is a property of
-        // this shared test process, not of Composition.Build — skip the load-check half rather than
-        // false-fail when it has already happened; the timing half is unaffected either way.
+        // this shared test process, not of Composition.Build. Rather than silently skipping half the
+        // assertion (the bug this comment used to describe), the whole test is skipped visibly —
+        // it is still `Composition.Build` that is timed, so running this file alone (or first) always
+        // exercises both halves for real.
         var alreadyLoaded = AppDomain.CurrentDomain.GetAssemblies()
             .Any(a => (a.GetName().Name ?? "").StartsWith("LibVLCSharp", StringComparison.Ordinal));
+        Skip.If(alreadyLoaded, "LibVLCSharp was already loaded earlier in this test process (see comment above)");
 
         var sw = Stopwatch.StartNew();
         var services = Composition.Build();
@@ -41,11 +51,8 @@ public sealed class CompositionTests
         // not. 200 ms is a generous ceiling, not a tight budget.
         Assert.True(sw.ElapsedMilliseconds < 200, $"Composition.Build took {sw.ElapsedMilliseconds} ms");
 
-        if (!alreadyLoaded)
-        {
-            var loadedVlc = AppDomain.CurrentDomain.GetAssemblies()
-                .Any(a => (a.GetName().Name ?? "").StartsWith("LibVLCSharp", StringComparison.Ordinal));
-            Assert.False(loadedVlc, "Composition.Build must not load LibVLCSharp");
-        }
+        var loadedVlc = AppDomain.CurrentDomain.GetAssemblies()
+            .Any(a => (a.GetName().Name ?? "").StartsWith("LibVLCSharp", StringComparison.Ordinal));
+        Assert.False(loadedVlc, "Composition.Build must not load LibVLCSharp");
     }
 }

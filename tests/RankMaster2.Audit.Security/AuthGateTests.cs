@@ -138,6 +138,15 @@ public sealed class AuthGateTests(Rm2Server server) : AuditTestBase(server)
             "a client with a bad token must learn that it is bad");
     }
 
+    /// <summary>
+    /// AUDIT2.md § 3.13: <c>DELETE /pair/{deviceId}</c> used to trust the bearer token alone, so any
+    /// paired device — this suite's own, a phone lent to a friend, a device paired once and
+    /// forgotten — could revoke any other. Both halves of the fix live in this one test rather than
+    /// being split across two that could run in either order against the same shared spare: first
+    /// that a *different* device cannot revoke it (the vulnerability — 404, same as an unknown id,
+    /// and the spare stays enrolled), then that it can still revoke *itself* ("Forget this PC", the
+    /// one case that must keep working).
+    /// </summary>
     [Fact]
     public async Task A_revoked_device_gets_401_token_revoked_everywhere()
     {
@@ -147,11 +156,22 @@ public sealed class AuthGateTests(Rm2Server server) : AuditTestBase(server)
         var client = await ClientAsync();
         var revoked = Anonymous.WithToken(spare!.Token);
 
-        // Prove the spare works before it is revoked.
+        // Prove the spare works before anything below.
         (await revoked.PingAsync()).ShouldHaveStatus(200, "the spare device is paired and can call /ping");
 
-        (await client.RevokeAsync(spare.DeviceId))
-            .ShouldHaveStatus(204, "SERVER_SPEC.md § 10.12: DELETE /pair/{deviceId} is 204");
+        // A different device — a valid token, just not the spare's own — tries to revoke it. That
+        // must not be enough.
+        var crossDevice = await client.RevokeAsync(spare.DeviceId);
+        crossDevice.ShouldHaveStatus(404, "a valid token for a different device must not revoke this one");
+        Assert.Equal("not_found", crossDevice.ErrorCode);
+
+        var stillWorks = await revoked.PingAsync();
+        stillWorks.ShouldHaveStatus(200, "the attempted cross-device revoke must not have taken effect");
+        Assert.True(stillWorks.JsonBody.GetProperty("authenticated").GetBoolean());
+
+        // Self-revoke — the one case DELETE /pair/{deviceId} still allows over HTTP.
+        (await revoked.RevokeAsync(spare.DeviceId))
+            .ShouldHaveStatus(204, "SERVER_SPEC.md § 10.12: a device revoking itself is 204");
 
         foreach (var (method, path) in new[]
         {
@@ -166,6 +186,9 @@ public sealed class AuthGateTests(Rm2Server server) : AuditTestBase(server)
                 $"SERVER_SPEC.md § 3: {method} {path} with a revoked device's token is 401");
             Assert.Equal("token_revoked", response.ErrorCode);
         }
+
+        // The suite's own device — a bystander that never touched this — is unaffected either way.
+        (await client.PingAsync()).ShouldHaveStatus(200, "revoking a different device leaves this one alone");
     }
 
     /// <summary>

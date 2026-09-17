@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.Extensions.Logging;
 
 namespace RankMaster2.Server.Security;
 
@@ -23,10 +25,11 @@ public sealed class CertificateStore
     private const string FileName = "certificate.pfx";
     private static readonly TimeSpan Lifetime = TimeSpan.FromDays(3653); // ~10 years
 
-    public CertificateStore(X509Certificate2 certificate, string fingerprint)
+    public CertificateStore(X509Certificate2 certificate, string fingerprint, bool regeneratedAfterProblem = false)
     {
         Certificate = certificate;
         Fingerprint = fingerprint;
+        RegeneratedAfterProblem = regeneratedAfterProblem;
     }
 
     public X509Certificate2 Certificate { get; }
@@ -37,12 +40,22 @@ public sealed class CertificateStore
     /// <summary>The form SERVER_SPEC.md § 14 puts on the wire: <c>sha256:</c> + 64 lowercase hex.</summary>
     public string FingerprintHeaderValue => "sha256:" + Fingerprint;
 
-    public static CertificateStore LoadOrCreate(string dataDirectory, IPAddress listenAddress)
+    /// <summary>
+    /// True when <c>certificate.pfx</c> was present but had to be replaced (expired, not yet valid,
+    /// no private key, or unreadable) — as opposed to a genuinely fresh install with no file at all.
+    /// AUDIT2.md § 2.4: this is exactly the case that strands every paired phone with a "certificate
+    /// problem" and no explanation, so the caller uses this to say so loudly rather than at the same
+    /// level as an ordinary startup line.
+    /// </summary>
+    public bool RegeneratedAfterProblem { get; }
+
+    public static CertificateStore LoadOrCreate(string dataDirectory, IPAddress listenAddress, ILogger? logger = null)
     {
         DataDirectory.Ensure(dataDirectory);
         var path = Path.Combine(dataDirectory, FileName);
+        var existed = File.Exists(path);
 
-        if (File.Exists(path))
+        if (existed)
         {
             try
             {
@@ -55,17 +68,49 @@ public sealed class CertificateStore
                 }
 
                 loaded.Dispose();
+                Quarantine(path, "expired, not yet valid, or has no private key", logger);
             }
-            catch (CryptographicException)
+            catch (CryptographicException e)
             {
                 // Corrupt or unreadable: fall through and mint a new one. The old fingerprint is
-                // already unusable, so there is nothing to preserve.
+                // already unusable, but — unlike the identity it once proved — the bytes themselves
+                // are not thrown away: moved aside, the same as TokenStore already does for a
+                // devices.json that will not parse (AUDIT2.md § 2.4), rather than silently
+                // overwritten. A read failure that was only transient (a sync client mid-write, a
+                // momentary lock) is then recoverable by hand instead of having destroyed the
+                // identity every paired device trusted.
+                logger?.LogWarning(e, "{CertificateFile} could not be read.", path);
+                Quarantine(path, "could not be read", logger);
             }
         }
 
         var created = Create(listenAddress);
         Persist(path, created);
-        return new CertificateStore(created, FingerprintOf(created));
+        return new CertificateStore(created, FingerprintOf(created), regeneratedAfterProblem: existed);
+    }
+
+    /// <summary>Moves an unusable <c>certificate.pfx</c> aside so it is never silently overwritten.</summary>
+    private static void Quarantine(string path, string reason, ILogger? logger)
+    {
+        try
+        {
+            var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var quarantined = path + ".corrupt-" + stamp;
+            if (File.Exists(quarantined)) File.Delete(quarantined);
+            File.Move(path, quarantined);
+            logger?.LogWarning(
+                "{CertificateFile} was {Reason} and has been moved aside to {QuarantinedFile}; a new " +
+                "certificate will be minted. Every paired device will need to re-pair.",
+                path, reason, quarantined);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Could not even be moved aside (permissions, a lock). Persist() below will overwrite
+            // it in place, which is no worse than the previous, unconditional behaviour.
+            logger?.LogWarning(e,
+                "{CertificateFile} was {Reason} and could not be moved aside either; it will be " +
+                "overwritten.", path, reason);
+        }
     }
 
     public static string FingerprintOf(X509Certificate2 certificate) =>
