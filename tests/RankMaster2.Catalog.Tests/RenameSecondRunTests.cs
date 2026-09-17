@@ -5,13 +5,20 @@ using Xunit;
 namespace RankMaster2.Catalog.Tests;
 
 /// <summary>
-/// AUDIT THROWAWAY. The second rename of a folder that was already renamed once: every file is
-/// already called 000001.jpg…, and after more voting the order has changed, so the plan maps
-/// names that are simultaneously an `old` of one entry and a `new` of another. Recovery / cancel
-/// look files up by new → temp → old; when the run stopped during phase 1, an unmoved `old` file
-/// whose name is also somebody else's `new` is misidentified.
+/// The second rename of a folder that was already renamed once — the case that corrupted ratings
+/// before the per-run suffix existed, and the reason the suffix exists.
+///
+/// <para>Every file here is already called 000001.jpg…, which is what Rank Master 2's own rename
+/// produces, so this is the owner's ordinary folder and not a contrived one. More voting has
+/// changed the order, so without a suffix the plan would map names that are simultaneously one
+/// entry's <c>old</c> and another's <c>new</c>; recovery and cancel, which identify a file by
+/// asking whether its name is a <c>new</c>, a temp or an <c>old</c>, would then hand a rating to
+/// the wrong picture whenever the run stopped mid-phase-1.</para>
+///
+/// <para>Each file's bytes are its identity, so every test here checks the thing that actually
+/// matters — that each rating came back to the same picture — rather than checking names.</para>
 /// </summary>
-public class Audit_RenameSecondRunTests
+public class RenameSecondRunTests
 {
     // Each file's bytes are its identity, so we can tell which rating landed on which picture.
     private static readonly byte[] BytesA = { 0xA };   // was 000001.jpg, now ranked 2nd
@@ -50,14 +57,37 @@ public class Audit_RenameSecondRunTests
     }
 
     [Fact]
-    public void Plan_of_a_second_rename_reuses_names()
+    public void Plan_of_a_second_rename_reuses_no_name_already_in_the_folder()
     {
         var (dir, records) = Arrange();
         var plan = RenameEngine.BuildPlan(records);
-        // C (mu 30) -> 000001, A (mu 25) -> 000002, B (mu 20) -> 000003
-        Assert.Equal(("000003.jpg", "000001.jpg"), (plan[0].Old, plan[0].New));
-        Assert.Equal(("000001.jpg", "000002.jpg"), (plan[1].Old, plan[1].New));
-        Assert.Equal(("000002.jpg", "000003.jpg"), (plan[2].Old, plan[2].New));
+
+        // The ranking is unchanged: C (mu 30) first, A (mu 25) second, B (mu 20) third.
+        Assert.Equal(new[] { "000003.jpg", "000001.jpg", "000002.jpg" }, plan.Select(e => e.Old));
+
+        // The property the whole recovery design rests on: no new name, and no temporary, is a name
+        // the folder already carries. Without it, new/temp/old overlap and a file on disk stops
+        // identifying one picture.
+        var onDisk = new HashSet<string>(
+            Directory.GetFiles(dir).Select(Path.GetFileName)!, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in plan)
+        {
+            Assert.DoesNotContain(entry.New, onDisk);
+            Assert.DoesNotContain(RenameEngine.TempNameOf(entry.New), onDisk);
+        }
+
+        // Still sorted by rank, which is the reason for renaming at all.
+        Assert.Equal(plan.Select(e => e.New), plan.Select(e => e.New).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Two_runs_over_the_same_folder_do_not_produce_the_same_names()
+    {
+        var (dir, records) = Arrange();
+        var first = RenameEngine.BuildPlan(records);
+        var second = RenameEngine.BuildPlan(records);
+
+        Assert.NotEqual(first[0].New, second[0].New);
     }
 
     [Fact]
@@ -83,16 +113,16 @@ public class Audit_RenameSecondRunTests
         var (dir, records) = Arrange();
         var plan = RenameEngine.BuildPlan(records);
         RenameEngine.WriteJournal(dir, plan, DateTimeOffset.UtcNow);
-        // The owner presses cancel after the first move: 000003.jpg -> __rm2_000001.jpg.
+        // The owner presses cancel after the first move: 000003.jpg -> its temporary.
         RenameEngine.MovePhase1(dir, plan, shouldStop: done => done >= 1);
 
         var outcome = RenameEngine.ReuniteInPlace(dir, new JsonCatalog());
         Assert.True(outcome.Reunited);
 
         var by = RatingByBytes(dir);
-        Assert.Equal(30, by[0xC].Mu);   // C, now at __rm2_000001.jpg
-        Assert.Equal(25, by[0xA].Mu);   // A, still at 000001.jpg
-        Assert.Equal(20, by[0xB].Mu);   // B, still at 000002.jpg
+        Assert.Equal(30, by[0xC].Mu);   // C, now at its temporary
+        Assert.Equal(25, by[0xA].Mu);   // A, never moved
+        Assert.Equal(20, by[0xB].Mu);   // B, never moved
     }
 
     [Fact]

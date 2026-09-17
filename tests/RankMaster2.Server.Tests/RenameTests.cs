@@ -69,7 +69,7 @@ public sealed class RenameTests(Rm2Server server) : SessionTestBase(server)
         Assert.NotEqual(voted.PairToken, after.PairToken);
 
         foreach (var id in after.PairIds)
-            Assert.Matches("^\\d{6}\\.", id);
+            Assert.Matches("^\\d{6}-[0-9a-f]{4}\\.", id);
 
         Assert.False(
             Directory.EnumerateDirectories(folder.Path, "rankmaster_backup_*").Any(),
@@ -86,7 +86,7 @@ public sealed class RenameTests(Rm2Server server) : SessionTestBase(server)
         // The database on disk still loads, with six records under the new names.
         var loaded = new JsonCatalog().Scan(folder.Path);
         Assert.Equal(6, loaded.Count);
-        Assert.All(loaded, r => Assert.Matches("^\\d{6}\\.", r.Filename));
+        Assert.All(loaded, r => Assert.Matches("^\\d{6}-[0-9a-f]{4}\\.", r.Filename));
     }
 
     [Fact]

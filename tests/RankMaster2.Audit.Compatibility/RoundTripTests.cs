@@ -134,7 +134,8 @@ public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
     /// SERVER_SPEC.md § 10.16, the compatibility half of the acceptance gate: a file the server
     /// renamed must still be exactly what the desktop app (and Rank Master 1) would open — v1
     /// schema, every key equal to its own `filename` field, every rating intact under the new
-    /// `000001.ext …` names.
+    /// `000001-<suffix>.ext …` names — which must still sort by rank, since sorted order is the
+    /// entire reason the owner renames.
     /// </summary>
     [Fact]
     public async Task A_renamed_library_still_loads_in_the_desktop_app()
@@ -181,7 +182,13 @@ public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
         // The desktop app's own read path: JsonCatalog.Scan, never the server's DTOs.
         var loaded = new JsonCatalog().Scan(folder.Path).ToDictionary(r => r.Filename, StringComparer.Ordinal);
         Assert.Equal(6, loaded.Count);
-        Assert.All(loaded.Keys, key => Assert.Matches("^\\d{6}\\.", key));
+        Assert.All(loaded.Keys, key => Assert.Matches("^\\d{6}-[0-9a-f]{4}\\.", key));
+
+        // One suffix for the whole run, so sorting the folder by name is sorting it by rank.
+        Assert.Single(loaded.Keys.Select(k => k.Split('-')[1]).Distinct());
+        Assert.Equal(
+            loaded.Keys.OrderBy(k => k, StringComparer.Ordinal),
+            Enumerable.Range(1, 6).Select(i => loaded.Keys.Single(k => k.StartsWith($"{i:D6}-", StringComparison.Ordinal))));
 
         Db.RequireV1Schema(folder.Path, "a renamed library is still v1 (SPEC.md § Persistence)");
 

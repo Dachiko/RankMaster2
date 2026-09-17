@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RankMaster2.Ranking;
@@ -26,6 +27,20 @@ namespace RankMaster2.Catalog;
 /// recovery can identify any file it finds on disk without a per-file journal write — unlike the
 /// desktop path's random-GUID temporaries, which a crash would leave unidentifiable.</para>
 ///
+/// <para><b>The per-run suffix</b> (<c>000001-a3f9.jpg</c>) is what makes identifying a file by its
+/// name sound at all. Recovery asks of every file on disk: is this name a <c>new</c>, a temp, or an
+/// <c>old</c>? That question only has one answer if those three sets are disjoint — and without a
+/// suffix they are not. A folder renamed once is full of <c>000001.jpg</c>…, so a second rename
+/// plans moves in which one entry's <c>old</c> is another entry's <c>new</c>; an interrupted run
+/// then leaves files whose names identify them as two different pictures at once, and recovery
+/// hands ratings to the wrong images. This is not a corner case: <c>000001.jpg</c> is exactly what
+/// Rank Master 2's own rename produces, so the owner's folders already contain those names.
+/// A suffix drawn fresh per run, and checked against every name already in the folder, makes a new
+/// name something that provably cannot already exist there — so every file on disk belongs to
+/// exactly one plan entry, at every interruption point, on every rename after the first.
+/// The index keeps its leading zeroes and the suffix is identical for every file of a run, so the
+/// folder still sorts by rank, which is the whole point of renaming.</para>
+///
 /// <para><b>Recovery is forward and total</b> (<see cref="RecoverIfPresent"/>): best-effort finish the
 /// moves, then reunite every rating with its file at that file's *current* name, then delete the
 /// journal. A half-renamed folder is an acceptable resting state (owner decision): recovery reunites
@@ -50,24 +65,35 @@ public static class RenameEngine
     public static string TempNameOf(string newName) => TempPrefix + newName;
 
     // -----------------------------------------------------------------------------------------
-    // The plan — SPEC.md "Rename by rank": μ − 3σ descending, then filename, to 000001.ext …
-    // Identical ordering to FileOps.RenameByConservativeScore, restated here because the journal
-    // needs the ratings alongside the mapping, not just old→new ids.
+    // The plan — SPEC.md "Rename by rank": μ − 3σ descending, then filename, to
+    // 000001-<suffix>.ext … Same ordering as FileOps.RenameByConservativeScore (the desktop path,
+    // which keeps its unsuffixed names and is deliberately left alone), restated here because the
+    // journal needs the ratings alongside the mapping, not just old→new ids.
     // -----------------------------------------------------------------------------------------
 
-    public static List<PlanEntry> BuildPlan(IReadOnlyList<MediaRecord> records)
+    /// <summary>The name a file of this rank gets in a run identified by <paramref name="runSuffix"/>.</summary>
+    public static string NewNameOf(int index, string runSuffix, string extension) =>
+        $"{index:D6}-{runSuffix}{extension}";
+
+    /// <summary>
+    /// Builds the old→new plan. <paramref name="runSuffix"/> is normally left null, and a fresh one
+    /// is drawn that is proven not to collide with anything already in the folder; passing one
+    /// explicitly is for tests that need a predictable name.
+    /// </summary>
+    public static List<PlanEntry> BuildPlan(IReadOnlyList<MediaRecord> records, string? runSuffix = null)
     {
         var ordered = records
             .OrderByDescending(r => r.Rating.ConservativeScore)
             .ThenBy(r => r.Filename, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var suffix = runSuffix ?? ChooseRunSuffix(ordered);
+
         var plan = new List<PlanEntry>(ordered.Count);
         var index = 1;
         foreach (var record in ordered)
         {
-            var ext = Path.GetExtension(record.Filename);
-            var newName = $"{index:D6}{ext}";
+            var newName = NewNameOf(index, suffix, Path.GetExtension(record.Filename));
             plan.Add(new PlanEntry(
                 record.Filename, newName, record.Rating.Mu, record.Rating.Sigma,
                 record.Matches, record.Impressions, record.LastPlayed));
@@ -76,6 +102,57 @@ public static class RenameEngine
 
         return plan;
     }
+
+    /// <summary>
+    /// Draws a run suffix whose names — and whose temporaries — are all absent from the folder as it
+    /// stands. Randomness alone would almost always do (65,536 suffixes, and a clash also needs the
+    /// same index and extension), but "almost always" is not the property this design needs: the
+    /// guarantee that <c>new</c>, temp and <c>old</c> are disjoint sets is what makes recovery
+    /// correct, so it is checked rather than assumed.
+    /// </summary>
+    private static string ChooseRunSuffix(IReadOnlyList<MediaRecord> ordered)
+    {
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in ordered)
+            taken.Add(record.Filename);
+
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var candidate = RandomSuffix(2);
+            if (!Collides(ordered, candidate, taken))
+                return candidate;
+        }
+
+        // Sixty-four collisions in a row is not luck; something about this folder is pathological.
+        // A wider suffix ends the argument rather than looping forever or throwing in the owner's face.
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var candidate = RandomSuffix(8);
+            if (!Collides(ordered, candidate, taken))
+                return candidate;
+        }
+
+        throw new InvalidOperationException(
+            "Could not find a rename suffix that this folder does not already use. Nothing has been " +
+            "moved and no rating has changed.");
+    }
+
+    private static bool Collides(IReadOnlyList<MediaRecord> ordered, string suffix, HashSet<string> taken)
+    {
+        var index = 1;
+        foreach (var record in ordered)
+        {
+            var candidate = NewNameOf(index, suffix, Path.GetExtension(record.Filename));
+            if (taken.Contains(candidate) || taken.Contains(TempNameOf(candidate)))
+                return true;
+            index++;
+        }
+
+        return false;
+    }
+
+    private static string RandomSuffix(int bytes) =>
+        Convert.ToHexString(RandomNumberGenerator.GetBytes(bytes)).ToLowerInvariant();
 
     // -----------------------------------------------------------------------------------------
     // The journal — write+fsync before the first move (§ 3.2); read; delete (the commit point).

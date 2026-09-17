@@ -45,7 +45,9 @@ public class RenameEngineTests
             r => r.Filename, r => (r.Matches, r.Impressions, r.LastPlayed), StringComparer.OrdinalIgnoreCase);
 
         var plan = RenameEngine.BuildPlan(records);
-        Assert.Equal("000001.jpg", plan[0].New);   // alpha: highest conservative score
+        Assert.Equal("alpha.jpg", plan[0].Old);              // highest conservative score
+        Assert.StartsWith("000001-", plan[0].New, StringComparison.Ordinal);
+        Assert.EndsWith(".jpg", plan[0].New, StringComparison.Ordinal);
 
         RenameEngine.WriteJournal(dir, plan, DateTimeOffset.UtcNow);
         Assert.True(RenameEngine.JournalExists(dir), "the journal must exist before any move (§ 3.2)");
@@ -142,7 +144,7 @@ public class RenameEngineTests
         RenameEngine.MovePhase2(dir, plan);
 
         // The files are all renamed now; rankmaster_db.json still lists alpha.jpg / bravo.jpg.
-        Assert.True(File.Exists(Path.Combine(dir, "000001.jpg")));
+        Assert.True(File.Exists(Path.Combine(dir, plan[0].New)));
         Assert.False(File.Exists(Path.Combine(dir, "alpha.jpg")));
 
         // Half 1: the catastrophe. A plain Scan+Save (what an ordinary vote would do) assigns the
@@ -159,10 +161,10 @@ public class RenameEngineTests
         Assert.True(outcome.Reunited);
 
         var recovered = catalog.Scan(dir).ToDictionary(r => r.Filename, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(30, recovered["000001.jpg"].Rating.Mu);
-        Assert.Equal(9, recovered["000001.jpg"].Matches);
-        Assert.Equal(25, recovered["000002.jpg"].Rating.Mu);
-        Assert.Equal(4, recovered["000002.jpg"].Matches);
+        Assert.Equal(30, recovered[plan[0].New].Rating.Mu);
+        Assert.Equal(9, recovered[plan[0].New].Matches);
+        Assert.Equal(25, recovered[plan[1].New].Rating.Mu);
+        Assert.Equal(4, recovered[plan[1].New].Matches);
     }
 
     // ---- cancel: stop and reunite in place, never a rollback ------------------------------------
@@ -242,7 +244,7 @@ public class RenameEngineTests
         Assert.Equal("renaming", journal.State);
         Assert.Single(journal.Plan);
         Assert.Equal("alpha.jpg", journal.Plan[0].Old);
-        Assert.Equal("000001.jpg", journal.Plan[0].New);
+        Assert.StartsWith("000001-", journal.Plan[0].New, StringComparison.Ordinal);
         Assert.Equal(30, journal.Plan[0].Mu);
 
         Assert.EndsWith(".rankmaster-rename.json", RenameEngine.JournalPath(dir), StringComparison.Ordinal);
@@ -251,22 +253,23 @@ public class RenameEngineTests
     [Fact]
     public void Deterministic_temps_are_identifiable()
     {
-        Assert.Equal("__rm2_000001.jpg", RenameEngine.TempNameOf("000001.jpg"));
+        Assert.Equal("__rm2_000001-a3f9.jpg", RenameEngine.TempNameOf("000001-a3f9.jpg"));
 
         var dir = Temp();
         var record = Rec("alpha.jpg", mu: 10, sigma: 5);
         File.WriteAllBytes(Path.Combine(dir, "alpha.jpg"), new byte[] { 1 });
         var plan = RenameEngine.BuildPlan(new List<MediaRecord> { record });
+        var temp = RenameEngine.TempNameOf(plan[0].New);
 
         RenameEngine.MovePhase1(dir, plan);
-        Assert.True(File.Exists(Path.Combine(dir, "__rm2_000001.jpg")),
+        Assert.True(File.Exists(Path.Combine(dir, temp)),
             "phase 1 must move to the deterministic temp, not a random name — so a crash mid-run " +
             "leaves a file recovery can identify without a per-file journal write.");
         Assert.False(File.Exists(Path.Combine(dir, "alpha.jpg")));
 
         RenameEngine.MovePhase2(dir, plan);
-        Assert.True(File.Exists(Path.Combine(dir, "000001.jpg")));
-        Assert.False(File.Exists(Path.Combine(dir, "__rm2_000001.jpg")));
+        Assert.True(File.Exists(Path.Combine(dir, plan[0].New)));
+        Assert.False(File.Exists(Path.Combine(dir, temp)));
     }
 
     [Fact]
@@ -314,7 +317,7 @@ public class RenameEngineTests
 
         var loaded = catalog.Scan(dir);
         Assert.Single(loaded);   // only alpha survives; bravo's rating is gone with its file
-        Assert.Equal("000001.jpg", loaded[0].Filename);
+        Assert.Equal(plan.First(p => p.Old == "alpha.jpg").New, loaded[0].Filename);
     }
 
     // ---- helpers --------------------------------------------------------------------------------
