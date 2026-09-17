@@ -12,7 +12,14 @@ This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If
 | Minor (`1.x.0`) | New capability that is not a rewrite |
 | Major (`x.0.0`) | Large new feature, or an extensive engine rework |
 
-This tree is `project\` (including `.git`). The runnable app is the single file one level up: `..\RankMaster2.exe`.
+This tree is `project\` (including `.git`). That line above describes the **frozen** Rank Master 2 and
+its single-file `..\RankMaster2.exe`; Rank Master 3 is three separate programs and installs elsewhere —
+see **Run** below.
+
+**A naming trap worth knowing.** Both the frozen app (`src/RankMaster2.App`) and the new Windows client
+(`pc/src/RankMaster2.Pc`) build an executable called `RankMaster2.exe`. `pc/install.ps1` tells them
+apart by path when it stops a running client; Task Manager will not. If two entries are listed, the
+path is the only thing that distinguishes them.
 
 ## What is in 3.0.0 — Rank Master 3
 
@@ -57,7 +64,7 @@ What changed for someone who just wants to rank photographs:
   monitor gets a picture decoded for a 4K monitor.
 - **Skip is gone from the Windows client.** You said you do not use it; the phone never had it. The
   desktop app still has `↓` / `S`, and the server still accepts a skip from anything that sends one.
-- **The desktop app starts far less work.** The video engine is no longer loaded for a folder that
+- **The Windows client starts far less work.** The video engine is no longer loaded for a folder that
   contains no video, the plugin set it does load is 26 files rather than 320, and the program is
   published precompiled.
 

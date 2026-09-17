@@ -1098,9 +1098,10 @@ Nothing here needs him to read code.
 
 The coordinator, after § 5 passes (this plan runs no `git`):
 
-1. Commit the round on `master` in the repository's prose style; tag **`v3.1.0`** (the root
-   `Directory.Build.props` says 3.1.0 after D0). If the round ships in two parts (§ 4 "if time is
-   short"), the first part is `v3.1.0` and the second `v3.1.1`.
+1. Commit the round on `master` in the repository's prose style; tag **`v3.0.0`** (the root
+   `Directory.Build.props` says 3.0.0 — the coordinator overrode this plan's 3.1.0 on 2026-09-17:
+   the client had never been run on the owner's machine, so this round finishes 3.0.0 rather than
+   succeeding it). A later round would be `v3.0.1`.
 2. Push. The corpus and the fixtures are git-ignored and are **not** needed on his PC: nothing there
    runs tests.
 
