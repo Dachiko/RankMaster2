@@ -14,9 +14,10 @@ import org.junit.Test
 /**
  * Where a tap votes, and where it deliberately does not.
  *
- * The owner kept voting by accident, so the target is now half the glass: a box centred in each
- * pane, covering half of it. The rest of the pane still shows the photograph and still answers a
- * long press — it just does not answer a tap.
+ * The owner kept voting by accident, so the target is one rectangle centred on the glass, covering
+ * thirty per cent of it and inset from the four outside edges. It crosses the seam on purpose: the
+ * accidental taps come from the edges, never the middle. The rest of the screen still shows the
+ * photographs and still answers a long press — it just does not answer a tap.
  *
  * A wrong vote is the only mistake this screen can make that costs anything: it moves a rating
  * nobody asked to move, and taking it back costs a round trip and the owner's attention. Doing
@@ -83,9 +84,26 @@ class EdgeMarginTest {
     }
 
     @Test
-    fun `the seam does not vote, from either side of it`() {
-        assertNull(votableSideAt(Offset(w / 2f, h / 2f - 2f), portrait = true, w, h))
-        assertNull(votableSideAt(Offset(w / 2f, h / 2f + 2f), portrait = true, w, h))
+    fun `the seam votes, and picks the pane the finger is actually over`() {
+        // Reversed deliberately, 2026-09-17. The seam used to be dead, on the theory that a tap
+        // near it was ambiguous. The owner measured his own thumb against that theory: "It's ok it
+        // covers the seam between a pair, the false voting is produced on the edges, not in the
+        // center of the screen." A hole in the middle of the one place he aims at was costing him
+        // real taps to prevent accidents that were happening somewhere else entirely.
+        assertEquals(Side.LEFT, votableSideAt(Offset(w / 2f, h / 2f - 2f), portrait = true, w, h))
+        assertEquals(Side.RIGHT, votableSideAt(Offset(w / 2f, h / 2f + 2f), portrait = true, w, h))
+
+        // Landscape is the same rule on the other axis.
+        assertEquals(Side.LEFT, votableSideAt(Offset(w / 2f - 2f, h / 2f), portrait = false, w, h))
+        assertEquals(Side.RIGHT, votableSideAt(Offset(w / 2f + 2f, h / 2f), portrait = false, w, h))
+    }
+
+    @Test
+    fun `the live area is one rectangle, not two boxes with a gap between them`() {
+        // The distinguishing case: a point that is inside the screen-centred rectangle but would
+        // have been in the old per-pane box's seam margin. If this votes, the rectangle is whole.
+        val justInsideTheSeam = Offset(w / 2f, h / 2f - h * 0.05f)
+        assertEquals(Side.LEFT, votableSideAt(justInsideTheSeam, portrait = true, w, h))
     }
 
     @Test

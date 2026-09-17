@@ -181,19 +181,49 @@ class Rm2VideoPlayers(
             { ref, onState -> create(ref, onState) },
     ) {
         private var current: Rm2Video? = null
+        private var currentRefId: String? = null
+
+        // The shape this slot last had reported for whichever file it most recently held, kept
+        // across a release so the *next* player for the *same* file does not have to rediscover it.
+        //
+        // This is the owner's second repro on this bug (BUGS.md § 1): full-screen a video, swipe the
+        // pair a few times, press back. § 2.5 releases a covered pane's player outright, so the pane
+        // that resumes gets a brand-new `Rm2Video` - and a fresh one starts at `aspectRatio == null`
+        // (its own doc comment), even though the decoder already told this exact slot the shape a
+        // moment earlier, before the viewer covered it. Until the new player's own
+        // `onVideoSizeChanged` arrives, the pane fills its box - `RESIZE_MODE_FIT` keeps that from
+        // ever being stretched, but it is still the wrong shape for however long that takes, right
+        // after the owner was looking at the correct one full screen. Seeding the next player from
+        // what this slot already knows about *that file* closes the gap; tagging it with the file's
+        // id keeps it from ever being handed to a different file that happens to land in this slot
+        // next (an ordinary pair change, not this bug, but the same field would be wrong for it).
+        private var lastKnownRatioRefId: String? = null
+        private var lastKnownRatio: Float? = null
 
         /** Releases whatever this slot holds, then builds and prepares [ref]'s player. */
         fun acquire(ref: MediaRef, onState: (MediaPaneState) -> Unit = {}): Rm2Video? {
-            current?.release()
-            current = null
-            current = build(ref, onState)
+            release()
+            val next = build(ref, onState)
+            if (next != null && ref.id == lastKnownRatioRefId) {
+                next.aspectRatio.value = lastKnownRatio
+            }
+            current = next
+            currentRefId = ref.id
             return current
         }
 
         /** Gives back this slot's player, if it has one, without taking a new one. */
         fun release() {
-            current?.release()
+            current?.let { video ->
+                val ratio = video.aspectRatio.value
+                if (ratio != null) {
+                    lastKnownRatioRefId = currentRefId
+                    lastKnownRatio = ratio
+                }
+                video.release()
+            }
             current = null
+            currentRefId = null
         }
 
         /**

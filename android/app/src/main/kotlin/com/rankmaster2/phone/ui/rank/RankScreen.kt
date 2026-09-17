@@ -251,7 +251,7 @@ private fun Pair(
                         // The moment a finger lands is the moment the gesture picks its target -
                         // before Compose has had a chance to recompose underneath it.
                         onPress = { aimedAtToken = currentPairToken },
-                        // A tap votes, and only away from the seam and away from the outside edge.
+                        // A tap votes, and only inside the rectangle inset from the outside edges.
                         onTap = { at ->
                             votableSideAt(at, portrait, widthPx, heightPx)
                                 ?.let { if (actionable) vote(it, aimedAtToken) }
@@ -269,7 +269,7 @@ private fun Pair(
 }
 
 /**
- * The share of the screen on which a tap casts a vote: **half**.
+ * The share of the screen on which a tap casts a vote: **thirty per cent**.
  *
  * The owner kept voting by accident. A wrong vote is the one mistake this screen can make that
  * costs anything - it moves a rating nobody asked to move, and cancel costs a round trip and his
@@ -277,27 +277,37 @@ private fun Pair(
  * of each pane still *shows* the photograph; it just does not answer a tap.
  *
  * Expressed as the share of the glass, because that is how it was asked for and how it will be
- * adjusted. One number, one place: if half is still too much, this line moves and nothing else.
+ * adjusted. One number, one place: if thirty per cent is still too much, this line moves and
+ * nothing else. It was half before, and half was still catching his thumb.
  */
-internal const val VotingShareOfScreen = 0.50f
+internal const val VotingShareOfScreen = 0.30f
 
 /**
- * The live box sits inside each pane, so this is also the share of *each pane* that votes - two
- * panes, each half live, is half the screen. Equal on both axes, hence the square root.
+ * The live box is **one rectangle centred on the screen**, inset from the four outside edges and
+ * crossing the seam - not one box per pane.
+ *
+ * His words, 2026-09-17: *"the active area is a rectangle inside the screen, with paddings from the
+ * edges. It's ok it covers the seam between a pair, the false voting is produced on the edges, not
+ * in the center of the screen."* That is a measurement, not a preference: the accidental taps come
+ * from the thumb meeting the edge of the glass, and nothing was ever mis-hit in the middle. Insetting
+ * from the seam as well - which is what a per-pane box did - shrank the target where it was never
+ * wrong, and pushed the live area further from where he actually aims.
+ *
+ * Equal inset on both axes, hence the square root.
  */
 private fun liveFractionPerAxis(share: Float): Float =
     kotlin.math.sqrt(share.coerceIn(0.01f, 1f))
 
 /**
- * Which pane a touch may **vote** for: inside that pane's live box, or nothing.
+ * Which pane a touch may **vote** for: inside the screen's live rectangle, or nothing.
  *
  * Kept separate from [sideAt] rather than folded into it, because the two questions genuinely
  * differ. "Which pane is this?" is what a long press asks, and it has an answer everywhere on the
- * glass. "May this cast a vote?" is what a tap asks, and outside the live box the answer is no.
+ * glass. "May this cast a vote?" is what a tap asks, and outside the live rectangle the answer is no.
  *
- * This subsumes the old seam band and the old edge margin: the live box is centred in the pane, so
- * it is already clear of the seam on one side and of the outside on the other three. One rule
- * instead of two that had to be kept consistent with each other.
+ * This subsumes the old edge margin, and deliberately drops the old seam band: one rectangle inset
+ * from the four outside edges, crossing the middle, instead of two boxes that each had to be kept
+ * clear of the seam as well.
  */
 internal fun votableSideAt(
     at: Offset,
@@ -306,25 +316,19 @@ internal fun votableSideAt(
     height: Float,
     share: Float = VotingShareOfScreen,
 ): Side? {
-    val side = sideAt(at, portrait, width, height, deadBand = 0f) ?: return null
-
-    // The pane this touch is in, in screen coordinates.
-    val paneWidth = if (portrait) width else width / 2f
-    val paneHeight = if (portrait) height / 2f else height
-    val originX = if (portrait || side == Side.LEFT) 0f else width / 2f
-    val originY = if (!portrait || side == Side.LEFT) 0f else height / 2f
-
     val live = liveFractionPerAxis(share)
-    val marginX = paneWidth * (1f - live) / 2f
-    val marginY = paneHeight * (1f - live) / 2f
+    val marginX = width * (1f - live) / 2f
+    val marginY = height * (1f - live) / 2f
 
-    val x = at.x - originX
-    val y = at.y - originY
+    val inside = at.x >= marginX && at.x <= width - marginX &&
+        at.y >= marginY && at.y <= height - marginY
 
-    val inside = x >= marginX && x <= paneWidth - marginX &&
-        y >= marginY && y <= paneHeight - marginY
+    if (!inside) return null
 
-    return if (inside) side else null
+    // Inside the rectangle, which pane the finger is over decides the vote. No dead band at the
+    // seam: he said plainly that the seam is not where the accidents happen, and a band there would
+    // cut a hole in the middle of the one area he does aim at.
+    return sideAt(at, portrait, width, height, deadBand = 0f)
 }
 
 /**

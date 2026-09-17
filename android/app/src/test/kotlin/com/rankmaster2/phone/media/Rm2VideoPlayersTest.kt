@@ -190,4 +190,61 @@ class Rm2VideoPlayersTest {
 
         slot.release() // must not throw, and must not touch an already-released video again
     }
+
+    // -- the owner's repro, 2026-09-17: full-screen a video, swipe a few times, press back --------
+
+    @Test
+    fun `a pane resuming after being covered keeps the shape it already knew, not null`() {
+        // § 2.5 releases a covered pane's player outright rather than pausing it, which is right for
+        // the memory ceiling but wrong for `aspectRatio`: the rebuilt player is a fresh `Rm2Video`,
+        // and a fresh one starts at null (Rm2Video.aspectRatio's own doc). Until its own
+        // `onVideoSizeChanged` arrives, the pane fills its box - not stretched, `RESIZE_MODE_FIT`
+        // never does that - but the wrong shape, for however long that takes. This is exactly the
+        // owner's repro: open a video full screen (covers the pane), swipe between the pair a few
+        // times, press back (pane resumes) - and the pane he lands on flashes to the wrong shape for
+        // a file whose shape it had already been told, half a second earlier.
+        val ref = MediaFixtures.video("a.mp4")
+        val slot = players().Slot { _, _ -> Rm2VideoPlayers.testVideo() }
+
+        val first = slot.sync(ref, playing = true)
+        requireNotNull(first)
+        assertNull("nothing known yet, the decoder has not reported", first.aspectRatio.value)
+
+        // The decoder reports the shape. Simulated directly - decoding is not available on a build
+        // machine, and VideoAspectRatioTest already pins the arithmetic that produces this number.
+        first.aspectRatio.value = 9f / 16f
+
+        // The viewer opens over this pane: sync(playing = false) releases the player outright.
+        val covered = slot.sync(ref, playing = false)
+        assertNull(covered)
+
+        // Back closes the viewer: the pane resumes, for the same file.
+        val resumed = slot.sync(ref, playing = true)
+        requireNotNull(resumed)
+
+        assertEquals(
+            "a file whose shape is already known must not flash back to an unknown-shape box",
+            9f / 16f,
+            resumed.aspectRatio.value!!,
+            0.0001f,
+        )
+    }
+
+    @Test
+    fun `a slot does not carry one file's shape onto a different file`() {
+        val a = MediaFixtures.video("a.mp4")
+        val b = MediaFixtures.video("b.mp4")
+        val slot = players().Slot { _, _ -> Rm2VideoPlayers.testVideo() }
+
+        val first = slot.acquire(a)
+        requireNotNull(first)
+        first.aspectRatio.value = 9f / 16f
+
+        val second = slot.acquire(b)
+        requireNotNull(second)
+        assertNull(
+            "a different file must start with its shape unknown, not the previous file's",
+            second.aspectRatio.value,
+        )
+    }
 }
