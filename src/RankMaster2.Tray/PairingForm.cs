@@ -26,7 +26,7 @@ internal sealed class PairingForm : Form
     {
         _dataDirectory = dataDirectory;
 
-        Text = "Pair a phone — Rank Master 2";
+        Text = "Pair a phone — Rank Master 3";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -111,7 +111,7 @@ internal sealed class PairingForm : Form
             _offer = null;
             _code.Text = "—";
             _expiry.Text = "Could not open a pairing window.";
-            MessageBox.Show(this, e.Message, "Rank Master 2", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, e.Message, "Rank Master 3", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {

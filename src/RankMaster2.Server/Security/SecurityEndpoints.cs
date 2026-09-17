@@ -206,7 +206,7 @@ public static class SecurityEndpoints
             var authenticated = device is not null;
 
             var body = new PingResponse(
-                Product: "Rank Master 2 server",
+                Product: "Rank Master 3 server",
                 ApiVersion: "v1",
                 Version: state.Version,
                 Ready: state.Ready,

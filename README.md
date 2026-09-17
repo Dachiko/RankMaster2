@@ -4,7 +4,7 @@ Windows app for ranking a folder of photos **or** videos by pairwise comparison.
 
 This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
 
-**Current version: 2.0.0.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
+**Current version: 3.0.0** (Rank Master 3).  The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
 
 | Bump | When |
 |---|---|
@@ -14,10 +14,11 @@ This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If
 
 This tree is `project\` (including `.git`). The runnable app is the single file one level up: `..\RankMaster2.exe`.
 
-## What is in 2.0.0
+## What is in 3.0.0 — Rank Master 3
 
-The rewrite. Rank Master is now three programs that share one ranking engine and one database
-format:
+**Rank Master 3 is three programs**, sharing one ranking engine and one database format. Rank Master
+2 — the WPF desktop app in `src/RankMaster2.App` — is the program it replaces; it is frozen at
+1.1.4, keeps its own name, and stays in the tree as the reference for the behaviour it defined.
 
 - **The server** (`src/RankMaster2.Server`) owns a folder and every action taken on it — the only
   writer, so two programs can no longer corrupt `rankmaster_db.json` between them. It serves resized
@@ -38,8 +39,9 @@ What changed for someone who just wants to rank photographs:
   contains no video, the plugin set it does load is 26 files rather than 320, and the program is
   published precompiled.
 
-`RankMaster2.App` — the original WPF app — is frozen at 1.1.4 and stays in the tree as the reference
-for behaviour it defined.
+The repository, the namespaces and the assembly names still say `RankMaster2`. They are code
+identity, not product identity: renaming them would churn every file for no one's benefit, and the
+phone's application id in particular cannot change without the owner uninstalling and re-pairing.
 
 ## What is in 1.1.0
 

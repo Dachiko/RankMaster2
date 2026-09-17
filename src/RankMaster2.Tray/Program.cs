@@ -29,8 +29,8 @@ internal static class Program
         if (!isOnlyInstance)
         {
             MessageBox.Show(
-                "Rank Master 2 is already running. Look for its icon in the notification area.",
-                "Rank Master 2", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                "Rank Master 3 is already running. Look for its icon in the notification area.",
+                "Rank Master 3", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
 
@@ -63,8 +63,8 @@ internal static class Program
             // Almost always the port already being held, or a data directory that cannot be
             // written. Both are things the owner can fix, and neither is visible without a window.
             MessageBox.Show(
-                "Rank Master 2 could not start.\n\n" + Describe(e),
-                "Rank Master 2", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                "Rank Master 3 could not start.\n\n" + Describe(e),
+                "Rank Master 3", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
 

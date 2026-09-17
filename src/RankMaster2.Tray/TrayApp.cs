@@ -53,7 +53,7 @@ internal sealed class TrayApp : IDisposable
             Icon = TrayArt.CreateIcon(),
             // NotifyIcon truncates past 63 characters, so the address is all that fits. The folder
             // lives in the menu, where there is room for it.
-            Text = Shorten($"Rank Master 2 — {_listenAddress}:{_port}"),
+            Text = Shorten($"Rank Master 3 — {_listenAddress}:{_port}"),
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -133,7 +133,7 @@ internal sealed class TrayApp : IDisposable
 
     private void Balloon(string text)
     {
-        _icon.BalloonTipTitle = "Rank Master 2";
+        _icon.BalloonTipTitle = "Rank Master 3";
         _icon.BalloonTipText = text;
         _icon.ShowBalloonTip(3000);
     }

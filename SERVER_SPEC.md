@@ -1384,7 +1384,7 @@ Unauthenticated (public subset) or authenticated (full). Never requires a sessio
 
 ```json
 {
-  "product": "Rank Master 2 server",
+  "product": "Rank Master 3 server",
   "apiVersion": "v1",
   "version": "1.1.3",
   "ready": true,

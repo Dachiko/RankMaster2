@@ -1,0 +1,14 @@
+<Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <PropertyGroup>
+    <!--
+      This project is Rank Master 2 - the desktop app the owner runs today, and the thing Rank
+      Master 3 replaces. It is frozen, and it keeps its own name and version rather than inheriting
+      the new release's: an exe that calls itself Rank Master 3 while being the program he is
+      migrating away from would be the most confusing possible label.
+    -->
+    <Version>1.1.4</Version>
+    <Product>Rank Master 2</Product>
+    <AssemblyTitle>Rank Master 2</AssemblyTitle>
+  </PropertyGroup>
+</Project>

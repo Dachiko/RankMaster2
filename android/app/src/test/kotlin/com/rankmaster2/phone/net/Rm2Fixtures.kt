@@ -227,7 +227,7 @@ fun errorEnvelope(code: String, message: String, details: String? = null): Strin
 /** § 14, the authenticated body. `features` and `limits` are fields [Ping] does not declare. */
 const val PING_BODY: String = """
 {
-  "product": "Rank Master 2 server",
+  "product": "Rank Master 3 server",
   "apiVersion": "v1",
   "version": "1.1.3",
   "ready": true,

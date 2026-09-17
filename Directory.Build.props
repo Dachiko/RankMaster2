@@ -3,13 +3,14 @@
     <!-- Bump after every shipped change. Patch = tiny fix. Minor = new capability.
          Major = large feature or engine rewrite.
 
-         2.0.0 is the rewrite: the ranking engine moved behind a headless server, a phone client
-         appeared, and the desktop app was rebuilt as a client of that server. One number for the
-         whole product, so "which server, which phone, which client" is one question and not
-         three. -->
-    <Version>2.0.0</Version>
+         3.0.0 is Rank Master 3: the server, the phone client and the new Windows client. Rank
+         Master 2 is the WPF desktop app the owner runs today, which stays at 1.1.4 and pins its
+         own name and version in src/RankMaster2.App - it is the program being replaced, not a
+         member of this release. One number across the three new pieces, so "which server, which
+         phone, which client" is one question and not three. -->
+    <Version>3.0.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <Product>Rank Master 2</Product>
-    <AssemblyTitle>Rank Master 2</AssemblyTitle>
+    <Product>Rank Master 3</Product>
+    <AssemblyTitle>Rank Master 3</AssemblyTitle>
   </PropertyGroup>
 </Project>

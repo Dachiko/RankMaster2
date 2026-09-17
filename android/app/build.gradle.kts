@@ -15,11 +15,12 @@ android {
         // in it (CLIENT_PLAN.md § 1).
         minSdk = 29
         targetSdk = 35
-        // The product's version, not the app's own: one number across server, phone and PC client
-        // (Directory.Build.props carries it for the .NET side). versionCode only ever climbs -
-        // Android refuses to install an APK that goes backwards.
-        versionCode = 2
-        versionName = "2.0.0"
+        // Rank Master 3's version, shared with the server and the Windows client
+        // (Directory.Build.props carries it for the .NET side). Rank Master 2 is the desktop app
+        // being replaced and keeps its own. versionCode only ever climbs - Android refuses to
+        // install an APK whose code goes backwards.
+        versionCode = 3
+        versionName = "3.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

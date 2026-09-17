@@ -97,7 +97,7 @@ class FakeCredentials : Credentials {
 
 /** A `/ping` body with the fingerprint under test and everything else plausible. */
 fun ping(fingerprint: String, ready: Boolean = true) = Ping(
-    product = "Rank Master 2 server",
+    product = "Rank Master 3 server",
     apiVersion = "v1",
     version = "1.1.3",
     ready = ready,

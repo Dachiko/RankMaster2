@@ -87,7 +87,7 @@ paths:
                 public:
                   summary: Unauthenticated — the subset a pairing client sees
                   value:
-                    product: Rank Master 2 server
+                    product: Rank Master 3 server
                     apiVersion: v1
                     version: "1.1.3"
                     ready: true
@@ -110,7 +110,7 @@ paths:
                 authenticated:
                   summary: Authenticated — adds the session summary
                   value:
-                    product: Rank Master 2 server
+                    product: Rank Master 3 server
                     apiVersion: v1
                     version: "1.1.3"
                     ready: true
