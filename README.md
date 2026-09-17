@@ -107,13 +107,20 @@ Version label moved onto the title (small top-right corner of the title text). U
 
 ## Run
 
-**The server** — start here, because both new clients are clients of it. Building, configuring,
-running and troubleshooting it is [SERVER_RUNNING.md](SERVER_RUNNING.md). It runs behind the
-notification-area icon; the icon's menu tells you which address it is listening on, which is the
-address the phone needs.
+**On his PC he starts one program: the Windows client.** It starts the server itself if the server
+is not already running, waits for it, and enrols itself — there is no "start the server first" step
+and no code to type. The server keeps running after the client closes, deliberately, so the phone can
+go on using it. Proven by `ConnectTests.C4_ServerNotRunningStartAllowed`, which kills the server and
+asserts the client brought it back.
 
 **The PC client** — `pc/`. Built and published from `pc/publish.sh` / `pc/install.ps1`; see
 [PC_CLIENT_PLAN.md](PC_CLIENT_PLAN.md). This is what replaces the old desktop app.
+
+**The server** — it normally needs no attention, because the client starts it. Building, configuring
+and troubleshooting it is [SERVER_RUNNING.md](SERVER_RUNNING.md). It runs behind the notification-area
+icon, and the icon's menu tells you which address it is listening on — which is the address the
+**phone** needs, and the one reason to go looking for it. Start it by hand only when no PC client is
+involved: a phone-only session, or diagnosis.
 
 **The phone** — `android/`. See [CLIENT_PLAN.md](CLIENT_PLAN.md).
 
