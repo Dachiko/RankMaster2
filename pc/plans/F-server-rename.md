@@ -1,5 +1,8 @@
 # Part F — rename by rank, on the server
 
+*A server plan kept in this folder for history; superseded in its naming and phase details by
+`G-audit-remediation.md` § 1.1.*
+
 **Status: plan, nothing built.** Reverses a pinned product decision, adds the first long-running
 operation in the contract, and replaces the desktop app's file-backup with a small durable journal.
 

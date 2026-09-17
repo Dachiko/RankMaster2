@@ -412,6 +412,13 @@ smaller sin: the old behaviour hid the existence of a corrupt file from the one 
 
 ### 6.6 Rename by rank without a rename endpoint
 
+> **Superseded** — rename is the server's (`PC_CLIENT_PARTS.md`, 2026-09-16); the PC client calls
+> `POST /session/rename` (part G, PC-RENAME). Everything below described a local rename under the
+> folder lock, which `PC_CLIENT_PARTS.md` rejected as "a second writer wearing a disguise". It is kept
+> for the reasoning, not as the design. The server's rename is `SERVER_SPEC.md` § 10.16: journalled,
+> no backup copy, names `NNNNNN-ssss.ext`, one move per file, with a progress bar and a Cancel the
+> client shows from the first instant — the owner's requirement for a slow USB drive.
+
 The server refuses rename forever (§ 1.1). The PC keeps it, the way the old app has it — from the start
 screen, with confirmation, backup first — as a **local, exclusive, offline** operation:
 
@@ -477,8 +484,16 @@ it is a key mapping, not a ranking rule, and § 13 asks the owner to confirm it.
 | **Renaming** | progress line while `RenameByRank` runs; result toast or error | `SPEC.md` § Rename |
 | **Exhausted** | "No pair left to compare" back on the start screen | § 7.1 |
 
-Keys are `SPEC.md` § Keys verbatim, mapped: `←`/`→` → vote; `↓`/`S` → skip; `1`/`2` → discard;
-`4`/`5` → special; `Ctrl+S` → `POST /session/save`; `Ctrl+Z` → § 6.7; `Esc` → § 6.8; `O`, `F1` local.
+Keys are `SPEC.md` § Keys, mapped, **with one deliberate omission**: `←`/`→` → vote; `1`/`2` →
+discard; `4`/`5` → special; `Ctrl+S` → `POST /session/save`; `Ctrl+Z` → § 6.7; `Esc` → § 6.8; `O`,
+`F1` local.
+
+**The PC client does not offer skip.** `↓` and `S` are mapped to nothing, and the help sheet does not
+list them. This is the owner's decision (2026-09-17): he does not use it, and the phone dropped it
+already. It is a change to this client's surface only — the server keeps `POST /session/skip`, its
+error codes and every test of it (`SERVER_SPEC.md` § 10.7), the link layer keeps `SkipAsync` and the
+link tests keep exercising the endpoint, and the frozen desktop app keeps `↓`/`S`. Nothing about the
+contract moves.
 Panes accept clicks only when both are ready (still has pixels; video has painted a frame), as now.
 
 ---
@@ -619,12 +634,23 @@ Stated so nobody mistakes an estimate for a measurement:
 
 ## 13. Decisions for the owner
 
+**All six are answered. Nothing here is open.**
+
 1. **Which startup annoys you** — the time until the start screen appears, or the time from clicking
    Resume until the pictures are up? (§ 3.1; it changes what Phase 0 looks at first.)
+   **Answered: both** (2026-09-16, `PC_CLIENT_PARTS.md`). The measurement kit measures both and the
+   five startup marks say which of the two is costing what, rather than the plan guessing.
 2. **Rename by rank** — do you still use it? Keep (local, under the lock) or drop.
-3. **`Ctrl+Z`** — cancel the last action of any kind, as on the phone (recommended), or strictly the
-   last discard/special as the old app did?
-4. **Is the PC ever ranking without a network connection?** Yes → the § 8 loopback change; no → skip it.
+   **Answered: keep — but on the server, not locally** (2026-09-16, `PC_CLIENT_PARTS.md`). A local
+   rename under the folder lock was rejected as a second writer wearing a disguise. The client calls
+   `POST /session/rename` (§ 6.6, superseded note).
+3. **`Ctrl+Z`** — cancel the last action of any kind, or strictly the last discard/special?
+   **Answered: any action** (2026-09-16). One level, as on the phone — a mis-hit arrow key is a real
+   vote and there has to be a way back from it.
+4. **Is the PC ever ranking without a network connection?** **Answered: no** (2026-09-16). The § 8
+   loopback change is not made.
 5. **Skip on `↓`/`S`** — keep it on the PC, or drop it as the phone did?
-6. **Should the PC ever start the server itself**, or do you prefer the tray in the Startup folder and a
-   plain "server is not running" message? (Default: start it.)
+   **Answered: drop it** (2026-09-17, the owner: he does not use it). Removed from this client's
+   surface; the server's `POST /session/skip` and all of its tests stay exactly as they are (§ 7).
+6. **Should the PC ever start the server itself**, or the tray in the Startup folder and a plain
+   "server is not running" message? **Answered: start it** (2026-09-16).

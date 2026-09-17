@@ -1,14 +1,15 @@
 # Rank Master 2 — specification
 
-This file is the source of truth. If code and this document disagree, the document wins until we change it on purpose. When behavior changes, update this file in the same change.
+**What this file covers.** This is the behaviour of the product's **ranking engine** and of the **Rank Master 2 desktop app** — the frozen Windows app the owner still runs. The engine rules here (TrueSkill, pair picking, the cues, the one-level undo, the media policy, the database format) are shared by everything in Rank Master 3; the screens, the Keys table and the Rename-by-rank steps below are the **desktop app's**, and the three programs of Rank Master 3 are not bound by them.
+
+**The network contract is `SERVER_SPEC.md`**, not this file. Where the headless server does the same job differently — rename above all — this file says so and points there. If code and this document disagree about the engine or the desktop app, the document wins until we change it on purpose. When behaviour changes, update this file in the same change.
 
 ## What it is
 
 A Windows 11 desktop app that ranks the photos **or** videos in one folder by pairwise comparison. You see two items, pick the better one (or skip). Ratings live in `rankmaster_db.json` in that folder so the library is portable.
 
 Working title / assembly name: **RankMaster2**  
-App version: `Directory.Build.props` (now **1.1.4**). Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.  
-Git repo: `C:\Utils\rank-master-2\project`. Runnable exe: `C:\Utils\rank-master-2\RankMaster2.exe` with `libvlc\` next to it (not in git).
+App version: `Directory.Build.props` (**1.1.4**) — this is the **frozen desktop app's** version, and it does not move. The product as a whole is **Rank Master 3**, version `3.0.0`; the server, the Windows client and the phone carry that number. Shown on the start screen next to the title (small label set high on its top-right corner) and in the help footer.
 
 ## Stack
 
@@ -84,16 +85,19 @@ There is no “Saved” screen. `Esc` **quits the process immediately**.
 
 ### Keys
 
+*These are the **desktop app's** keys. The Windows client of Rank Master 3 has its own surface
+(`PC_CLIENT_PLAN.md`), the phone has none, and the server's actions are in `SERVER_SPEC.md` § 10.*
+
 | Key | Action |
 |---|---|
 | `←` / `→` | Vote left / right |
-| `↓` or `S` | Skip (no rating change) |
+| `↓` or `S` | Skip (no rating change) — **desktop app only.** Not offered by the PC client or the phone (the owner's decision, 2026-09-17: he does not use it). The server keeps `POST /session/skip` and every test of it, so the engine's skip is unchanged and any client may still call it. |
 | `1` / `2` | Move left / right to `discarded/` |
 | `4` / `5` | Move left / right to `special 1/` |
 | `O` | Open folder |
 | `F1` | Toggle the help sheet (does not quit) |
 | `Ctrl+S` | Save JSON now (redundant if the last action already saved) |
-| `Ctrl+Z` | Undo **last move** only |
+| `Ctrl+Z` | Undo **last move** only (the desktop app's undo is move-only; the server's is wider — `SERVER_SPEC.md` § 10.10) |
 | `Esc` | **Quit immediately.** Cancel any in-flight select cue (do not vote). The pair on screen is unseen. Prior choices are already on disk. |
 
 Ignore keys while a move is in flight.
@@ -120,11 +124,18 @@ File: `<folder>/rankmaster_db.json`
 }
 ```
 
-- Identity is the **filename** (the object key and the `filename` field must match).
+- Identity is the **filename** (the object key and the `filename` field must match). On **load** the key
+  wins: the `filename` field is read past and ignored, so a file whose key and `filename` disagree is
+  loaded under its key. On **save** both are written and they agree. (K8.)
+- `version` is **not validated** on load. Any value is accepted and the rows are read as the schema above.
+  This is deliberate — it is what lets Rank Master 1 files load — and it **stays** that way. **The schema is
+  frozen** (the owner, 2026-09-17): Rank Master 2 keeps reading and writing this same file alongside
+  Rank Master 3 for as long as he wants to keep using it, so the format cannot move and there is no new
+  version for a validator to reject. `version: 1` is what we write and what we will keep writing. (K8.)
 - Scan loads **every** on-disk media file (stills and videos). Ranking eligibility is a filter (mixed folder → stills only). `Save` merges: keep rows for files still on disk even if this session did not rank them; drop only files that vanished.
 - If `rankmaster_db.json` exists and does not parse, **refuse to start** and never overwrite it.
 - Atomic save: write tmp, `Flush(true)`, `File.Replace` (or `Move` if the file is new). If save throws, roll back the in-memory vote.
-- **Save on every choice** (vote or skip), atomically, before the next pair is requested. Not batched every N pairs. `Ctrl+S` is a manual extra save. `Esc` does not write (nothing new to write). Save also before rename.
+- **Save on every choice** (vote or skip), atomically, before the next pair is requested. Not batched every N pairs. `Ctrl+S` is a manual extra save. `Esc` does not write (nothing new to write). Save also before rename. **The headless server relaxes this by contract** — it applies a choice in memory, answers, and writes within a bounded delay (2 seconds or 5 choices, whichever comes first), always writing before any file move, any rename, `POST /session/save`, close and shutdown; see `SERVER_SPEC.md` § 13.1. The desktop app is unchanged and still saves on every choice.
 - **Never write an empty database.** If the folder is missing, or lists no media while the session still holds records, `Save` throws instead of writing. Saving must not create the folder: recreating a vanished one turns a recoverable error into silent, total rating loss.
 - `μ − 3σ` is computed, never stored.
 - Keep writing `impressions` and `lastPlayed` for compatibility. **Do not use `impressions` to pick pairs.**
@@ -140,17 +151,52 @@ File: `<folder>/rankmaster_db.json`
 
 ### Rename by rank
 
-*This describes the desktop app. The headless server renames without copying files, using a journal
-specified in `SERVER_SPEC.md` § 10.16.*
+*Two programs rename, and they do it differently. The steps 1–6 below are the **desktop app's**: it
+copies the whole library to a backup folder first, renames in two phases through temporary names, and
+produces `000001.ext`. The headless server copies nothing and uses no temporary names: it makes one move
+per file under a journal, and its names carry a per-run suffix — `000001-7f3a.jpg`. The server's rename is
+specified in full in `SERVER_SPEC.md` § 10.16; the name format it produces is stated at step 4 below
+because both programs sort by the same rule.*
 
 From the start screen, when a folder is loaded/remembered:
 
 1. Confirm.
-2. Copy the whole top-level library + JSON into `rankmaster_backup_<yyyyMMdd_HHmmss>/`.
-3. Phase 1: rename each media file to a unique temp name.
-4. Phase 2: rename to `000001.ext`, `000002.ext`, … sorted by **`μ − 3σ` descending** (then filename for ties). Extension unchanged.
+2. **(Desktop app only.)** Copy the whole top-level library + JSON into `rankmaster_backup_<yyyyMMdd_HHmmss>/`.
+3. **(Desktop app only.)** Phase 1: rename each media file to a unique temp name. The server has no such
+   phase — see "The name" below for why it does not need one.
+4. Rename to the rank name, sorted by **`μ − 3σ` descending** (then filename, ordinal case-insensitive,
+   for ties). Extension unchanged, case preserved.
 5. Rewrite JSON: every key and `filename` becomes the new name. Ratings stay with the same bytes.
-6. Save. On failure, restore from the backup folder and report the error.
+6. Save. The desktop app, on failure, restores from the backup folder and reports the error. The server
+   has no backup to restore from; it reunites the ratings with the files from its journal instead
+   (`SERVER_SPEC.md` § 10.16).
+
+**The name.**
+
+- **Desktop app:** `NNNNNN.ext` — `000001.jpg`, `000002.jpg`, … No suffix. This is what the frozen app has
+  always written and it is not changing.
+- **Server:** `NNNNNN-ssss.ext` — `000001-7f3a.jpg`. Six decimal digits of rank (rank 1 = `000001`), one
+  hyphen, a four-character lowercase-hexadecimal **run suffix**, then the file's own extension. The fixed
+  width comes first, so sorting the names byte-wise is sorting by rank — which is the whole point of the
+  feature. The regex is `^\d{6}-[0-9a-f]{4}\.[^.]+$`.
+
+**The suffix is drawn once per run, not per file.** Every file renamed in one run carries the same four
+characters. Two bytes from a cryptographic random generator.
+
+**The suffix is checked against what is already on disk.** Before a run starts, the candidate suffix is
+compared against every filename the run is about to rename and every top-level media file in the folder;
+if any of them already ends in `-ssss` before its extension (case-insensitively), the suffix is thrown away
+and another drawn. The consequence is the one that matters: **the set of old names and the set of new names
+cannot overlap**, so one move per file is always safe and, if the run is interrupted, every file's name says
+by itself which set it belongs to. No temporary names, no second phase, no guessing.
+
+**Suffixes never accumulate.** Each run builds the name from rank + suffix + extension and nothing else.
+`000003-b91c.jpg` becomes `000001-7f3a.jpg`, never `000001-7f3a-b91c.jpg`.
+
+**Names without a suffix are simply old names.** `000001.jpg`, written by the desktop app or by a server
+build from before this scheme, is renamed like any other file. Nothing is migrated and no folder needs
+converting: an unsuffixed name can never collide with a suffixed one, so the next ordinary run fixes
+everything in one pass.
 
 ---
 
@@ -243,6 +289,12 @@ Do **not** sample 50 random files. Sorting 20k records is fine.
 **Match strip (session only):** `RecentCues`, cap `MatchCueLimit = 10`. On vote, **before** the TrueSkill update, if winner `μ ≥` loser `μ` append Confirmation, else Upset. Skip / drop do not append. `Start()` clears cues, session vote count, and the recent-shown set. Not written to JSON.
 
 `RankingSession` keeps the folder string so it can `Save`. Pair picking still uses ids only.
+
+**`Resync()`** re-reads the folder from disk exactly as `Start()` does, but **keeps the session vote count
+and the cues** instead of zeroing them; it does clear the recent-shown set and the undo point, and it picks
+a fresh pair. The server calls it after a rename that was cancelled or that failed, so the files on screen
+match the files on disk again without the owner's session appearing to restart (`SERVER_SPEC.md` § 10.16).
+The desktop app does not call it.
 
 **One-level action undo:** `RankingSession` keeps the snapshot it already takes before `ApplyVote` and `Skip` — records, `Current`, `SessionVotes`, the warm queue, the recent-shown set and the cues — instead of discarding it on success, and `UndoLastAction()` puts it back and saves. Restoring by snapshot, never by inverse arithmetic: a TrueSkill update does not invert cleanly, and a rating that drifts on every undo is worse than no undo. Exactly one level; a second call finds nothing. The desktop app does not call it (its `Ctrl+Z` remains move-only); the server exposes it as `POST /session/undo`, which is a phone's cancel button (`SERVER_SPEC.md` § 10.10).
 

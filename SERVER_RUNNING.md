@@ -76,13 +76,30 @@ Everything else has a working default. The full list, if you ever need it:
 |---|---|---|
 | `ListenAddress` | `127.0.0.1` | the single address bound. No wildcards |
 | `Port` | `18611` | TLS port |
-| `DataDirectory` | `%LOCALAPPDATA%\RankMaster2\server` | certificate, devices, log |
+| `DataDirectory` | `%LOCALAPPDATA%\RankMaster2\Server` | certificate, devices, log |
+| `SaveDelaySeconds` | `2` | how long a vote may sit in memory before `rankmaster_db.json` is written. **`0` saves on every vote, as before** |
+| `MaxUnsavedChoices` | `5` | how many votes may be unsaved before a write is forced, whichever limit comes first |
 | `PairingWindowSeconds` | `300` | how long a code lives. Clamped to 5 minutes, downwards only |
-| `PairingWindowAttempts` | `5` | wrong guesses before the window is destroyed |
-| `AutoOpenPairingWhenUnenrolled` | `true` | open a code at startup while no phone is paired |
+| `PairingWindowAttempts` | `5` | wrong guesses **per source address** before that address kills the window |
+| `AutoOpenPairingWhenUnenrolled` | `true` | open a code at startup while no phone is paired. Only when no device list exists at all; a device list that cannot be read is moved aside and reported, never acted on |
 | `TokenLifetimeDays` | unset | unset means device tokens never expire |
 
-`RM2_DATA_DIR` also moves the data directory, for when you want one command and no config file.
+`RM2_DATA_DIR` also moves the data directory, for when you want one command and no config file. The
+order is: `DataDirectory` in `appsettings.json`, then `RM2_DATA_DIR`, then the default above.
+
+**About `SaveDelaySeconds` and `MaxUnsavedChoices`.** A vote counts the moment you press it; the
+database is written a moment afterwards rather than during the press. Whichever limit comes first
+triggers the write — two seconds, or five votes. Anything that moves a file (discard, special, undo
+of a move), a rename, an explicit save, closing the folder and shutting the server down are **never**
+deferred: those are on disk before they answer. So the most a crash or a power cut can cost is the
+last few votes. If you would rather not lose even those, set `SaveDelaySeconds` to `0` — that is
+exactly the old behaviour, a save before every vote is answered, and the cost is one fsync per vote,
+which on a USB drive is what you feel.
+
+**About `ListenAddress`.** On `127.0.0.1` the server is reachable from this PC only; a phone needs
+the PC's LAN address here, and the tray icon says which one it is listening on. The default is
+loopback deliberately — nothing is exposed until you say so — but a phone that cannot connect is
+almost always this setting and not the Wi-Fi.
 
 ---
 
@@ -150,7 +167,9 @@ Point `--base https://192.168.1.42:18611` at it when testing across the LAN rath
 
 ## 7. Where everything lives
 
-**Data directory** — `%LOCALAPPDATA%\RankMaster2\server`:
+**Data directory** — `%LOCALAPPDATA%\RankMaster2\Server` (on anything other than Windows:
+`$XDG_DATA_HOME/RankMaster2/Server`, else `~/.local/share/RankMaster2/Server`). One spelling, capital
+`S`, everywhere:
 
 | File | What it is | If you delete it |
 |---|---|---|
@@ -158,6 +177,8 @@ Point `--base https://192.168.1.42:18611` at it when testing across the LAN rath
 | `devices.json` | issued device tokens | every phone must re-pair |
 | `pairing.json` | the current offer, owner-readable only | harmless |
 | `pair.request` | sentinel asking for a pairing window | harmless |
+| `cache\` | re-encoded stills, bounded and evicted by age | harmless; it refills |
+| `devices.json.corrupt-<timestamp>` | a device list that could not be read, moved aside rather than emptied | harmless once you have re-paired; keep it if you want to know what happened |
 | `logs\server-YYYY-MM-DD.log` | the tray's log, seven days kept | harmless |
 
 The console host logs to its window instead; only the tray writes the file.
@@ -210,9 +231,11 @@ opens the folder again.
 
 **Do not run the desktop app and the server on the same folder at the same time.**
 
-The lock only binds the server: a second server respects it, the desktop app does not know about it
-yet (`SERVER_SPEC.md` § 16, gap 6). Both writing `rankmaster_db.json` can corrupt it, and no API
-response can warn you. One or the other, not both.
+The lock only binds the server: a second server respects it, Rank Master 2 does not know about it and
+will not be taught to — it is frozen, and you are keeping it (`SERVER_SPEC.md` § 16, gap 6). That is
+also why the database format is frozen: both programs must go on reading and writing the same file.
+Both writing it **at the same time** can corrupt it, and no API response can warn you. One or the
+other, not both. Either one alone is completely safe.
 
 ---
 

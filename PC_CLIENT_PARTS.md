@@ -163,6 +163,45 @@ and the packetizer is absent, the owner gets a file he can see in his folder, ca
 cannot do anything about. One DLL against that is a trade worth making. It is not support for HEVC
 as a feature; it is not failing on a file the product already claims to handle.
 
+## Settled by the owner, 2026-09-17 (after the independent audit)
+
+**Rename names carry a per-run suffix** (2026-09-17, the owner). Each run of rename draws four
+hexadecimal characters of its own and every file it produces carries them: `000001-7f3a.jpg`, not
+`000001.jpg`. His reasoning, and it is the better answer than either of the two the auditor proposed:
+he does not care what a file is called, only that sorting by name gives rank order — so the cheapest
+way to make an interrupted rename unambiguous is to make the names of one run impossible to confuse
+with the names already in the folder. With the two sets disjoint there is one move per file and no
+temporary names at all, and recovery never has to work out whether a given file has already moved: its
+name says which set it belongs to. The full scheme is `SERVER_SPEC.md` § 10.16 (and `SPEC.md`
+§ Rename by rank); the naming rules are normative and not to be re-decided.
+
+**The progress bar and the cancel button are for a slow drive, not a big folder** (2026-09-17, the
+owner). On a local disk a rename is over before he can read the bar. What he actually wants is to be
+able to **stop a rename on a USB drive the moment it looks wrong**, because he does not know how one
+behaves there. That is a requirement on cancel's latency, not on the bar: cancel is honoured before
+every move *and between the retries of a move waiting on a locked file*, so it lands within one retry
+interval rather than after the whole retry budget. Cancel stops where it is, undoes nothing, and loses
+no rating. Part E's screen must offer Cancel from the first instant and show `done / total`, never a
+bare spinner.
+
+**Skip is removed from the PC client** (2026-09-17, the owner: he does not use it). `↓` and `S` map
+to nothing and the help sheet does not list them. This is a surface change in this client only —
+`ISessionLink.SkipAsync` stays and the link tests keep exercising the endpoint, because the server
+keeps `POST /session/skip` and every test of it. The phone never offered it; the frozen desktop app
+keeps it.
+
+**Durability is relaxed by contract** (2026-09-17, the owner: *"I'm not afraid of losing a couple of
+votes, it's non-consequential."*). A vote or skip is applied and answered at once; the database is
+written within two seconds or five choices, whichever comes first. Everything that moves a file, a
+rename, an explicit save, closing the session and shutting down are still written before they answer.
+This is `SERVER_SPEC.md` § 13.1, which it replaces rather than bends, and `SaveDelaySeconds = 0` in
+`appsettings.json` restores the old behaviour exactly. For the PC client it changes one thing worth
+knowing: **a `200` on a vote no longer means the file has been written**, so anything that needs a
+durability point — before telling him it is safe to unplug the drive, or before a test reads
+`rankmaster_db.json` — calls `POST /session/save` and waits for its `200`.
+
+---
+
 **Part A's two seam additions are granted** (`LibVlcLayout`, `StartupClock.Mark`) — both are part A's
 own surface rather than anything another part must honour.
 

@@ -203,7 +203,10 @@ POST   /session/rename/cancel     stop and reunite in place
 ```
 Reversed from an earlier "deliberately absent" (2026-09-16, owner decision): it copies no files —
 safety is a journal in the folder, not a backup copy — and is specified in full at
-`SERVER_SPEC.md` § 10.16.
+`SERVER_SPEC.md` § 10.16. The names it writes are `NNNNNN-ssss.ext`, where `ssss` is a suffix drawn
+once per run and verified against the folder, so a run's old and new names cannot overlap; that is
+what allows **a single move phase**, `old → new`, with no temporary names, and an unambiguous
+recovery from any interruption.
 
 Warm pairs are returned so the client prefetches exactly as the desktop pipeline does. The
 session response is a complete snapshot — folder name, unranked count, session votes,
@@ -296,7 +299,7 @@ Settled before Phase 0, and the reasoning that goes with them:
 | Video handling | Originals only | **No FFmpeg, no poster frames, no video probing.** Server never decodes video |
 | Folder access | Full filesystem | No allowlist; media endpoints restricted by extension + session folder instead |
 | Coexistence | One at a time | No multi-client design; lock file retained as cheap insurance |
-| Rename by rank | On the server, journalled, no file backup — owner decisions 2026-09-16 | A deliberate reversal of this document's earlier "deliberately not exposed"; see `SERVER_SPEC.md` § 10.16 |
+| Rename by rank | On the server, journalled, no file backup, per-run suffixed names, one move per file — owner decisions 2026-09-16 and 2026-09-17 | A deliberate reversal of this document's earlier "deliberately not exposed"; see `SERVER_SPEC.md` § 10.16 |
 
 Decisions 2 and 4 together removed roughly a third of the original scope, which is why the
 Media agent's job is now stills-plus-range-streaming rather than a media subsystem.

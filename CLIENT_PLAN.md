@@ -1,4 +1,4 @@
-# Rank Master 2 — Android client
+# Rank Master 3 — Android client
 
 **Status: proposed.** The server is complete and audited (`SERVER_PLAN.md` phase 4); this document
 covers the phone.
@@ -28,7 +28,12 @@ does not offer, the answer is to change the spec first, not to invent it on the 
 
 Not in v1, and none of them are oversights:
 
-- No rename-by-rank. The server does not expose it and will not (`SERVER_SPEC.md` § 1.1).
+- **No rename-by-rank — the owner's decision** (2026-09-17), and it is not an oversight or a gap to
+  be filled later. The server does expose rename now (`SERVER_SPEC.md` § 10.16; the earlier
+  prohibition in § 1.1 was reversed on 2026-09-16), and the Windows client offers it. The phone does
+  not and will not: a rename is a destructive whole-folder operation with a progress bar and a cancel
+  button that he wants to watch on the PC screen, not a thing to start by accident from a handset in
+  the dark.
 - No ratings on the ranking screen. Showing μ, σ or a score biases the vote being collected
   (`SERVER_SPEC.md` § 9.3). The match strip is the only rating signal, exactly as on the desktop.
 - No offline mode. Without the server there is nothing to rank; the app shows that it cannot reach
@@ -242,13 +247,22 @@ button that is not the cancel notch:
 
 | Removed | Why |
 |---|---|
-| Skip | The owner does not skip. A control nobody uses is a control in the way |
-| Save | Every action is already on disk before its response is sent (`SERVER_SPEC.md` § 13.1). There was never anything to save |
+| Skip | The owner does not skip. A control nobody uses is a control in the way. (The Windows client dropped it too, 2026-09-17; the server keeps the endpoint) |
+| Save | Nothing here needs it. Since 2026-09-17 a vote is written within two seconds rather than before its response (`SERVER_SPEC.md` § 13.1), and closing the folder flushes — so leaving the screen is still a durability point, and there is nothing for a button to do |
 | Close folder | Back does it |
 | The stats row | Replaced by the progress line below |
 
 What is left floating over the pair: the match strip, the cancel notch, and the progress line. That
 is the whole of the chrome.
+
+**A recorded deviation from `SPEC.md` § Overlay (K6).** That section lists a folder name, a session
+vote count and an unranked count in the overlay. This client shows none of the three, deliberately —
+they are exactly the "stats row" removed above, and they are what the progress line replaced. The
+values are parsed from the snapshot (`counts`, `sessionVotes`) and go unused; they are kept parsed
+because the wire shape is the wire shape and a field that is dropped at the edge is a field nobody can
+add back cheaply. `SPEC.md` § Overlay describes the desktop app's surface, and this is a phone held at
+arm's length in a dark room. Recorded here so that the next audit finds a decision rather than an
+omission.
 
 ### 3.6.2 The progress line
 
@@ -317,6 +331,23 @@ than this server holds the folder — the desktop app, or a second server. That 
 because it is the one case where the owner has to go and do something.
 
 The rule: **say something only when the owner is the one who can fix it.**
+
+### 3.6.4 Where the phone and the PC differ on purpose
+
+Two situations are handled differently by the two clients, both are allowed by the contract, and
+neither is wrong. They are written down here so the difference reads as a decision rather than as one
+of them being behind.
+
+| Situation | Phone | PC client | Why the difference is right |
+|---|---|---|---|
+| `401` in the middle of an action (the token was revoked, or the device list was lost) | Fatal: "no longer paired", and the owner pairs again by hand from a fresh code | Re-enrols in place from the server's local `pairing.json` and resends the action | Only the PC can do the silent thing: `pairing.json` sits in the server's data directory **on the same disk**, readable only by the owner's account. The phone has no path to it and no way to get a new code except from the PC. Asking the owner to re-pair is the phone's only honest option, and inventing a retry that cannot succeed would just hide the problem |
+| The server's certificate no longer matches the pinned fingerprint | Fatal dead end; pair again by hand | Silently re-reads the local `pairing.json`, takes the new fingerprint and re-enrols | Same reason, and it is the safer default on the phone: a certificate that changed is either a reinstall or an impostor, and over a LAN the phone cannot tell which. On the same machine the PC client can, because it is reading the server's own file rather than trusting the network |
+
+Everything else the audit found the two doing differently is being brought to the contract's
+recommended behaviour, on the phone: `503 session_busy` waits `retryAfterSeconds` and resends once
+before the modal; a lost undo is resent once (§ 13.3 says it is safe); "Forget this PC" revokes the
+token as well as clearing it locally; and a `409 session_already_open` **asks** before closing a
+session the PC is holding, rather than taking the folder away without a word.
 
 ### 3.7 What the client must never do
 

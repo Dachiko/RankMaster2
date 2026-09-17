@@ -8,7 +8,10 @@ This corpus is the other half of that. It is real media — real camera EXIF, re
 encoders, real containers — because the world produces files that no generator thinks to produce.
 
 **Nothing here is a dependency of the server.** ffmpeg builds the corpus; it never serves it. The
-media is git-ignored and tests that use it skip cleanly when it is absent.
+media is git-ignored and tests that use it **skip visibly** when it is absent — counted as skipped and
+printed as skipped in the run summary, never quietly green. The acceptance gate builds the corpus
+first, so a full run on a development box reports **0 skipped**; a non-zero skip count means the
+corpus is missing and those tests proved nothing.
 
 ```
 tests/corpus/build-corpus.sh          # needs curl, ffmpeg, python3 with Pillow
