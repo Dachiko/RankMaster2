@@ -1,8 +1,13 @@
 <Project>
   <PropertyGroup>
     <!-- Bump after every shipped change. Patch = tiny fix. Minor = new capability.
-         Major = large feature or engine rewrite. -->
-    <Version>1.1.4</Version>
+         Major = large feature or engine rewrite.
+
+         2.0.0 is the rewrite: the ranking engine moved behind a headless server, a phone client
+         appeared, and the desktop app was rebuilt as a client of that server. One number for the
+         whole product, so "which server, which phone, which client" is one question and not
+         three. -->
+    <Version>2.0.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>Rank Master 2</Product>
     <AssemblyTitle>Rank Master 2</AssemblyTitle>

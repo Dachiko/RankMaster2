@@ -4,7 +4,7 @@ Windows app for ranking a folder of photos **or** videos by pairwise comparison.
 
 This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If the code disagrees with the spec, the spec is right until we change the spec.
 
-**Current version: 1.1.4.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
+**Current version: 2.0.0.** The number lives in [Directory.Build.props](Directory.Build.props) and on the start screen next to the title (small label on its top-right corner). Bump it in the same change as the update, then republish:
 
 | Bump | When |
 |---|---|
@@ -13,6 +13,33 @@ This is a remake of Rank Master 1. Behavior is defined in [SPEC.md](SPEC.md). If
 | Major (`x.0.0`) | Large new feature, or an extensive engine rework |
 
 This tree is `project\` (including `.git`). The runnable app is the single file one level up: `..\RankMaster2.exe`.
+
+## What is in 2.0.0
+
+The rewrite. Rank Master is now three programs that share one ranking engine and one database
+format:
+
+- **The server** (`src/RankMaster2.Server`) owns a folder and every action taken on it — the only
+  writer, so two programs can no longer corrupt `rankmaster_db.json` between them. It serves resized
+  stills and range-streamed video over TLS on the LAN, and it runs behind a notification-area icon
+  (`RankMaster2.Tray.exe`). Its contract is [SERVER_SPEC.md](SERVER_SPEC.md).
+- **The phone** (`android/`) ranks a folder from an Android device with the PC screen off.
+- **The PC client** (`pc/`) replaces the old desktop app: same two-pane compare, same keys, but a
+  client of the server rather than a second writer.
+
+What changed for someone who just wants to rank photographs:
+
+- **Undo takes back any action**, not only a file move. A mis-hit key is a real vote, and there is
+  now a way back from one. `Ctrl+Z`, one level.
+- **Rename by rank no longer copies the library first.** It journals the renames instead, so it does
+  not need gigabytes of free space or minutes of copying, and a crash part-way through can no longer
+  lose a rating. What it protects is the database; the photographs were never at risk.
+- **The desktop app starts far less work.** The video engine is no longer loaded for a folder that
+  contains no video, the plugin set it does load is 26 files rather than 320, and the program is
+  published precompiled.
+
+`RankMaster2.App` — the original WPF app — is frozen at 1.1.4 and stays in the tree as the reference
+for behaviour it defined.
 
 ## What is in 1.1.0
 

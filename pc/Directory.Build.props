@@ -1,7 +1,8 @@
 <Project>
   <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
-  <PropertyGroup>
-    <!-- A-startup-and-shell.md § 1: the pc/ tree is 2.0.0, a rewrite, overriding the root's 1.1.4. -->
-    <Version>2.0.0</Version>
-  </PropertyGroup>
+  <!--
+    Part A set 2.0.0 here to override a root that still said 1.1.4. The root is 2.0.0 now, so there
+    is nothing left to override and a second place to edit is a second place to forget. This file
+    stays only to chain the import, which pc/ needs to inherit Product and AssemblyTitle.
+  -->
 </Project>
