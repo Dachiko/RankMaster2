@@ -295,6 +295,11 @@ public class CancelTests(Rm2Server server) : SessionTestBase(server)
         (await client.VoteAsync(opened.RequireToken("open"), "left")).ShouldBeSnapshot(200, "vote");
         (await client.UndoAsync()).ShouldBeSnapshot(200, "cancel");
 
+        // § 13.1: a vote and its cancel are plain choices, applied at once and on disk within the
+        // bound. § 10.5 is how a client asks for the point where the file is the truth, and this
+        // test is about the file.
+        (await client.SaveAsync()).ShouldBeSnapshot(200, "POST /session/save (SERVER_SPEC.md § 10.5)");
+
         var database = Path.Combine(folder.Path, "rankmaster_db.json");
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(database));
         var images = document.RootElement.GetProperty("images");
@@ -302,7 +307,8 @@ public class CancelTests(Rm2Server server) : SessionTestBase(server)
         Assert.True(images.TryGetProperty(left, out var row),
             $"'{left}' should still be a row in the database after a cancelled vote.");
         Assert.True(row.GetProperty("matches").GetInt32() == 0,
-            "SERVER_SPEC.md § 13.1: the cancel is on disk before the 200 leaves. The file still " +
-            $"counts {row.GetProperty("matches").GetInt32()} matches for a vote that was taken back.");
+            "SERVER_SPEC.md § 10.5: the 200 from POST /session/save means every choice up to that " +
+            $"moment is on disk. The file still counts {row.GetProperty("matches").GetInt32()} " +
+            "matches for a vote that was taken back.");
     }
 }

@@ -7,78 +7,170 @@ namespace RankMaster2.Audit.StateMachine;
 /// <summary>
 /// SERVER_SPEC.md § 8.3, the whole table, driven by a save that really throws.
 ///
-/// Vote and skip save *inside* the library call and roll the in-memory state back when that save
-/// throws, so their failure changes nothing and the client's token stays current. Discard, special
-/// and undo move the file *first* and then call <c>Drop</c>/<c>Restore</c>, neither of which saves
-/// or can roll back, so a save that throws after the move leaves the change committed and
-/// <c>pairSeq</c> advanced. Same status code, opposite meaning — which makes the details field and
-/// the embedded snapshot the only things standing between the client and a wrong recovery.
+/// A vote or skip whose write cannot be made changes nothing and leaves the client's token current.
+/// Discard, special and undo move the file *first* and then call <c>Drop</c>/<c>Restore</c>, neither
+/// of which saves or can roll back, so a save that throws after the move leaves the change committed
+/// and <c>pairSeq</c> advanced. Same status code, opposite meaning — which makes the details field
+/// and the embedded snapshot the only things standing between the client and a wrong recovery.
 ///
 /// The lever is a directory sitting on <c>rankmaster_db.json.tmp</c>: the catalog writes that file
 /// first, so the save fails while the folder stays writable and file moves still work. Nothing here
 /// mocks the catalog.
+///
+/// <para><b>The table has a mode column now (SERVER_SPEC.md § 13.1).</b> A vote, a skip and the
+/// cancel of one are written by the bounded write-behind, so "the write failed" reaches the client by
+/// a different route depending on <c>SaveDelaySeconds</c>: at <c>0</c> the failing write is inside the
+/// choice and that choice is rolled back; otherwise the choice is applied and answered, the deferred
+/// write fails, the failure is <i>latched</i>, and the next choice is the one refused. The row of the
+/// table is identical at the end of both — nothing applied, <c>pairSeq</c> unchanged, the token still
+/// valid, the identical request retryable — and that is what the two modes below assert. The moves
+/// (discard, special, undo of a move) have no mode column: they force the write before they touch a
+/// file, in both modes, which is exactly what keeps § 13.2's ordering and its self-heal intact.</para>
 /// </summary>
-public sealed class RollbackAsymmetryTests(Rm2Server server) : AuditTestBase(server)
+public sealed class RollbackAsymmetryTests(
+    Rm2Server server,
+    SaveOnEveryChoiceServer saveOnEveryChoice,
+    CountBoundServer writeBehind) : AuditTestBase(server)
 {
-    // ---- vote and skip: full rollback, token still valid ---------------------------------------
+    private DurabilityServer ServerFor(SaveMode mode) =>
+        mode == SaveMode.SaveOnEveryChoice ? saveOnEveryChoice : writeBehind;
 
-    [Fact]
-    public async Task A_vote_whose_save_throws_changes_nothing_and_the_same_token_still_votes()
+    /// <summary>
+    /// Brings a session to the moment where the next choice's write cannot succeed, and hands back
+    /// the snapshot the client is holding there. The two modes reach it differently and that is the
+    /// whole of the difference:
+    ///
+    /// <list type="bullet">
+    /// <item><c>SaveDelaySeconds = 0</c> — jam the save; the very next choice is the one that fails.</item>
+    /// <item>the write-behind — jam the save and spend the budget. Each of those choices is applied
+    /// in memory and answered <c>200</c>, because that is what the owner asked for; the
+    /// <c>MaxUnsavedChoices</c>-th forces the write, it throws, and the failure is latched. It is the
+    /// choice after that one which is refused (§ 13.1: "the second choice after the drive goes tells
+    /// him").</item>
+    /// </list>
+    /// </summary>
+    private async Task<Snapshot> JamUntilTheNextChoiceCannotBeWritten(
+        DurabilityServer target, AuditFolder folder, Snapshot opened)
     {
-        using var folder = AuditFolder.SixStills();
-        var opened = await OpenAsync(folder);
-        var client = await ClientAsync();
-        var token = opened.RequireToken("a fresh session is ranking");
-        var ids = opened.PairIds;
-
         folder.JamSave();
-        var failed = await client.VoteAsync(token, "left", "req-1");
-        var error = failed.ShouldBeError(
-            "save_failed",
-            "SERVER_SPEC.md § 10.6: a vote whose save throws answers 500 save_failed");
+        if (!target.DefersChoices)
+            return opened;
 
-        Assert.False(
-            error.Detail("recordsChanged", "§ 10.6 requires details.recordsChanged on a failed vote").GetBoolean(),
-            "SERVER_SPEC.md § 10.6: a rolled-back vote reports recordsChanged: false.");
+        var snapshot = opened;
+        for (var i = 1; i <= target.MaxUnsavedChoices; i++)
+        {
+            snapshot = (await target.Client.VoteAsync(snapshot.RequireToken("ranking"), "left"))
+                .ShouldBeSnapshot(
+                    200,
+                    $"SERVER_SPEC.md § 13.1: choice {i} is applied in memory and answered; the write is " +
+                    "the server's problem until the bound");
+        }
 
-        var after = error.RequireSession("§ 4: a save_failed with a session open embeds the snapshot");
-        Assert.Equal(opened.PairSeq, after.PairSeq);
-        Assert.Equal(token, after.PairToken);
-        Assert.Equal(0, after.SessionVotes);
-        Assert.Empty(after.Cues);
-        Assert.Equal(ids, after.PairIds);
-        Assert.Null(after.LastAction);
-
-        // § 8.3: "still valid — retry with the same token".
-        folder.UnjamSave();
-        var retried = await client.VoteAsync(token, "left", "req-1");
-        var ok = retried.ShouldBeSnapshot(200, "§ 8.3: the identical request may be retried after a rolled-back vote");
-        Assert.Equal(opened.PairSeq + 1, ok.PairSeq);
-        Assert.Equal(1, ok.SessionVotes);
-        Assert.Single(ok.Cues);
+        return snapshot;
     }
 
-    [Fact]
-    public async Task A_skip_whose_save_throws_changes_nothing_and_the_same_token_still_skips()
+    private static async Task<Snapshot> OpenOnAsync(DurabilityServer target, AuditFolder folder)
     {
+        await target.ResetAsync();
+        return (await target.Client.OpenSessionAsync(folder.Path))
+            .ShouldBeSnapshot(201, "POST /session on a rankable folder opens it (SERVER_SPEC.md § 10.1)");
+    }
+
+    // ---- vote and skip: full rollback, token still valid ---------------------------------------
+
+    /// <summary>
+    /// § 8.3, row 1: "vote/skip cannot be saved (the write failed and is latched, § 13.1) → nothing
+    /// applied — full in-memory rollback, <c>500 save_failed</c>, <c>pairSeq</c> unchanged, still
+    /// valid — retry with the same token." One row, both modes.
+    /// </summary>
+    [Theory]
+    [InlineData(SaveMode.SaveOnEveryChoice)]
+    [InlineData(SaveMode.WriteBehind)]
+    public async Task A_vote_whose_save_throws_changes_nothing_and_the_same_token_still_votes(SaveMode mode)
+    {
+        var target = ServerFor(mode);
         using var folder = AuditFolder.SixStills();
-        var opened = await OpenAsync(folder);
-        var client = await ClientAsync();
-        var token = opened.RequireToken("a fresh session is ranking");
+        var client = target.Client;
 
-        folder.JamSave();
-        var failed = await client.SkipAsync(token, "req-skip");
-        var error = failed.ShouldBeError("save_failed", "SERVER_SPEC.md § 10.7: skip fails exactly as vote does");
-        var after = error.RequireSession("§ 4");
-        Assert.Equal(opened.PairSeq, after.PairSeq);
-        Assert.Equal(token, after.PairToken);
-        Assert.Null(after.LastAction);
+        try
+        {
+            var opened = await OpenOnAsync(target, folder);
+            var held = await JamUntilTheNextChoiceCannotBeWritten(target, folder, opened);
 
-        folder.UnjamSave();
-        var ok = (await client.SkipAsync(token, "req-skip"))
-            .ShouldBeSnapshot(200, "§ 8.3: the token survives a rolled-back skip");
-        Assert.Equal(opened.PairSeq + 1, ok.PairSeq);
-        Assert.Equal(0, ok.SessionVotes);   // § 9.1: skip is not a vote
+            var token = held.RequireToken("still ranking");
+            var ids = held.PairIds;
+            var votes = held.SessionVotes;
+            var cues = held.Cues;
+            var lastAction = held.LastAction?.Seq;
+
+            var failed = await client.VoteAsync(token, "left", "req-1");
+            var error = failed.ShouldBeError(
+                "save_failed",
+                "SERVER_SPEC.md § 10.6 / § 13.1: a vote whose write cannot be made answers 500 save_failed");
+
+            Assert.False(
+                error.Detail("recordsChanged", "§ 10.6 requires details.recordsChanged on a failed vote").GetBoolean(),
+                "SERVER_SPEC.md § 10.6: nothing was applied, so recordsChanged is false.");
+
+            var after = error.RequireSession("§ 4: a save_failed with a session open embeds the snapshot");
+            Assert.Equal(held.PairSeq, after.PairSeq);
+            Assert.Equal(token, after.PairToken);
+            Assert.Equal(votes, after.SessionVotes);
+            Assert.Equal(cues, after.Cues);
+            Assert.Equal(ids, after.PairIds);
+            Assert.Equal(lastAction, after.LastAction?.Seq);
+
+            // § 8.3: "still valid — retry with the same token".
+            folder.UnjamSave();
+            var ok = (await client.VoteAsync(token, "left", "req-1"))
+                .ShouldBeSnapshot(200, "§ 8.3: the identical request may be retried after a refused vote");
+            Assert.Equal(held.PairSeq + 1, ok.PairSeq);
+            Assert.Equal(votes + 1, ok.SessionVotes);
+            Assert.Equal(cues.Length + 1, ok.Cues.Length);
+        }
+        finally
+        {
+            folder.UnjamSave();
+            await target.ResetAsync();
+        }
+    }
+
+    [Theory]
+    [InlineData(SaveMode.SaveOnEveryChoice)]
+    [InlineData(SaveMode.WriteBehind)]
+    public async Task A_skip_whose_save_throws_changes_nothing_and_the_same_token_still_skips(SaveMode mode)
+    {
+        var target = ServerFor(mode);
+        using var folder = AuditFolder.SixStills();
+        var client = target.Client;
+
+        try
+        {
+            var opened = await OpenOnAsync(target, folder);
+            var held = await JamUntilTheNextChoiceCannotBeWritten(target, folder, opened);
+
+            var token = held.RequireToken("still ranking");
+            var votes = held.SessionVotes;
+            var lastAction = held.LastAction?.Seq;
+
+            var failed = await client.SkipAsync(token, "req-skip");
+            var error = failed.ShouldBeError("save_failed", "SERVER_SPEC.md § 10.7: skip fails exactly as vote does");
+            var after = error.RequireSession("§ 4");
+            Assert.Equal(held.PairSeq, after.PairSeq);
+            Assert.Equal(token, after.PairToken);
+            Assert.Equal(lastAction, after.LastAction?.Seq);
+
+            folder.UnjamSave();
+            var ok = (await client.SkipAsync(token, "req-skip"))
+                .ShouldBeSnapshot(200, "§ 8.3: the token survives a refused skip");
+            Assert.Equal(held.PairSeq + 1, ok.PairSeq);
+            Assert.Equal(votes, ok.SessionVotes);   // § 9.1: skip is not a vote
+        }
+        finally
+        {
+            folder.UnjamSave();
+            await target.ResetAsync();
+        }
     }
 
     /// <summary>
@@ -86,31 +178,62 @@ public sealed class RollbackAsymmetryTests(Rm2Server server) : AuditTestBase(ser
     /// no media, so <c>JsonCatalog.Save</c> must throw rather than write <c>{}</c> over real ratings
     /// (SPEC.md § Persistence, "Never write an empty database"). The vote must roll back whole.
     /// </summary>
-    [Fact]
-    public async Task A_vote_after_every_media_file_vanished_refuses_to_write_an_empty_database()
+    [Theory]
+    [InlineData(SaveMode.SaveOnEveryChoice)]
+    [InlineData(SaveMode.WriteBehind)]
+    public async Task A_vote_after_every_media_file_vanished_refuses_to_write_an_empty_database(SaveMode mode)
     {
+        var target = ServerFor(mode);
         using var folder = AuditFolder.TwoStills();
-        var opened = await OpenAsync(folder);
-        var client = await ClientAsync();
-        var token = opened.RequireToken("a fresh session is ranking");
+        var client = target.Client;
 
-        var alpha = folder.Bytes("alpha.jpg");
-        var bravo = folder.Bytes("bravo.jpg");
-        folder.Delete("alpha.jpg").Delete("bravo.jpg");
+        try
+        {
+            var opened = await OpenOnAsync(target, folder);
 
-        var failed = await client.VoteAsync(token, "left", "req-empty");
-        var error = failed.ShouldBeError(
-            "save_failed",
-            "SPEC.md § Persistence: a folder that lists no media while the session holds records must not be saved");
-        var after = error.RequireSession("§ 4");
-        Assert.Equal(opened.PairSeq, after.PairSeq);
-        Assert.Equal(token, after.PairToken);
-        Assert.Equal(0, after.SessionVotes);
+            var alpha = folder.Bytes("alpha.jpg");
+            var bravo = folder.Bytes("bravo.jpg");
+            folder.Delete("alpha.jpg").Delete("bravo.jpg");
 
-        folder.Write("alpha.jpg", alpha).Write("bravo.jpg", bravo);
-        var ok = (await client.VoteAsync(token, "left", "req-empty"))
-            .ShouldBeSnapshot(200, "§ 8.3: one call recovers once the library is back");
-        Assert.Equal(1, ok.SessionVotes);
+            // Whatever the mode, the write that JsonCatalog.Save refuses to make is the same write,
+            // and it is refused for the same reason. What the mode decides is only which choice is
+            // the one that hears about it.
+            var held = opened;
+            if (target.DefersChoices)
+            {
+                for (var i = 1; i <= target.MaxUnsavedChoices; i++)
+                {
+                    held = (await client.VoteAsync(held.RequireToken("ranking"), "left"))
+                        .ShouldBeSnapshot(200, $"choice {i} is applied in memory (§ 13.1)");
+                }
+            }
+
+            var token = held.RequireToken("ranking");
+            var votes = held.SessionVotes;
+
+            var failed = await client.VoteAsync(token, "left", "req-empty");
+            var error = failed.ShouldBeError(
+                "save_failed",
+                "SPEC.md § Persistence: a folder that lists no media while the session holds records must not be saved");
+            var after = error.RequireSession("§ 4");
+            Assert.Equal(held.PairSeq, after.PairSeq);
+            Assert.Equal(token, after.PairToken);
+            Assert.Equal(votes, after.SessionVotes);
+
+            Assert.False(
+                File.Exists(folder.DatabasePath) && File.ReadAllText(folder.DatabasePath).Contains("\"images\": {}"),
+                "SPEC.md § Persistence: \"never write an empty database\" — the write-behind changed when " +
+                "Save is called, not what it refuses to do.");
+
+            folder.Write("alpha.jpg", alpha).Write("bravo.jpg", bravo);
+            var ok = (await client.VoteAsync(token, "left", "req-empty"))
+                .ShouldBeSnapshot(200, "§ 8.3: one call recovers once the library is back");
+            Assert.Equal(votes + 1, ok.SessionVotes);
+        }
+        finally
+        {
+            await target.ResetAsync();
+        }
     }
 
     // ---- discard: move first, so a failed save is committed ------------------------------------
@@ -390,42 +513,63 @@ public sealed class RollbackAsymmetryTests(Rm2Server server) : AuditTestBase(ser
     /// still carries the vote. The phone would show the pair back on screen, the desktop app would
     /// open the folder and see the vote, and nothing would ever reconcile them.</para>
     /// </summary>
-    [Fact]
-    public async Task A_cancelled_vote_whose_save_throws_leaves_the_vote_applied_and_says_so()
+    [Theory]
+    [InlineData(SaveMode.SaveOnEveryChoice)]
+    [InlineData(SaveMode.WriteBehind)]
+    public async Task A_cancelled_vote_whose_save_throws_leaves_the_vote_applied_and_says_so(SaveMode mode)
     {
+        var target = ServerFor(mode);
         using var folder = AuditFolder.SixStills();
-        var opened = await OpenAsync(folder);
-        var client = await ClientAsync();
+        var client = target.Client;
 
-        var voted = (await client.VoteAsync(opened.RequireToken("ranking"), "left", "req-vote"))
-            .ShouldBeSnapshot(200, "the vote lands cleanly");
-        var tokenAfterVote = voted.RequireToken("ranking");
+        try
+        {
+            var opened = await OpenOnAsync(target, folder);
 
-        folder.JamSave();
-        var error = (await client.UndoAsync("req-cancel"))
-            .ShouldBeError("save_failed",
-                "SERVER_SPEC.md § 10.10: cancelling a vote is all-or-nothing, so a failed write is a " +
-                "save_failed that changed nothing");
+            // In save-on-choice mode this one vote is the thing being cancelled. In write-behind mode
+            // the budget is spent getting to the latch, and the last of those votes is the thing being
+            // cancelled — either way the cancel below is the cancel of a vote that is applied.
+            var voted = target.DefersChoices
+                ? await JamUntilTheNextChoiceCannotBeWritten(target, folder, opened)
+                : (await client.VoteAsync(opened.RequireToken("ranking"), "left", "req-vote"))
+                    .ShouldBeSnapshot(200, "the vote lands cleanly");
 
-        Assert.False(error.Detail("recordsChanged", "§ 10.10").GetBoolean(),
-            "SERVER_SPEC.md § 10.10: nothing changed, so recordsChanged is false. Saying otherwise " +
-            "tells the client its vote is gone when the file still carries it.");
-        Assert.False(error.Detail("fileMoved", "§ 10.10").GetBoolean());
+            var beforeCancel = voted;
+            if (!target.DefersChoices)
+                folder.JamSave();
 
-        var after = error.RequireSession("§ 4");
-        Assert.Equal(voted.PairSeq, after.PairSeq);
-        Assert.Equal(tokenAfterVote, after.PairToken);
-        Assert.Equal(voted.SessionVotes, after.SessionVotes);
-        Assert.Equal(voted.Cues, after.Cues);
-        Assert.True(after.UndoAvailable,
-            "the cancel did not happen, so it is still there to be pressed again.");
+            var tokenAfterVote = beforeCancel.RequireToken("ranking");
 
-        // And pressing it again, once the disk lets go, does exactly what it was always going to do.
-        folder.UnjamSave();
-        var cancelled = (await client.UndoAsync("req-cancel"))
-            .ShouldBeSnapshot(200, "the retried cancel succeeds");
-        Assert.Equal(opened.PairIds, cancelled.PairIds);
-        Assert.Equal(opened.SessionVotes, cancelled.SessionVotes);
+            var error = (await client.UndoAsync("req-cancel"))
+                .ShouldBeError("save_failed",
+                    "SERVER_SPEC.md § 10.10: cancelling a vote is all-or-nothing, so a write that cannot " +
+                    "be made is a save_failed that changed nothing");
+
+            Assert.False(error.Detail("recordsChanged", "§ 10.10").GetBoolean(),
+                "SERVER_SPEC.md § 10.10: nothing changed, so recordsChanged is false. Saying otherwise " +
+                "tells the client its vote is gone when the file still carries it.");
+            Assert.False(error.Detail("fileMoved", "§ 10.10").GetBoolean());
+
+            var after = error.RequireSession("§ 4");
+            Assert.Equal(beforeCancel.PairSeq, after.PairSeq);
+            Assert.Equal(tokenAfterVote, after.PairToken);
+            Assert.Equal(beforeCancel.SessionVotes, after.SessionVotes);
+            Assert.Equal(beforeCancel.Cues, after.Cues);
+            Assert.True(after.UndoAvailable,
+                "the cancel did not happen, so it is still there to be pressed again.");
+
+            // And pressing it again, once the disk lets go, does exactly what it was always going to do.
+            folder.UnjamSave();
+            var cancelled = (await client.UndoAsync("req-cancel"))
+                .ShouldBeSnapshot(200, "the retried cancel succeeds");
+            Assert.Equal(beforeCancel.SessionVotes - 1, cancelled.SessionVotes);
+            Assert.False(cancelled.UndoAvailable, "§ 10.10: one level — the cancel has been spent.");
+        }
+        finally
+        {
+            folder.UnjamSave();
+            await target.ResetAsync();
+        }
     }
 
     /// <summary>

@@ -157,6 +157,12 @@ public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
                 .ShouldBeSnapshot(200, "POST /session/vote (SERVER_SPEC.md § 10.6)");
         }
 
+        // SERVER_SPEC.md § 13.1 / § 10.5: a vote's 200 means applied, not yet on disk. This test
+        // compares the file before the rename with the file after it, so it takes the contract's own
+        // durability point first — the 200 from POST /session/save is the strongest statement the
+        // server makes, and it is what any reader of rankmaster_db.json is told to ask for.
+        (await client.SaveAsync()).ShouldBeSnapshot(200, "POST /session/save (SERVER_SPEC.md § 10.5)");
+
         var beforeRows = Db.Rows(folder.Path);
 
         var start = await client.StartRenameAsync();
@@ -262,6 +268,10 @@ public sealed class RoundTripTests(Rm2Server server) : AuditSessionTest(server)
         for (var i = 0; i < 4 && snapshot.IsRanking; i++)
             snapshot = (await client.VoteAsync(snapshot.RequireToken("ranking"), i % 2 == 0 ? "left" : "right"))
                 .ShouldBeSnapshot(200, "POST /session/vote (SERVER_SPEC.md § 10.6)");
+
+        // SERVER_SPEC.md § 13.1 / § 10.5: the votes above are applied and on disk within the bound;
+        // reading the file is what makes this the moment to ask for the durability point.
+        (await client.SaveAsync()).ShouldBeSnapshot(200, "POST /session/save (SERVER_SPEC.md § 10.5)");
 
         // Which rating sits on which picture, keyed by the picture's own bytes — the only identity a
         // rename cannot change.

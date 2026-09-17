@@ -611,10 +611,13 @@ public sealed class SessionLifecycleDuringRenameTests(RenameGateServer server) :
             Assert.True(File.Exists(folder.File(id)),
                 $"SERVER_SPEC.md § 7.2: a failed rename resyncs from disk; '{id}' is not on disk.");
 
-        // And the point of H2: a vote after the failure actually reaches the file.
+        // And the point of H2: a vote after the failure actually reaches the file. § 13.1 moved the
+        // moment it reaches the file — within the bound, or at once on POST /session/save — not
+        // whether it does, which is what H2 was about.
         var before = await File.ReadAllTextAsync(folder.File("rankmaster_db.json"));
         (await client.VoteAsync(after.RequireToken("after the failure"), "left"))
             .ShouldBeSnapshot(200, "vote after the failed rename");
+        (await client.SaveAsync()).ShouldBeSnapshot(200, "SERVER_SPEC.md § 10.5: make the vote durable");
         Assert.NotEqual(before, await File.ReadAllTextAsync(folder.File("rankmaster_db.json")));
     }
 

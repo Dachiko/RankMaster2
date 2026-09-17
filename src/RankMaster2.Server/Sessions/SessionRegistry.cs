@@ -30,6 +30,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
     public const int DefaultPrefetchPairs = 2;
     public const string ApiBase = "/api/v1";
 
+    /// <summary>SERVER_SPEC.md § 2.4 / § 13.1: <c>RankMaster2:SaveDelaySeconds</c>, default 2.</summary>
+    public const int DefaultSaveDelaySeconds = 2;
+
+    /// <summary>SERVER_SPEC.md § 2.4 / § 13.1: <c>RankMaster2:MaxUnsavedChoices</c>, default 5.</summary>
+    public const int DefaultMaxUnsavedChoices = 5;
+
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>Paths compare the way the filesystem does (§ 10.1).</summary>
@@ -49,13 +55,35 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
     private RenameRun? _rename;
     private bool _disposed;
 
+    // The bounded write-behind (SERVER_SPEC.md § 13.1). Not readonly: a host binds them from
+    // configuration through ApplyDurabilityOptions before it serves anything.
+    private TimeSpan _saveDelay = TimeSpan.FromSeconds(DefaultSaveDelaySeconds);
+    private int _maxUnsavedChoices = DefaultMaxUnsavedChoices;
+
+    private readonly object _flushSync = new();
+    private CancellationTokenSource? _flushStop;
+    private Task? _flushLoop;
+
+    /// <param name="saveDelay">
+    /// SERVER_SPEC.md § 13.1: how long a choice may sit in memory before the database is written.
+    /// <see cref="TimeSpan.Zero"/> restores the old behaviour exactly — every choice saved before
+    /// its response. Null means the § 2.4 default of two seconds. It is a <c>TimeSpan</c> here and
+    /// whole seconds in <c>appsettings.json</c>: the contract's knob is seconds, and a test that has
+    /// to watch a deferred write land should not have to wait one.
+    /// </param>
+    /// <param name="maxUnsavedChoices">
+    /// SERVER_SPEC.md § 13.1: how many choices may be unsaved before a write is forced inside the
+    /// request, whichever limit is reached first. Clamped to at least 1.
+    /// </param>
     public SessionRegistry(
         ICatalog? catalog = null,
         IRatingEngine? engine = null,
         IPairSelector? selector = null,
         int prefetchPairs = DefaultPrefetchPairs,
         string? serverVersion = null,
-        IRenameJournalWriter? journalWriter = null)
+        IRenameJournalWriter? journalWriter = null,
+        TimeSpan? saveDelay = null,
+        int maxUnsavedChoices = DefaultMaxUnsavedChoices)
     {
         _catalog = catalog ?? new JsonCatalog();
         _engine = engine ?? new TrueSkill();
@@ -65,7 +93,32 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             ?? typeof(SessionRegistry).Assembly.GetName().Version?.ToString(3)
             ?? "0.0.0";
         _journalWriter = journalWriter ?? new DefaultRenameJournalWriter();
+        var delay = saveDelay ?? TimeSpan.FromSeconds(DefaultSaveDelaySeconds);
+        _saveDelay = delay > TimeSpan.Zero ? delay : TimeSpan.Zero;
+        _maxUnsavedChoices = Math.Max(1, maxUnsavedChoices);
     }
+
+    /// <summary>
+    /// SERVER_SPEC.md § 2.4: <c>RankMaster2:SaveDelaySeconds</c> and
+    /// <c>RankMaster2:MaxUnsavedChoices</c>, bound from configuration by the host. Applied before
+    /// the first session opens, because the choice of write-behind or save-on-choice is made once,
+    /// when a <see cref="RankingSession"/> is constructed (§ 13.1, "Where it lives").
+    /// <para/>
+    /// A negative or zero delay is <see cref="TimeSpan.Zero"/>: save on every choice, no timer.
+    /// </summary>
+    public void ApplyDurabilityOptions(int saveDelaySeconds, int maxUnsavedChoices)
+    {
+        _saveDelay = saveDelaySeconds <= 0 ? TimeSpan.Zero : TimeSpan.FromSeconds(saveDelaySeconds);
+        _maxUnsavedChoices = Math.Max(1, maxUnsavedChoices);
+        if (!DefersChoices)
+            StopFlushLoop();
+    }
+
+    /// <summary>
+    /// True when a vote, a skip or the cancel of one is answered before its write
+    /// (SERVER_SPEC.md § 13.1). False is the old behaviour, exactly: <c>SaveDelaySeconds = 0</c>.
+    /// </summary>
+    private bool DefersChoices => _saveDelay > TimeSpan.Zero;
 
     /// <summary>
     /// The process-wide session. Exactly one exists by contract (§ 1.1), so the media layer can
@@ -302,7 +355,11 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
 
             // Step 5. Every failure from here releases the lock before it answers.
-            var ranking = new RankingSession(folder, _catalog, _engine, _selector, _prefetchPairs);
+            // § 13.1, "Where it lives": with the write-behind on, the engine stops calling Save on a
+            // choice and this registry owns when the write happens and what a failure means. With
+            // SaveDelaySeconds = 0 it is constructed exactly as the desktop app constructs it.
+            var ranking = new RankingSession(
+                folder, _catalog, _engine, _selector, _prefetchPairs, saveOnChoice: !DefersChoices);
             bool started;
             try
             {
@@ -372,6 +429,7 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                     _ => { }));
 
             _open = opened;
+            EnsureFlushLoop();
 
             // A freshly opened session starts with no rename recorded, even if one from an earlier
             // session on this same folder is still sitting here — GET/cancel of /session/rename
@@ -409,6 +467,13 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             if (open.RenameInProgress)
                 return RenameInProgress(open);
 
+            // § 10.4, § 13.1: the close is a durability point — whatever the write-behind is still
+            // holding goes to disk before the lock is released, so no choice the owner made in this
+            // session is lost by closing. A flush that fails does not refuse the close: a close a
+            // broken disk could block would be a wedge, the choices were already reported applied,
+            // and there is nothing the client could usefully do with the refusal.
+            FlushUnderGate(open);
+
             _open = null;
             Volatile.Write(ref _rename, null);
             open.Lock.Dispose();
@@ -434,6 +499,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
             catch (Exception)
             {
+                // § 13.1: if there were unsaved choices, this failure is the latch — the next
+                // mutating call retries the write and answers save_failed with nothing applied
+                // rather than letting more choices pile up on a disk that is not taking them.
+                if (open.UnsavedChoices > 0)
+                    open.LatchSaveFailure(DateTimeOffset.UtcNow);
+
                 return SessionOutcome.Fail(
                     ErrorCodes.SaveFailed,
                     "The ranking file could not be written.",
@@ -441,7 +512,10 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                     Materialise(open));
             }
 
-            open.LastSavedAt = DateTimeOffset.UtcNow;
+            // § 10.5: "this is the way a client makes a point durable", and § 13.1: a successful
+            // save clears the latched failure, which makes this the recovery path after the disk
+            // came back.
+            open.MarkSaved(DateTimeOffset.UtcNow);
             return SessionOutcome.Ok(Materialise(open));
         });
 
@@ -476,6 +550,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             if (conflict is not null)
                 return conflict;
 
+            // § 13.1: a latched write failure is answered before anything is applied, so the second
+            // choice after the drive went away tells the owner instead of vanishing with the rest.
+            var latched = RefuseWhileSaveIsLatched(open);
+            if (latched is not null)
+                return latched;
+
             try
             {
                 if (winner == Sides.Left)
@@ -496,7 +576,7 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
 
             open.PairSeq++;
-            open.LastSavedAt = DateTimeOffset.UtcNow;
+            AfterChoice(open);
             open.UndoPoint = UndoPoint.EngineSnapshot;
             open.LastAction = NewAction(open, ActionTypes.Vote, token, clientRequestId, winner: winner);
             return SessionOutcome.Ok(Materialise(open));
@@ -530,6 +610,10 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             if (conflict is not null)
                 return conflict;
 
+            var latched = RefuseWhileSaveIsLatched(open);
+            if (latched is not null)
+                return latched;
+
             try
             {
                 open.Session.Skip();
@@ -544,7 +628,7 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
 
             open.PairSeq++;
-            open.LastSavedAt = DateTimeOffset.UtcNow;
+            AfterChoice(open);
             open.UndoPoint = UndoPoint.EngineSnapshot;
             open.LastAction = NewAction(open, ActionTypes.Skip, token, clientRequestId);
             return SessionOutcome.Ok(Materialise(open));
@@ -579,6 +663,17 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             if (conflict is not null)
                 return conflict;
 
+            // § 13.1, "What is never deferred", and § 13.2: anything the write-behind is still
+            // holding is written *before* the file moves. That is what keeps § 13.2's ordering —
+            // file moved, then JSON written — and with it the self-heal: if the process dies between
+            // the move and the save, the only row the next Scan/Save drops is the file that really
+            // did move away. A flush that fails refuses the move outright, with nothing applied and
+            // the token still current, because moving a file on a disk that will not take the
+            // database is how a rating gets separated from its picture.
+            var flushed = FlushOrRefuse(open);
+            if (flushed is not null)
+                return flushed;
+
             // The id comes from the pair the token names; the client never sends one, so it cannot
             // act on an item that is not on screen (§ 10.8).
             var current = open.Session.Current!.Value;
@@ -608,6 +703,11 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                 }
                 catch (Exception)
                 {
+                    // The record is gone from memory and the database does not know: that is an
+                    // unsaved change, and § 13.1 latches it so the next call retries the write and
+                    // says so rather than stacking more on top of it.
+                    open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
+                    open.LatchSaveFailure(DateTimeOffset.UtcNow);
                     open.LastAction = NewAction(
                         open, ActionTypes.DropMissing, pairToken: null, clientRequestId, id: id.Filename);
                     return SessionOutcome.Fail(
@@ -617,7 +717,7 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                         Materialise(open));
                 }
 
-                open.LastSavedAt = DateTimeOffset.UtcNow;
+                open.MarkSaved(DateTimeOffset.UtcNow);
                 open.LastAction = NewAction(
                     open, ActionTypes.DropMissing, pairToken: null, clientRequestId, id: id.Filename);
                 return SessionOutcome.Ok(Materialise(open));
@@ -648,7 +748,11 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
 
                 open.PairSeq++;
                 // The file is in discarded/ or special 1/ and the database did not follow: undo is
-                // the only way back, so it must be offered (§ 8.3).
+                // the only way back, so it must be offered (§ 8.3). The database is now behind the
+                // truth, so the same latch applies (§ 13.1) — the next mutating call retries the
+                // write first.
+                open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
+                open.LatchSaveFailure(DateTimeOffset.UtcNow);
                 open.UndoPoint = UndoPoint.LastMove;
                 open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
                 return SessionOutcome.Fail(
@@ -659,7 +763,8 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
 
             open.PairSeq++;
-            open.LastSavedAt = DateTimeOffset.UtcNow;
+            // LibraryActions.Move saved after the move (§ 13.2), so the session is clean again.
+            open.MarkSaved(DateTimeOffset.UtcNow);
             open.UndoPoint = UndoPoint.LastMove;
             open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
             return SessionOutcome.Ok(Materialise(open));
@@ -694,7 +799,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             // separately, and OR-ing the two answers, is what let an undo reach past a drop_missing
             // to a discard the owner had made on purpose (H5, A7).
             if (open.UndoPoint == UndoPoint.EngineSnapshot)
-                return UndoAction(open, clientRequestId);
+            {
+                // Cancelling a vote or a skip moves no file: it is a plain choice, deferred and
+                // bounded exactly like the one it reverses (§ 13.2's undo row).
+                var latched = RefuseWhileSaveIsLatched(open);
+                return latched ?? UndoAction(open, clientRequestId);
+            }
 
             if (open.UndoPoint != UndoPoint.LastMove || open.Actions.LastMove is not { } move)
             {
@@ -715,6 +825,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                     new { moveFolder = move.Folder },
                     Materialise(open));
             }
+
+            // The undo of a move is a move (§ 13.1, § 13.2): flush first, in the same order and for
+            // the same reason as the discard it is taking back.
+            var flushed = FlushOrRefuse(open);
+            if (flushed is not null)
+                return flushed;
 
             var before = open.Session.Records.Select(r => r.Id).ToHashSet();
 
@@ -751,6 +867,9 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                 open.Actions.ClearLastMove();
                 open.UndoPoint = UndoPoint.None;
                 open.PairSeq++;
+                // The file is back and the database does not know it: unsaved, and latched (§ 13.1).
+                open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
+                open.LatchSaveFailure(DateTimeOffset.UtcNow);
                 open.LastAction = NewAction(
                     open,
                     ActionTypes.Undo,
@@ -776,7 +895,8 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
 
             open.PairSeq++;
-            open.LastSavedAt = DateTimeOffset.UtcNow;
+            // LibraryActions.UndoLastMove saved after the move back, so the session is clean again.
+            open.MarkSaved(DateTimeOffset.UtcNow);
             open.UndoPoint = UndoPoint.None;
             open.LastAction = NewAction(
                 open,
@@ -829,6 +949,23 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                     ErrorCodes.RenameInProgress,
                     "A rename is already running.",
                     new { operationId = existing?.OperationId },
+                    Materialise(open));
+            }
+
+            // § 13.1, "What is never deferred": before a rename starts, everything unsaved goes to
+            // disk. A rename rewrites the whole database from the records it captures here, so this
+            // is not what keeps the ratings safe — what it keeps is the promise that a disk which
+            // cannot take a write does not get a folder full of files moved on it first. The refusal
+            // is `rename_failed { reunited: true, journal: null }`, the same answer § 10.16 gives
+            // when the journal write throws: nothing was disturbed, no journal exists, and the
+            // session is left exactly as it was. (§ 5.7 gives the rename endpoints one 500 code;
+            // save_failed is not one of them.)
+            if (!FlushUnderGate(open))
+            {
+                return RenameOutcome.Fail(
+                    ErrorCodes.RenameFailed,
+                    "Choices are still unwritten and the ranking file could not be written; nothing was changed.",
+                    new { reunited = true, journal = (string?)null },
                     Materialise(open));
             }
 
@@ -1010,7 +1147,7 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                     open.Actions.ClearLastMove();
                     open.UndoPoint = UndoPoint.None;
                     open.PairSeq++;
-                    open.LastSavedAt = DateTimeOffset.UtcNow;
+                    open.MarkSaved(DateTimeOffset.UtcNow);
                     open.LastAction = new SnapshotLastAction(
                         open.PairSeq, ActionTypes.Rename,
                         PairToken: null, ClientRequestId: run.ClientRequestId, Winner: null, Side: null,
@@ -1188,14 +1325,220 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
     /// </summary>
     public void Dispose()
     {
+        // Stopped first, and outside the _disposed guard: a host that was rebuilt after an earlier
+        // Dispose has a live timer again (EnsureFlushLoop runs on every open), and leaving it
+        // ticking against a registry nobody serves from is a background task with no owner.
+        StopFlushLoop();
+
         if (_disposed)
             return;
         _disposed = true;
 
         var open = _open;
+
+        // § 13.1: a clean shutdown is a durability point, so whatever the write-behind is holding
+        // goes to disk here. The gate is taken with the ordinary timeout rather than waited on for
+        // ever: if a request is wedged holding it while the process is being stopped, hanging the
+        // shutdown to save five choices is the worse trade, and losing them is exactly the bound the
+        // owner accepted.
+        if (open is not null && open.UnsavedChoices > 0 && _gate.Wait(LockTimeout))
+        {
+            try
+            {
+                FlushUnderGate(open);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
         _open = null;
         Volatile.Write(ref _rename, null);
         open?.Lock.Dispose();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The bounded write-behind — SERVER_SPEC.md § 13.1.
+    //
+    // A choice (vote, skip, or the cancel of one) is applied in memory and answered at once; the
+    // database is written off the request path, no later than the earlier of SaveDelaySeconds after
+    // the first unsaved choice or the MaxUnsavedChoices-th unsaved choice. Everything that is not a
+    // plain choice — a file move, the start of a rename, POST /session/save, DELETE /session,
+    // shutdown — forces the write synchronously first, so § 13.2's ordering and the discard
+    // self-heal argument are unchanged.
+    //
+    // Nothing here changes what a write *is*. JsonCatalog.Save is untouched: temp file, Flush(true),
+    // File.Replace, never creating the folder, never writing an empty database over records. Five
+    // choices coalesce into one write of the same file, which is the whole of the gain.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Started when a session opens and cancelled at <see cref="Dispose"/>, so a registry that is
+    /// never used costs nothing and a host that is rebuilt (the test suites do this) gets a live
+    /// timer again on its next open.
+    /// </summary>
+    private void EnsureFlushLoop()
+    {
+        if (!DefersChoices)
+            return;
+
+        lock (_flushSync)
+        {
+            if (_flushLoop is { IsCompleted: false })
+                return;
+
+            _flushStop?.Dispose();
+            _flushStop = new CancellationTokenSource();
+            var stop = _flushStop.Token;
+            _flushLoop = Task.Run(() => FlushLoopAsync(stop), CancellationToken.None);
+        }
+    }
+
+    private void StopFlushLoop()
+    {
+        lock (_flushSync)
+        {
+            try
+            {
+                _flushStop?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// The tick of the flush timer. § 13.1 bounds the wait at <c>SaveDelaySeconds</c> <i>after the
+    /// first unsaved choice</i>, so the timer has to be finer than the bound it enforces: a period
+    /// equal to the bound would let a choice made just after a tick wait almost twice as long.
+    /// A quarter of the delay, never below 25 ms and never above the delay itself.
+    /// </summary>
+    private TimeSpan FlushTick()
+    {
+        var tick = TimeSpan.FromTicks(Math.Max(_saveDelay.Ticks / 4, TimeSpan.TicksPerMillisecond * 25));
+        return tick > _saveDelay ? _saveDelay : tick;
+    }
+
+    private async Task FlushLoopAsync(CancellationToken stop)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(FlushTick());
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                // Read without the gate first: the overwhelmingly common tick has nothing to do, and
+                // queueing behind a vote to discover that would make the timer itself a source of
+                // latency. FlushUnderGate re-reads _open inside the gate.
+                var pending = Volatile.Read(ref _open);
+                if (pending is null || !pending.FlushDue(_saveDelay, DateTimeOffset.UtcNow))
+                    continue;
+
+                // § 13.1: "the flush waits for it without the 5 s client timeout" — there is no
+                // client on the other end of this to answer 503 to.
+                await _gate.WaitAsync(stop);
+                try
+                {
+                    FlushUnderGate(Volatile.Read(ref _open));
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Dispose, or the host shutting down. The shutdown flush is Dispose's own job.
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Writes everything unsaved. MUST be called with the session gate held. Returns false when the
+    /// write threw, having latched the failure on the session (§ 13.1, "When a deferred write
+    /// fails") — the retry is then <c>SaveDelaySeconds</c> away and the next mutating call answers
+    /// <c>500 save_failed</c> with nothing applied.
+    /// </summary>
+    private bool FlushUnderGate(OpenSession? open)
+    {
+        if (open is null || open.UnsavedChoices == 0)
+            return true;
+
+        // Never while a rename is running. The rename is rewriting the database from the records it
+        // captured, off the gate, and the session in memory still holds the pre-rename names; a
+        // flush landing in the middle would write those names back over the commit. It cannot
+        // normally arise — the rename forces the write before it starts and every mutating call is
+        // refused while it runs, so there is nothing unsaved — and this is the guard that keeps it
+        // that way rather than by inspection.
+        if (open.RenameInProgress)
+            return true;
+
+        try
+        {
+            open.Session.Save();
+        }
+        catch (Exception)
+        {
+            open.LatchSaveFailure(DateTimeOffset.UtcNow);
+            return false;
+        }
+
+        open.MarkSaved(DateTimeOffset.UtcNow);
+        return true;
+    }
+
+    /// <summary>
+    /// § 13.1, "What is never deferred": before a file move, before a rename starts, and before the
+    /// close, everything unsaved goes to disk first, inside the request. Null when the session is
+    /// clean or the write succeeded; otherwise the <c>500 save_failed</c> with nothing applied that
+    /// § 8.3's vote/skip row describes — <c>pairSeq</c> has not moved and the client's token is
+    /// still current, so the identical request may be retried.
+    /// </summary>
+    private SessionOutcome? FlushOrRefuse(OpenSession open) =>
+        FlushUnderGate(open) ? null : SaveFailedWithNothingApplied(open);
+
+    /// <summary>
+    /// § 13.1: a plain choice does not force a write, but it does refuse to pile up on a dead disk.
+    /// While a failed flush is latched, every mutating call first attempts the write and, if that
+    /// fails too, answers <c>save_failed</c> with nothing applied. That is what makes the second
+    /// choice after the drive goes away tell the owner, rather than the fifth or the fiftieth.
+    /// </summary>
+    private SessionOutcome? RefuseWhileSaveIsLatched(OpenSession open) =>
+        !open.SaveFailed ? null : FlushOrRefuse(open);
+
+    private SessionOutcome SaveFailedWithNothingApplied(OpenSession open) =>
+        SessionOutcome.Fail(
+            ErrorCodes.SaveFailed,
+            "The ranking file could not be written; nothing was applied.",
+            new { recordsChanged = false, fileMoved = false },
+            Materialise(open));
+
+    /// <summary>
+    /// What happens after a vote, a skip or the cancel of one has been applied, inside the gate and
+    /// before the response is materialised (§ 13.1's response order).
+    /// <para/>
+    /// With <c>SaveDelaySeconds = 0</c> the engine has already saved and this only records the
+    /// moment. Otherwise the choice is counted; the <c>MaxUnsavedChoices</c>-th is written here,
+    /// synchronously, before the response leaves. A write that throws at that point is latched, not
+    /// answered: the choice itself is applied, <c>pairSeq</c> has advanced and the pair on screen has
+    /// moved on, so reporting "nothing applied" would be a lie — and the latch means the very next
+    /// choice tells the truth instead.
+    /// </summary>
+    private void AfterChoice(OpenSession open)
+    {
+        if (!DefersChoices)
+        {
+            open.MarkSaved(DateTimeOffset.UtcNow);
+            return;
+        }
+
+        open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
+        if (open.UnsavedChoices >= _maxUnsavedChoices)
+            FlushUnderGate(open);
     }
 
     /// <summary>
@@ -1282,7 +1625,7 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
         open.UndoPoint = UndoPoint.None;
 
         open.PairSeq++;
-        open.LastSavedAt = DateTimeOffset.UtcNow;
+        AfterChoice(open);
         open.LastAction = NewAction(
             open, ActionTypes.Undo, pairToken: null, clientRequestId, undoneType: undoneType);
         return SessionOutcome.Ok(Materialise(open));
@@ -1549,6 +1892,52 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
         public SnapshotLastAction? LastAction { get; set; }
 
         public DateTimeOffset? LastSavedAt { get; set; }
+
+        /// <summary>
+        /// SERVER_SPEC.md § 13.1: how many choices have been applied in memory and not yet written.
+        /// Zero means the database on disk agrees with this session. Only ever read or written under
+        /// the session gate.
+        /// </summary>
+        public int UnsavedChoices { get; private set; }
+
+        /// <summary>When the first of those choices was made — the clock the bound is measured on.</summary>
+        public DateTimeOffset? DirtySince { get; private set; }
+
+        /// <summary>
+        /// § 13.1, "When a deferred write fails": a flush that threw is latched here. While it is
+        /// set, every mutating call attempts the write first and answers <c>500 save_failed</c> with
+        /// nothing applied if it fails again; a successful write of any kind clears it.
+        /// </summary>
+        public bool SaveFailed { get; private set; }
+
+        public void RecordUnsavedChoice(DateTimeOffset now)
+        {
+            UnsavedChoices++;
+            DirtySince ??= now;
+        }
+
+        /// <summary>The database is on disk and agrees with this session: the bound starts again.</summary>
+        public void MarkSaved(DateTimeOffset now)
+        {
+            UnsavedChoices = 0;
+            DirtySince = null;
+            SaveFailed = false;
+            LastSavedAt = now;
+        }
+
+        /// <summary>
+        /// The write threw. <c>DirtySince</c> is moved to now so the flush retries one whole
+        /// <c>SaveDelaySeconds</c> later rather than on every tick of a loop that is already failing.
+        /// </summary>
+        public void LatchSaveFailure(DateTimeOffset now)
+        {
+            SaveFailed = true;
+            DirtySince = now;
+        }
+
+        /// <summary>§ 13.1's bound: <c>SaveDelaySeconds</c> after the first unsaved choice.</summary>
+        public bool FlushDue(TimeSpan delay, DateTimeOffset now) =>
+            UnsavedChoices > 0 && DirtySince is { } since && now - since >= delay;
 
         /// <summary>
         /// § 3.6: while a rename runs, every other mutating <c>/session*</c> call answers

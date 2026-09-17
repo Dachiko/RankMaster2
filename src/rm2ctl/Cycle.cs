@@ -442,9 +442,18 @@ public sealed class Cycle(Rm2Api api, Journal journal)
             "lastAction records the vote, the token it consumed and the clientRequestId (SERVER_SPEC.md § 9.4)",
             $"lastAction was {after.LastAction?.ToString() ?? "null"}");
 
-        journal.Check(after.LastSavedAt is not null,
-            "a 200 means the JSON is already on disk (SERVER_SPEC.md § 13.1)",
-            "lastSavedAt is still null after a successful vote");
+        // SERVER_SPEC.md § 13.1: a vote's 200 means applied, and on disk within the bound — at most
+        // SaveDelaySeconds or MaxUnsavedChoices further choices. POST /session/save is what turns
+        // that into "on disk now" (§ 10.5), and it is what every on-disk check here asks for first.
+        var durable = await api.SaveAsync();
+        if (journal.Check(durable.Status == 200,
+                "POST /session/save after a vote makes the point durable (SERVER_SPEC.md § 10.5)",
+                Explain(durable)))
+        {
+            journal.Check(Snapshot.From(durable)?.LastSavedAt is not null,
+                "the 200 from POST /session/save means the vote is fsynced and in place (SERVER_SPEC.md § 13.1)",
+                "lastSavedAt is still null after a successful save");
+        }
 
         // § 10.6: both records get matches + 1 and impressions + 1.
         foreach (var id in new[] { winner, loser })

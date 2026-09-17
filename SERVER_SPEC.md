@@ -768,15 +768,23 @@ came back.
 Validate per § 8.4, then call `VoteLeft()` / `VoteRight()`. Inside that one call the library, in
 order: appends the cue (`Confirmation` if the winner's μ ≥ the loser's μ *before* the update, else
 `Upset`), applies TrueSkill, sets `matches + 1`, `impressions + 1` and `lastPlayed = now` on **both**
-records, increments `SessionVotes`, **saves**, and only then advances the pair.
+records, increments `SessionVotes`, and advances the pair.
 
-- Success → `200` with the new snapshot. `pairSeq` +1. The JSON on disk already contains this vote.
-- `Save` throws → everything above is rolled back, including the cue and `SessionVotes` →
-  `500 save_failed`, `details.recordsChanged: false`. **`pairSeq` is unchanged and the client's
-  `pairToken` is still current** — the client MAY retry the identical request.
+- Success → `200` with the new snapshot. `pairSeq` +1.
+- **A vote is a *choice*, so its write is governed by § 13.1, not by this section.** Whether the JSON
+  on disk already contains it depends on the bound configured there: with `SaveDelaySeconds = 0` it
+  does, exactly as this section used to promise unconditionally; otherwise it is on disk no later
+  than the bound, and `POST /session/save` (§ 10.5) is how a client makes the point durable on
+  demand. This is the owner's decision of 2026-09-17 and the one place in the contract where a 2xx
+  stopped meaning "already written".
+- A write that throws → `500 save_failed`, `details.recordsChanged: false`. **`pairSeq` is unchanged
+  and the client's `pairToken` is still current** — the client MAY retry the identical request. When
+  the write was deferred, the failure latches (§ 13.1) and it is the *next* mutating call that is
+  refused with nothing applied, because this one has already been answered.
 
-The server MUST NOT reorder these steps, MUST NOT respond before `VoteLeft`/`VoteRight` returns, and
-MUST NOT batch saves (`SPEC.md` § Persistence).
+The server MUST NOT reorder these steps and MUST NOT respond before `VoteLeft`/`VoteRight` returns.
+It MAY batch the writes, within the bound § 13.1 fixes; `SPEC.md` § Persistence describes the
+desktop app, which saves on every choice and is unaffected.
 
 ### 10.7 `POST /session/skip`
 
@@ -785,8 +793,12 @@ MUST NOT batch saves (`SPEC.md` § Persistence).
 ```
 
 `RankingSession.Skip()`: `impressions + 1` on both, **no** rating change, **no** `matches` change,
-**no** `lastPlayed` change, **no** cue, no `SessionVotes` change, save, advance. Failure semantics
-are identical to vote (§ 10.6).
+**no** `lastPlayed` change, **no** cue, no `SessionVotes` change, advance. A skip is a choice, so its
+write is governed by § 13.1 like a vote's; failure semantics are identical to vote (§ 10.6).
+
+The Windows client no longer offers skip (the owner does not use it, 2026-09-17) and the phone never
+did. The endpoint stays in the contract and keeps working: `rm2ctl` uses it, and removing a route
+that costs nothing to keep would break a client for no gain.
 
 ### 10.8 `POST /session/discard`
 

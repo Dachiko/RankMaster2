@@ -51,7 +51,24 @@ public static class Rm2Host
         // A3: close the open session on the way out, so <folder>/.rankmaster.lock is deleted rather
         // than left sitting among the owner's photographs. The OS frees the handle when the process
         // dies; nothing but FolderLock.Dispose removes the file.
-        var registry = app.Services.GetService<Sessions.SessionRegistry>() ?? Sessions.SessionRegistry.Shared;
+        var registry = app.Services.GetService<Sessions.SessionRegistry>();
+        if (registry is null)
+        {
+            // The process-wide session (§ 7). Configuration reaches it here, because it is a static
+            // and cannot read appsettings.json for itself. A registry supplied through DI is a test's
+            // own, built with the catalog, the journal writer and the durability settings that test
+            // needs: configuration must not reach in and change them underneath it.
+            registry = Sessions.SessionRegistry.Shared;
+
+            var durability = new Security.Rm2SecurityOptions();
+            app.Configuration.GetSection(Security.Rm2SecurityOptions.SectionName).Bind(durability);
+
+            // SERVER_SPEC.md § 2.4, § 13.1: RankMaster2:SaveDelaySeconds and
+            // RankMaster2:MaxUnsavedChoices. Neither is on /ping and neither is a feature; they bound
+            // what a crash can cost, and 0 restores save-on-every-choice exactly.
+            registry.ApplyDurabilityOptions(durability.SaveDelaySeconds, durability.MaxUnsavedChoices);
+        }
+
         app.Lifetime.ApplicationStopping.Register(registry.Dispose);
 
         // TLS, pairing, tokens, the fail-closed auth gate, /ping and /libraries/*.

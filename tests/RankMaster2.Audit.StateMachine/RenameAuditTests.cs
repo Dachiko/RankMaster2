@@ -36,6 +36,12 @@ public sealed class RenameAuditTests(Rm2Server server) : AuditTestBase(server)
             .ShouldBeSnapshot(200, "a vote before the rename, so there is a real rating to lose");
         Assert.Equal(1, voted.SessionVotes);
 
+        // § 13.1: a rename forces the write-behind to disk before it starts, so the vote above must
+        // be written *before* the jam goes on — otherwise the jam stops the rename at that flush and
+        // this test never reaches the failure it is about. This is the same rule every test that
+        // depends on the file follows: ask for the durability point (§ 10.5) rather than assume one.
+        (await client.SaveAsync()).ShouldBeSnapshot(200, "POST /session/save (SERVER_SPEC.md § 10.5)");
+
         folder.JamSave();
         try
         {

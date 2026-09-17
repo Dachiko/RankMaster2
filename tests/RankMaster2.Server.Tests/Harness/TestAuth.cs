@@ -56,8 +56,13 @@ public static class TestAuth
     /// <summary>An explicit pairing code, same purpose.</summary>
     public const string CodeEnvironmentVariable = "RM2_TEST_PAIRING_CODE";
 
-    /// <summary>Files a server may publish an open pairing window through.</summary>
-    public static readonly string[] OfferFileNames = { "pairing.json", "pair.offer", "pairing.offer.json" };
+    /// <summary>
+    /// The file a server publishes an open pairing window through. `SERVER_SPEC.md` § 10.1.1 names
+    /// exactly one, and it is an array only so the call site can keep iterating. The two guesses
+    /// that used to sit beside it — `pair.offer`, `pairing.offer.json` — were never written by any
+    /// server; C24 removed the same pair from `rm2ctl`, and this was the last copy.
+    /// </summary>
+    public static readonly string[] OfferFileNames = { "pairing.json" };
 
     /// <summary>Dropping this file in the data directory asks the server to open a window.</summary>
     public const string PairRequestFileName = "pair.request";

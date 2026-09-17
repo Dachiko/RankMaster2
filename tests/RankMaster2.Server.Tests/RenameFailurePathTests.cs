@@ -108,6 +108,11 @@ public sealed class RenameFailurePathTests(FailOnceServer server, ITestOutputHel
             var opened = (await client.OpenSessionAsync(folder.Path)).ShouldBeSnapshot(201, "open");
             var voted = (await client.VoteAsync(opened.RequireToken("open"), "left")).ShouldBeSnapshot(200, "vote");
 
+            // § 13.1: the rename flushes the write-behind before it starts, so the vote is made
+            // durable here — the one-shot failure below is for the commit, which is what this test
+            // is about, not for a flush that would refuse the rename before it began.
+            (await client.SaveAsync()).ShouldBeSnapshot(200, "POST /session/save (SERVER_SPEC.md § 10.5)");
+
             server.Catalog.FailNextSave = true;   // the Commit save throws; the reunite save then works
             (await client.StartRenameAsync()).ShouldHaveStatus(202, "start");
             var final = await RenamePolling.PollToTerminalAsync(client);
@@ -138,9 +143,12 @@ public sealed class RenameFailurePathTests(FailOnceServer server, ITestOutputHel
             (await client.VoteAsync(voted.RequireToken("before the rename"), "left"))
                 .ShouldBeError("stale_pair_token", "SERVER_SPEC.md § 7.2: pairSeq advanced, so the old token is stale");
 
-            // And the thing H2 was really about: a vote after the failure lands on disk.
+            // And the thing H2 was really about: a vote after the failure lands on disk. § 13.1
+            // changed when it lands, not whether — POST /session/save is the contract's own way of
+            // asking for "now", and every reader of rankmaster_db.json uses it.
             var dbBefore = await File.ReadAllTextAsync(Path.Combine(folder.Path, "rankmaster_db.json"));
             (await client.VoteAsync(after.RequireToken("after"), "left")).ShouldBeSnapshot(200, "vote after the failed rename");
+            (await client.SaveAsync()).ShouldBeSnapshot(200, "SERVER_SPEC.md § 10.5: make the vote durable");
             var dbAfter = await File.ReadAllTextAsync(Path.Combine(folder.Path, "rankmaster_db.json"));
 
             Assert.True(dbBefore != dbAfter,

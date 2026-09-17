@@ -33,6 +33,10 @@ public sealed class ActionTests(RealServer server)
         var result = await link.VoteAsync(Side.Left, snapshot.PairSeq);
         var applied = Assert.IsType<ActionResult.Applied>(result);
         Assert.Equal(1L, applied.Snapshot.PairSeq);
+
+        // SERVER_SPEC.md § 13.1: the vote's 200 means applied, and on disk within the bound.
+        // § 10.5 is how a client asks for "on disk now", and this test is about the file.
+        Assert.IsType<ActionResult.Applied>(await link.SaveAsync());
         Assert.Equal(1, scratch.MatchesOf(leftId));
         Assert.Equal(1, scratch.MatchesOf(rightId));
         Assert.NotNull(applied.Snapshot.LastAction);
@@ -52,6 +56,9 @@ public sealed class ActionTests(RealServer server)
 
         var result = await link.SkipAsync(snapshot.PairSeq);
         var applied = Assert.IsType<ActionResult.Applied>(result);
+
+        // § 13.1 / § 10.5: the durability point, before reading the file.
+        Assert.IsType<ActionResult.Applied>(await link.SaveAsync());
         Assert.Equal(0, scratch.MatchesOf(leftId));
         Assert.Equal(1, scratch.ImpressionsOf(leftId));
     }
@@ -257,6 +264,15 @@ public sealed class ActionTests(RealServer server)
         Assert.Equal(snapshot.PairToken, link.Snapshot!.PairToken);
     }
 
+    /// <summary>
+    /// <c>save_failed</c> still reaches the owner, and the client still recovers from it — but since
+    /// SERVER_SPEC.md § 13.1 the route is the latch, not the choice itself. With the write-behind on
+    /// (the shipped default, pinned by <c>RealServer</c>), a choice made on a folder that cannot be
+    /// written is applied and answered; the deferred write fails and is latched; the <i>next</i>
+    /// choice attempts the write, fails again, and is refused with nothing applied — token still
+    /// current, the identical action retryable once the disk lets go. § 13.1: "the second choice
+    /// after the drive goes tells him".
+    /// </summary>
     [Fact]
     public async Task A15_SaveFailedIsSurfacedAndRecoverable()
     {
@@ -265,21 +281,32 @@ public sealed class ActionTests(RealServer server)
         using var scratchScope = scratch;
 
         File.SetUnixFileMode(scratch.Path, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        long refusedAtSeq;
+        string? tokenAtRefusal;
         try
         {
-            var result = await link.VoteAsync(Side.Left, snapshot.PairSeq);
+            // The write-behind's budget: each of these is applied in memory and answered, and the
+            // last one's forced write throws and latches (§ 13.1, MaxUnsavedChoices = 5).
+            for (var i = 0; i < 5; i++)
+                Assert.IsType<ActionResult.Applied>(await link.VoteAsync(Side.Left, link.Snapshot!.PairSeq));
+
+            refusedAtSeq = link.Snapshot!.PairSeq;
+            tokenAtRefusal = link.Snapshot.PairToken;
+
+            var result = await link.VoteAsync(Side.Left, refusedAtSeq);
             var refused = Assert.IsType<ActionResult.Refused>(result);
             Assert.Equal(FailureKind.SaveFailed, refused.Failure.Kind);
             Assert.NotNull(refused.Snapshot);
-            Assert.Equal(snapshot.PairToken, refused.Snapshot!.PairToken);
+            Assert.Equal(tokenAtRefusal, refused.Snapshot!.PairToken);
+            Assert.Equal(refusedAtSeq, refused.Snapshot.PairSeq);
         }
         finally
         {
             File.SetUnixFileMode(scratch.Path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
-        var retried = Assert.IsType<ActionResult.Applied>(await link.VoteAsync(Side.Left, snapshot.PairSeq));
-        Assert.Equal(1L, retried.Snapshot.PairSeq);
+        var retried = Assert.IsType<ActionResult.Applied>(await link.VoteAsync(Side.Left, refusedAtSeq));
+        Assert.Equal(refusedAtSeq + 1, retried.Snapshot.PairSeq);
     }
 
     [Fact]

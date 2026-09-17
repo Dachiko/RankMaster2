@@ -68,6 +68,10 @@ public sealed class NegativeTests(RealServer server)
         var bodies = tap.Sent.Where(s => s.Path == "/session/vote").Select(s => s.BodyText).ToList();
         Assert.Equal(2, bodies.Count);
         Assert.Equal(bodies[0], bodies[1]);
+
+        // SERVER_SPEC.md § 13.1 / § 10.5: a vote's 200 means applied, and on disk within the bound;
+        // POST /session/save is how a client asks for "on disk now" before reading the file.
+        await link.SaveAsync();
         Assert.Equal(2, scratch.TotalMatches());
     }
 
@@ -101,6 +105,9 @@ public sealed class NegativeTests(RealServer server)
         Assert.Equal(t0, Field(third.BodyText, "pairToken"));
         Assert.NotEqual(firstRequestId, Field(third.BodyText, "clientRequestId"));
 
+        // SERVER_SPEC.md § 13.1 / § 10.5: a vote's 200 means applied, and on disk within the bound;
+        // POST /session/save is how a client asks for "on disk now" before reading the file.
+        await link.SaveAsync();
         Assert.Equal(2, scratch.TotalMatches());
     }
 
@@ -134,6 +141,9 @@ public sealed class NegativeTests(RealServer server)
         Assert.NotEqual(t0, Field(lastVote.BodyText, "pairToken"));
         Assert.NotEqual(r0, Field(lastVote.BodyText, "clientRequestId"));
 
+        // SERVER_SPEC.md § 13.1 / § 10.5: a vote's 200 means applied, and on disk within the bound;
+        // POST /session/save is how a client asks for "on disk now" before reading the file.
+        await link.SaveAsync();
         Assert.Equal(4, scratch.TotalMatches());
     }
 
@@ -242,7 +252,19 @@ public sealed class NegativeTests(RealServer server)
             Assert.IsType<ActionResult.Applied>(await link.VoteAsync(Side.Left, current.PairSeq));
         }
 
-        Assert.Equal(12, scratch.TotalMatches()); // 6 votes total: the killed-but-landed one, plus 5 more
+        // SERVER_SPEC.md § 13.4, and the owner's trade made visible. Five votes landed after the
+        // restart and every one of them is on disk once asked for. The sixth — the one that landed
+        // microseconds before the server was SIGKILLed — is **not**: it was applied in memory and
+        // answered, and the bounded write-behind had neither reached SaveDelaySeconds nor
+        // MaxUnsavedChoices when the process died. § 13.4: the ratings survive a restart "except the
+        // last ≤ 5 choices or ≤ 2 seconds of voting, which the owner accepted explicitly"
+        // (2026-09-17: "I'm not afraid of losing a couple of votes, it's non-consequential").
+        //
+        // A SIGKILL is the only way to lose one: a clean shutdown flushes (§ 13.1), which is why
+        // this test kills rather than stops. With RankMaster2:SaveDelaySeconds = 0 the count here
+        // would be 12, and that is what the switch is for.
+        await link.SaveAsync();
+        Assert.Equal(10, scratch.TotalMatches());
 
         var postRestart = tap.Sent.Where(s => s.Path == "/session/vote").Skip(preRestartVoteCount);
         foreach (var b in postRestart)
@@ -321,6 +343,10 @@ public sealed class NegativeTests(RealServer server)
 
         var credentialAfter = Credential.Load(credentialDir)!;
         Assert.NotEqual(credentialBefore.Token, credentialAfter.Token);
+
+        // SERVER_SPEC.md § 13.1 / § 10.5: a vote's 200 means applied, and on disk within the bound;
+        // POST /session/save is how a client asks for "on disk now" before reading the file.
+        await link.SaveAsync();
         Assert.Equal(2, scratch.TotalMatches());
     }
 
@@ -359,6 +385,10 @@ public sealed class NegativeTests(RealServer server)
         var resync = Assert.IsType<ActionResult.Resynchronised>(result);
         Assert.Equal(ResyncReason.PairMovedElsewhere, resync.Why);
         Assert.Equal(2L, link.Snapshot!.PairSeq);
+
+        // SERVER_SPEC.md § 13.1 / § 10.5: a vote's 200 means applied, and on disk within the bound;
+        // POST /session/save is how a client asks for "on disk now" before reading the file.
+        await link.SaveAsync();
         Assert.Equal(2, scratch.TotalMatches()); // one vote (the phone's) on disk; the skip changes no rating
 
         tap.ClearSent();

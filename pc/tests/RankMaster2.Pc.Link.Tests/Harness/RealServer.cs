@@ -74,6 +74,12 @@ public sealed class RealServer : IAsyncLifetime
         start.Environment["RankMaster2__Port"] = Port.ToString();
         start.Environment["RM2_DATA_DIR"] = DataDirectory;
         start.Environment["Logging__LogLevel__Default"] = "Warning";
+        // SERVER_SPEC.md § 2.4 / § 13.1: pinned to the shipped defaults rather than inherited, so
+        // this suite always exercises the write-behind the owner will actually run — and so a run
+        // with RankMaster2__SaveDelaySeconds set in the environment (the server suite's second pass)
+        // cannot quietly change what these tests mean.
+        start.Environment["RankMaster2__SaveDelaySeconds"] = "2";
+        start.Environment["RankMaster2__MaxUnsavedChoices"] = "5";
         start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         // The suite pairs and re-pairs many times from the same loopback address; the real 5/minute
         // limit (SERVER_SPEC.md § 15) would starve the run, not the code under test.
@@ -131,6 +137,12 @@ public sealed class RealServer : IAsyncLifetime
         start.Environment["RankMaster2__Port"] = Port.ToString();
         start.Environment["RM2_DATA_DIR"] = DataDirectory;
         start.Environment["Logging__LogLevel__Default"] = "Warning";
+        // SERVER_SPEC.md § 2.4 / § 13.1: pinned to the shipped defaults rather than inherited, so
+        // this suite always exercises the write-behind the owner will actually run — and so a run
+        // with RankMaster2__SaveDelaySeconds set in the environment (the server suite's second pass)
+        // cannot quietly change what these tests mean.
+        start.Environment["RankMaster2__SaveDelaySeconds"] = "2";
+        start.Environment["RankMaster2__MaxUnsavedChoices"] = "5";
         start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         // The suite pairs and re-pairs many times from the same loopback address; the real 5/minute
         // limit (SERVER_SPEC.md § 15) would starve the run, not the code under test.

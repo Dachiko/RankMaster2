@@ -9,9 +9,26 @@ namespace RankMaster2.Audit.StateMachine.Harness;
 /// open one must not run in parallel with each other.
 /// </summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class AuditServerCollection : ICollectionFixture<Rm2Server>
+public sealed class AuditServerCollection :
+    ICollectionFixture<Rm2Server>,
+    ICollectionFixture<SaveOnEveryChoiceServer>,
+    ICollectionFixture<CountBoundServer>
 {
     public const string Name = "rm2-audit-state-machine";
+}
+
+/// <summary>
+/// Which side of SERVER_SPEC.md § 13.1's switch a row of the § 8.3 table is being asserted on.
+/// Since the write-behind, "the write failed" reaches a client by two different routes, and the
+/// table's rows are the same at the end of both — which is the claim these modes exist to check.
+/// </summary>
+public enum SaveMode
+{
+    /// <summary><c>SaveDelaySeconds = 0</c>: the write is inside the choice, as it always was.</summary>
+    SaveOnEveryChoice,
+
+    /// <summary>The default: the write is deferred, bounded, and its failure is latched.</summary>
+    WriteBehind,
 }
 
 /// <summary>

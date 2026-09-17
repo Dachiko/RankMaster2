@@ -393,6 +393,103 @@ public class RankingSessionTests
         Assert.All(held, Assert.NotNull);
     }
 
+    // ---- the write-behind flag (SERVER_SPEC.md § 13.1, "Where it lives") -----------------------
+
+    /// <summary>
+    /// The default is the desktop app's behaviour and is not negotiable: <c>SPEC.md</c> § Persistence
+    /// says save on every choice, and every test above is written against a session that does.
+    /// </summary>
+    [Fact]
+    public void By_default_a_session_saves_on_every_choice()
+    {
+        var catalog = new CountingCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession("mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1);
+        Assert.True(session.SavesOnChoice);
+        Assert.True(session.Start());
+
+        var afterStart = catalog.Saves;      // § 10.1: Start() does not save
+        session.VoteLeft();
+        session.Skip();
+        session.UndoLastAction();
+
+        Assert.Equal(afterStart + 3, catalog.Saves);
+    }
+
+    /// <summary>
+    /// With <c>saveOnChoice: false</c> the choice is applied and nothing is written: the owner of the
+    /// session decides when the write happens (SERVER_SPEC.md § 13.1). The engine still saves when it
+    /// is asked to, because <c>Save()</c> is what the forced saves and the flush call.
+    /// </summary>
+    [Fact]
+    public void With_saveOnChoice_false_a_choice_writes_nothing_until_Save_is_called()
+    {
+        var catalog = new CountingCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession(
+            "mem", catalog, new TrueSkill(), new PairSelector(), prefetchPairs: 1, saveOnChoice: false);
+        Assert.False(session.SavesOnChoice);
+        Assert.True(session.Start());
+
+        var afterStart = catalog.Saves;
+        session.VoteLeft();
+        session.Skip();
+        session.UndoLastAction();
+
+        Assert.Equal(afterStart, catalog.Saves);
+        Assert.Equal(1, session.SessionVotes);       // and every choice really was applied
+        Assert.Single(session.RecentCues);
+
+        session.Save();
+        Assert.Equal(afterStart + 1, catalog.Saves);
+    }
+
+    /// <summary>
+    /// The rollback path of a failed save is never entered when there is no save here to fail: a
+    /// jammed catalog does not take a vote back, because this session never asked it to write
+    /// (§ 13.1 — "the registry owns the failure now"). With the flag at its default it does, which is
+    /// the row above it in the same table.
+    /// </summary>
+    [Fact]
+    public void With_saveOnChoice_false_a_jammed_catalog_does_not_roll_a_vote_back()
+    {
+        var jammed = new ThrowOnSecondSaveCatalog(Rec("a.jpg"), Rec("b.jpg"), Rec("c.jpg"), Rec("d.jpg"));
+        var session = new RankingSession(
+            "mem", jammed, new TrueSkill(), new PairSelector(), prefetchPairs: 1, saveOnChoice: false);
+        Assert.True(session.Start());
+        var pair = session.Current!.Value;
+
+        jammed.FailNextSave = true;
+        session.VoteLeft();                   // does not throw: nothing was written
+
+        Assert.Equal(1, session.SessionVotes);
+        Assert.Single(session.RecentCues);
+        Assert.Equal(1, session.Find(pair.Left).Matches);
+        Assert.Equal(1, session.Find(pair.Right).Matches);
+        Assert.True(session.CanUndoLastAction);
+
+        // And the write that was jammed is still jammed when somebody does ask for it.
+        Assert.ThrowsAny<Exception>(session.Save);
+        Assert.Equal(1, session.SessionVotes);
+    }
+
+    private sealed class CountingCatalog(params MediaRecord[] records) : ICatalog
+    {
+        private List<MediaRecord> _records = [.. records];
+
+        public int Saves { get; private set; }
+
+        public IReadOnlyList<MediaRecord> Scan(string folder) => _records;
+
+        public void Save(string folder, IReadOnlyList<MediaRecord> records)
+        {
+            Saves++;
+            _records = records.ToList();
+        }
+
+        public IReadOnlyList<MediaRecord> RemapIds(
+            IReadOnlyList<MediaRecord> records, IReadOnlyDictionary<MediaId, MediaId> map) =>
+            records.Select(r => map.TryGetValue(r.Id, out var n) ? r with { Id = n } : r).ToList();
+    }
+
     private sealed class ThrowOnSecondSaveCatalog(params MediaRecord[] records) : ICatalog
     {
         private List<MediaRecord> _records = [.. records];

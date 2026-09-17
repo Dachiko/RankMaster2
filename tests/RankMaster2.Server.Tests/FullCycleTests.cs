@@ -100,11 +100,16 @@ public class FullCycleTests(Rm2Server server, ITestOutputHelper output) : Sessio
                 $"SERVER_SPEC.md § 10.6: a vote sets lastPlayed on both records. {id} has {meta.LastPlayed}.");
         }
 
-        // § 13.1: a 200 is proof of durability — the JSON is already on disk.
+        // § 13.1: the vote's 200 means applied, and on disk within the bound — at most
+        // SaveDelaySeconds or MaxUnsavedChoices further choices. § 10.5 is the endpoint that turns
+        // that into "on disk now", and it is what a client (or a test) that reads the file asks for.
+        var savedAfterVote = (await client.SaveAsync())
+            .ShouldBeSnapshot(200, "SERVER_SPEC.md § 10.5: POST /session/save makes the point durable");
+
         Assert.True(File.Exists(folder.File("rankmaster_db.json")),
-            "SERVER_SPEC.md § 13.1: when a 2xx leaves the server, the change is already durably on disk. " +
-            "The vote returned 200 and rankmaster_db.json does not exist.");
-        Assert.True(voted.LastSavedAt is not null,
+            "SERVER_SPEC.md § 10.5 / § 13.1: the 200 from POST /session/save means every choice up to " +
+            "that moment is fsynced and atomically in place. rankmaster_db.json does not exist.");
+        Assert.True(savedAfterVote.LastSavedAt is not null,
             "SERVER_SPEC.md § 9.1: lastSavedAt records this session's last successful save.");
 
         // ---- skip -------------------------------------------------------------------------

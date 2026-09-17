@@ -6,6 +6,7 @@ public sealed class RankingSession
     private readonly IRatingEngine _engine;
     private readonly IPairSelector _selector;
     private readonly int _prefetchPairs;
+    private readonly bool _saveOnChoice;
     /// <summary>
     /// Not readonly, and never rebuilt in place. Every wholesale replacement — a scan, a resync, a
     /// rollback — builds a complete new list and assigns it in one reference write, because the
@@ -27,19 +28,39 @@ public sealed class RankingSession
     /// </summary>
     private SessionSnap? _undo;
 
+    /// <param name="saveOnChoice">
+    /// Whether a vote, a skip or the cancel of one writes the database before it returns.
+    /// <para/>
+    /// <c>true</c> — the default, and what the frozen desktop app and every engine test get — is
+    /// <c>SPEC.md</c> § Persistence exactly: save on every choice, and roll the whole choice back if
+    /// that write throws. <c>false</c> is the server's bounded write-behind
+    /// (<c>SERVER_SPEC.md</c> § 13.1): the choice is applied in memory and <i>somebody else</i> —
+    /// <c>SessionRegistry</c> — owns when it reaches disk and what happens if it cannot. This class
+    /// does not batch, count or time anything; it only stops calling <c>Save</c>. With the flag
+    /// <c>false</c> the rollback path of a failed save is simply never entered here, because there
+    /// is no save here to fail.
+    /// </param>
     public RankingSession(
         string folder,
         ICatalog catalog,
         IRatingEngine engine,
         IPairSelector selector,
-        int prefetchPairs)
+        int prefetchPairs,
+        bool saveOnChoice = true)
     {
         Folder = folder;
         _catalog = catalog;
         _engine = engine;
         _selector = selector;
         _prefetchPairs = prefetchPairs;
+        _saveOnChoice = saveOnChoice;
     }
+
+    /// <summary>
+    /// False when this session leaves the writing of a vote or a skip to its owner
+    /// (SERVER_SPEC.md § 13.1). <see cref="Save"/> always writes, whatever this says.
+    /// </summary>
+    public bool SavesOnChoice => _saveOnChoice;
 
     public string Folder { get; }
     public Pair? Current { get; private set; }
@@ -101,7 +122,7 @@ public sealed class RankingSession
             Replace(RecordUpdates.ApplySkip(Find(Current.Value.Left)));
             Replace(RecordUpdates.ApplySkip(Find(Current.Value.Right)));
             Remember(Current.Value);
-            _catalog.Save(Folder, _records);
+            SaveIfOnChoice();
             Advance();
             _undo = rollback;
         }
@@ -113,6 +134,17 @@ public sealed class RankingSession
     }
 
     public void Save() => _catalog.Save(Folder, _records);
+
+    /// <summary>
+    /// The one line the write-behind switches off (SERVER_SPEC.md § 13.1). Everything else about a
+    /// choice — the cue, the TrueSkill update, the counters, the advance, the undo point — happens
+    /// identically either way.
+    /// </summary>
+    private void SaveIfOnChoice()
+    {
+        if (_saveOnChoice)
+            _catalog.Save(Folder, _records);
+    }
 
     /// <summary>True when <see cref="UndoLastAction"/> has something to take back.</summary>
     public bool CanUndoLastAction => _undo is not null;
@@ -138,7 +170,7 @@ public sealed class RankingSession
         try
         {
             RestoreSnapshot(point);
-            _catalog.Save(Folder, _records);
+            SaveIfOnChoice();
             _undo = null;
             return true;
         }
@@ -250,7 +282,7 @@ public sealed class RankingSession
             Replace(l);
             Remember(Current.Value);
             SessionVotes++;
-            _catalog.Save(Folder, _records);
+            SaveIfOnChoice();
             Advance();
             _undo = rollback;
         }

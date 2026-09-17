@@ -182,6 +182,22 @@ internal static class Entry
             code = offer.Code;
         }
 
+        // A31, the other half. The --take path above pins the fingerprint the offer published, so
+        // it can never arrive here unpinned. A code typed by hand (--code) reaches here with no
+        // offer to take a fingerprint from, and sending it to an unverified peer is the same
+        // mistake § 10.1.1 forbids: the code is a bearer secret, and trusting on first use is
+        // exactly the window an attacker needs. Refuse, and say the two ways forward.
+        if (options.Pin is null && !options.Insecure)
+        {
+            journal.Failure(
+                "the certificate is pinned before a pairing code is sent (SERVER_SPEC.md § 10.1.1)",
+                "No fingerprint to pin: --code was given without --pin, and no pairing offer was read.\n" +
+                "Pass --pin sha256:… with the fingerprint you trust (the tray shows it, and so does\n" +
+                "`rm2ctl ping --insecure`), or use --take to pin the one the server published, or\n" +
+                "--insecure if you accept handing the code to whoever answers.");
+            return journal.Summary();
+        }
+
         // Connect only now: the offer above may have just told us which address to use and which
         // fingerprint to pin, and the client has to be built against the final ones.
         using var api = Connect(options, journal);
