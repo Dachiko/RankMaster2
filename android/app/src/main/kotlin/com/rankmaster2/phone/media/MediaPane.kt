@@ -221,6 +221,15 @@ private fun VideoPane(
     }
 }
 
+/**
+ * Test tags on the two things a video pane is made of, so a layout test can find them in the
+ * semantics tree: the box the picture is drawn in, and the cover that hides it until it is right.
+ */
+internal object MediaPaneTags {
+    const val VIDEO = "media-pane/video"
+    const val COVER = "media-pane/cover"
+}
+
 /** Keeps one pane's video slot alive for exactly as long as the composition that asked for it. */
 private class VideoSlotHolder(val slot: Rm2VideoPlayers.Slot) : RememberObserver {
     override fun onRemembered() = Unit

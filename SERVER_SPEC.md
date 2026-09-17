@@ -271,7 +271,7 @@ produce a misleading error path.
 | `media_outside_session` | 403 | the decoded id escapes the session folder (separator, `..`, rooted path) | `{ "id": string }` |
 | `media_extension_not_allowed` | 403 | the extension is in neither list in `SPEC.md` § Media policy | `{ "id": string, "extension": string }` |
 | `wrong_media_kind` | 409 | `/still` or `/thumb` on a video, or `/video` on a still | `{ "id": string, "kind": "still"\|"video", "endpoint": string }` |
-| `media_decode_failed` | 422 | the file exists but is not a decodable image | `{ "id": string }` |
+| `media_decode_failed` | 422 | the file exists but could not be turned into an image **now** — see `reason` | `{ "id": string, "reason": "unreadable" \| "no_room" }` |
 | `range_not_satisfiable` | 416 | the `Range` header cannot be satisfied | `{ "sizeBytes": int }` |
 
 ### 5.6 Server
@@ -1429,6 +1429,14 @@ plays the stream directly (`SERVER_PLAN.md` § 3.4).
 `MediaMeta` MUST NOT contain `durationMs`, `codec`, `frameRate`, `bitrate` or any other field that
 would require decoding a video (`SERVER_PLAN.md` § 7). Reading `width`/`height` for a still is a
 header read, not a full decode; if it fails → `422 media_decode_failed`.
+
+**`details.reason` on `media_decode_failed`.** `unreadable` means the bytes on disk are not an image
+this server can decode — the file really is the problem. `no_room` means the file is fine and the
+server had no free decode memory for it at that moment (§ 12.3's budget); it will very likely succeed
+on the next attempt. **Clients MUST branch on `reason`, not on `error.message`**, which § 4 fixes as
+unstable and never parsed — and MUST NOT tell the owner a `no_room` file is damaged or that his own
+device could not open it. A client that cannot distinguish the two will blame the wrong thing, which
+is exactly what happened before this field existed.
 
 ### 12.2 `mediaVersion` and `ETag`
 

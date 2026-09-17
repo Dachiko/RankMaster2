@@ -40,16 +40,31 @@ public sealed class MediaOptions
     /// <summary>
     /// Hard ceiling on the pixel buffers one decode may hold at once, enforced by
     /// <see cref="DecodeBudget"/> before the memory is taken rather than discovered afterwards.
-    /// A reduced-size decode of a 48 MP JPEG to 1080 px peaks around 12 MB, so this is roughly ten
-    /// times the working figure and still well inside the server's budget. A decode that would
-    /// exceed it is refused and reported as <c>media_decode_failed</c>.
-    /// <para/>
-    /// The headroom is for the formats with no sampled decode. JPEG scales during the IDCT, so it
-    /// is cheap at any target; PNG, BMP and GIF have no equivalent and must be decoded whole,
-    /// which is one buffer of width × height × 4. At this ceiling that caps a non-JPEG still at
-    /// about 32 megapixels.
+    /// A decode that would exceed it is refused and reported as <c>media_decode_failed</c> with
+    /// <c>details.reason = "no_room"</c>.
+    ///
+    /// <para><b>512 MB, raised from 128 on 2026-09-17, because 128 was the wrong number.</b> The old
+    /// figure was reasoned from JPEG and it is right about JPEG: JPEG scales during the IDCT, so a
+    /// 48 MP file decoded to 1080 px peaks around 12 MB and never comes close. But PNG, BMP and GIF
+    /// have no sampled decode — they are decoded whole, one buffer of width × height × 4, plus the
+    /// resample buffer held alongside it. At 128 MB that is about **30 effective megapixels**, so a
+    /// 6000 × 6000 PNG was refused outright even with the whole server to itself, and a *pair* of
+    /// 4000 × 4000 ones failed every time. That is AUDIT2.md § 2.1, measured at 12 refusals out of
+    /// 12 pairs, and the owner met it as "This phone cannot open this file" on a photograph that was
+    /// perfectly fine.</para>
+    ///
+    /// <para>512 MB takes the non-JPEG limit to about 128 megapixels, past any camera he is likely to
+    /// own, while still being a bounded ceiling that refuses a decode bomb rather than meeting it.
+    /// It is not extravagant: this is a desktop process on his own PC, and the Windows client sitting
+    /// beside it has used 512 MB from the start (<c>Composition.cs</c>). The two halves of the same
+    /// product disagreeing by a factor of four was the actual defect — and the server's was the half
+    /// the phone depends on entirely.</para>
+    ///
+    /// <para>Raising it does not make two large decodes race for memory: <see cref="DecodeRoom"/>
+    /// makes a pair that will not fit together take turns instead of failing, so this number only has
+    /// to accommodate the largest <i>single</i> picture, never the sum of a pair.</para>
     /// </summary>
-    public int DecodeMemoryLimitMegabytes { get; set; } = 128;
+    public int DecodeMemoryLimitMegabytes { get; set; } = 512;
 
     /// <summary>
     /// SERVER_SPEC.md § 2.4: the server data directory is <c>RankMaster2/Server</c> — one spelling,

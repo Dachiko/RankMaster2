@@ -198,20 +198,23 @@ public static class MediaEndpoints
             //
             // AUDIT2.md § 2.1: a StillDecodeException raised because DecodeRoom/DecodeBudget had no
             // room for this decode's peak — never because the bytes on disk were bad — carries
-            // IsCapacityRefusal. The wire contract does not change for it: still 422
-            // media_decode_failed, still details: { id } (SERVER_SPEC.md § 5.2's row for this code).
-            // Only error.message differs, and SERVER_SPEC.md § 4 says that field is free to: "Human
-            // English. Unstable. Never parsed." So this needs no contract change — the file itself
-            // was never the problem, and the owner must not be told it was damaged.
+            // IsCapacityRefusal.
+            //
+            // `details.reason` exists because saying it only in `error.message` was not enough. § 4
+            // fixes that field as "Human English. Unstable. Never parsed", and the phone obeys that
+            // — so it branched on the code alone, and showed the owner "This phone cannot open this
+            // file" for a picture that was neither the phone's fault nor damaged. A client cannot
+            // act on a distinction it is forbidden to read. This is the machine-readable half.
             layer.Logger.LogInformation(ex, "Could not decode {Id}.", media.Id);
-            var message = ex.IsCapacityRefusal
+            var noRoom = ex.IsCapacityRefusal;
+            var message = noRoom
                 ? "The file is present and is not damaged, but the server did not have enough free decode memory for it right now — try again in a moment."
                 : "The file is present but could not be decoded as an image.";
             await MediaHttp.WriteErrorAsync(
                 context,
                 ErrorCodes.MediaDecodeFailed,
                 message,
-                new { id = media.Id },
+                new { id = media.Id, reason = noRoom ? "no_room" : "unreadable" },
                 cancellationToken: context.RequestAborted).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)

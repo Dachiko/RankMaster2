@@ -45,11 +45,20 @@ import okhttp3.OkHttpClient
  * does it from a RememberObserver, which catches the abandoned-composition case too.
  */
 @OptIn(UnstableApi::class)
-class Rm2VideoPlayers(
+class Rm2VideoPlayers internal constructor(
     private val context: Context,
     client: OkHttpClient,
     private val baseUrl: String,
+    /**
+     * How a [Slot] builds its player, when it is not [create]. Only a test supplies one: it is what
+     * lets the pane be composed and measured on a build machine, where there is no decoder to
+     * report a shape, with an `Rm2Video` the test can hand a shape to itself.
+     */
+    private val buildForSlots: ((MediaRef, (MediaPaneState) -> Unit) -> Rm2Video?)?,
 ) {
+
+    constructor(context: Context, client: OkHttpClient, baseUrl: String) :
+        this(context, client, baseUrl, buildForSlots = null)
 
     /**
      * The same client as everything else, with one instruction added: do not put this in the disk
@@ -250,7 +259,7 @@ class Rm2VideoPlayers(
     }
 
     /** A fresh, empty slot - one per pane, kept for as long as the pane is on screen. */
-    fun newSlot(): Slot = Slot()
+    fun newSlot(): Slot = buildForSlots?.let { Slot(it) } ?: Slot()
 
     internal companion object {
 
