@@ -64,6 +64,10 @@ public sealed class FakeVideoSurface : IVideoSurface
         FrameChanged?.Invoke(this);
     }
 
+    /// <summary>Simulates a later frame arriving with no accompanying state change -- the ordinary
+    /// case once playback is under way, and the one PaneControl used to have nobody listening for.</summary>
+    public void RaiseFrame() => FrameChanged?.Invoke(this);
+
     public void Fail(VideoFailure failure)
     {
         State = VideoSurfaceState.Failed;

@@ -8,7 +8,7 @@
          own name and version in src/RankMaster2.App - it is the program being replaced, not a
          member of this release. One number across the three new pieces, so "which server, which
          phone, which client" is one question and not three. -->
-    <Version>3.0.2</Version>
+    <Version>3.0.3</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>Rank Master 3</Product>
     <AssemblyTitle>Rank Master 3</AssemblyTitle>

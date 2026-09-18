@@ -40,6 +40,7 @@ public partial class PaneControl : UserControl
     private readonly TextBlock _filename;
 
     private PaneState? _lastRenderedPane;
+    private IVideoSurface? _wiredVideoSurface;
 
     public PaneControl()
     {
@@ -58,6 +59,20 @@ public partial class PaneControl : UserControl
 
     public void Render(PaneState pane, Side side, IVideoSurface? videoSurface, VideoEngineStatus engineStatus, IClock clock)
     {
+        // IVideoSurface.FrameChanged's own contract: "E calls InvalidateVisual on its Image."
+        // Nothing did -- LibVLC was genuinely decoding and writing every frame into the same
+        // WriteableBitmap in place, but reassigning _frame.Source to that same instance below is a
+        // no-op for Avalonia's dirty tracking, so the pane never repainted past its first frame. A
+        // video looked stopped until some unrelated repaint (the vote cue's animation) forced one.
+        // Rewired once per surface instance, not per Render call -- the same IVideoSurface is reused
+        // across every pair on this side for as long as the folder stays open.
+        if (!ReferenceEquals(videoSurface, _wiredVideoSurface))
+        {
+            if (_wiredVideoSurface is not null) _wiredVideoSurface.FrameChanged -= OnVideoFrameChanged;
+            _wiredVideoSurface = videoSurface;
+            if (videoSurface is not null) videoSurface.FrameChanged += OnVideoFrameChanged;
+        }
+
         _filename.Text = pane.Id;
         if (side == Side.Left)
         {
@@ -106,6 +121,15 @@ public partial class PaneControl : UserControl
             _waitPercent.IsVisible = false;
             _waitPanel.IsVisible = waiting && clock.UtcNow - pane.WaitingSince >= Timings.StillRingGraceMs;
         }
+    }
+
+    /// <summary>UI thread, at most once per UI-thread turn (the interface's own contract). The
+    /// bitmap object is unchanged -- D writes new pixels into the same instance -- so this is the
+    /// only thing that tells Avalonia there is anything new to draw.</summary>
+    private void OnVideoFrameChanged(IVideoSurface surface)
+    {
+        if (ReferenceEquals(surface, _wiredVideoSurface))
+            _frame.InvalidateVisual();
     }
 
     // ---- select cue (plan § 1.2, timings to the millisecond) --------------------------------------
