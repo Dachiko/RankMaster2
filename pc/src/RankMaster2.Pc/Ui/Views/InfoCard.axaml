@@ -2,7 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="RankMaster2.Pc.Ui.Views.InfoCard"
              Focusable="False" Width="256" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16">
-  <Border Background="{DynamicResource CardFill}" BorderBrush="{DynamicResource CardBorder}"
+  <Border Background="{DynamicResource InfoCardFill}" BorderBrush="{DynamicResource InfoCardBorder}"
           BorderThickness="1" CornerRadius="8" Padding="12">
     <StackPanel Spacing="4">
       <TextBlock Name="FolderLabel" Text="FOLDER" FontSize="10" Foreground="{DynamicResource CardLabel}" />

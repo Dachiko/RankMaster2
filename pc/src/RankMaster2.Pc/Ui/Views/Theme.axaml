@@ -13,6 +13,13 @@
 
   <SolidColorBrush x:Key="CardFill">#99000000</SolidColorBrush>
   <SolidColorBrush x:Key="CardBorder">#1AFFFFFF</SolidColorBrush>
+
+  <!-- The compare screen's folder/confidence/unranked/session readout, floating over the photo
+       being judged. The owner found the shared CardFill (used by the round Help button too) too
+       opaque there specifically, so this is its own, more transparent backdrop, letting the photo
+       underneath read through it. -->
+  <SolidColorBrush x:Key="InfoCardFill">#40000000</SolidColorBrush>
+  <SolidColorBrush x:Key="InfoCardBorder">#14FFFFFF</SolidColorBrush>
   <SolidColorBrush x:Key="CardLabel">#71717A</SolidColorBrush>
   <SolidColorBrush x:Key="CardConfidence">#60A5FA</SolidColorBrush>
   <SolidColorBrush x:Key="CardBarTrack">#0DFFFFFF</SolidColorBrush>
