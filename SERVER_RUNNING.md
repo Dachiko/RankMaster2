@@ -27,7 +27,18 @@ The .NET 8 SDK only to build.
 
 ## 2. Build
 
-From the repository folder:
+On the Windows PC, one command pulls `master` and installs both programs:
+
+```powershell
+.\deploy.ps1
+```
+
+That writes `C:\Utils\RankMaster v3\tray\` and `C:\Utils\RankMaster v3\pc\`, keeps the existing
+`appsettings.json` (so the LAN bind survives), restarts the tray, and leaves the PC client for
+you to start. Pass `-SkipPull` to rebuild from whatever is already in the tree. It refuses to
+run if the working tree has uncommitted edits.
+
+To publish a piece on its own, from the repository folder:
 
 ```powershell
 .\publish-tray.ps1      # -> C:\Utils\RankMaster v3\tray\   (tray + console host together)
