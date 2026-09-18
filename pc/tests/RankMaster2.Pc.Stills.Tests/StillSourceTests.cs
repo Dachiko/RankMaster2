@@ -115,6 +115,101 @@ public class StillSourceTests(ITestOutputHelper output)
         Assert.Equal(2, decoder.CallLog.Count(x => x is "c" or "d"));
     }
 
+    /// <summary>
+    /// Unlike FakeDecoder, actually scales its output with the requested pane box (via the real
+    /// DecodeGeometry.Fit), so a test can tell a small decode from a bigger one. FakeDecoder itself
+    /// can't be reused for this: several other tests (e.g. ResidentMemoryIsBoundedByTheWantedSet)
+    /// depend on it returning exactly FrameSize regardless of the pane box.
+    /// </summary>
+    private sealed class ResizingFakeDecoder : IStillDecoder
+    {
+        private readonly object _gate = new();
+        private readonly List<(string Id, int PaneW, int PaneH)> _log = [];
+
+        public int SourceWidth { get; init; } = 4000;
+        public int SourceHeight { get; init; } = 3000;
+        public DecodeBudget Budget { get; } = new(256L * 1024 * 1024);
+
+        public IReadOnlyList<(string Id, int PaneW, int PaneH)> CallLog
+        {
+            get { lock (_gate) return _log.ToArray(); }
+        }
+
+        public DecodeResult Decode(string path, int paneW, int paneH)
+        {
+            var id = Path.GetFileName(path);
+            lock (_gate) _log.Add((id, paneW, paneH));
+
+            var (w, h) = DecodeGeometry.Fit(SourceWidth, SourceHeight, paneW, paneH);
+            var buffer = Budget.Allocate((long)w * h * 4);
+            var frame = new StillFrame(id, buffer, w, h, SourceWidth, SourceHeight, isPartial: false);
+            return DecodeResult.Ok(frame);
+        }
+    }
+
+    [Fact]
+    public async Task SetPaneSize_refreshes_an_already_visible_pane_without_a_new_Show()
+    {
+        // The bug the owner hit on first launch: the pane box starts at a placeholder (960x1080)
+        // before RankView.Loaded reports the real window size, and the very first pair is decoded
+        // for that placeholder. SetPaneSize used to just record the new size and wait for the next
+        // Show() to notice -- which never comes if the first pair is never replaced on the next
+        // vote's "kept" side, so it stayed soft forever.
+        using var lib = new TempLibrary();
+        lib.TouchMany(["a", "b"]);
+        var decoder = new ResizingFakeDecoder();
+        await using var source = new StillSource(decoder);
+
+        source.SetPaneSize(960, 1080);
+        source.Show(lib.Folder, "a", "b");
+        Assert.True(await WaitUntil(() => source.StateOf("a") is StillState.Ready, TimeSpan.FromSeconds(2)));
+
+        var before = (StillState.Ready)source.StateOf("a");
+        Assert.Equal((960, 720), (before.Lease.Frame.Width, before.Lease.Frame.Height));
+        before.Lease.Dispose();
+        DisposeIfReady(source.StateOf("a"));
+        DisposeIfReady(source.StateOf("b"));
+        Assert.Equal(2, decoder.CallLog.Count);
+
+        // The real window arrives, much bigger than the placeholder -- no new Show() call.
+        source.SetPaneSize(3840, 2160);
+
+        Assert.True(await WaitUntil(() =>
+        {
+            var state = source.StateOf("a");
+            var sharper = state is StillState.Ready ready && ready.Lease.Frame.Width > 960;
+            DisposeIfReady(state);
+            return sharper;
+        }, TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(4, decoder.CallLog.Count); // both ids redecoded once, and only once
+        DisposeIfReady(source.StateOf("a"));
+        DisposeIfReady(source.StateOf("b"));
+    }
+
+    [Fact]
+    public async Task SetPaneSize_to_the_same_size_does_not_redecode()
+    {
+        using var lib = new TempLibrary();
+        lib.TouchMany(["a", "b"]);
+        var decoder = new ResizingFakeDecoder();
+        await using var source = new StillSource(decoder);
+
+        source.SetPaneSize(960, 1080);
+        source.Show(lib.Folder, "a", "b");
+        Assert.True(await WaitUntil(() => source.StateOf("a") is StillState.Ready, TimeSpan.FromSeconds(2)));
+        DisposeIfReady(source.StateOf("a"));
+        DisposeIfReady(source.StateOf("b"));
+        Assert.Equal(2, decoder.CallLog.Count);
+
+        source.SetPaneSize(960, 1080);
+        await Task.Delay(200);
+
+        Assert.Equal(2, decoder.CallLog.Count);
+        DisposeIfReady(source.StateOf("a"));
+        DisposeIfReady(source.StateOf("b"));
+    }
+
     [Fact]
     public async Task Warm_never_runs_while_a_visible_decode_is_pending()
     {

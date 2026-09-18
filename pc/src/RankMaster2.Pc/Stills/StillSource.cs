@@ -42,8 +42,22 @@ public sealed class StillSource : IStillSource
 
         lock (_gate)
         {
+            if (widthPx == _paneW && heightPx == _paneH)
+                return;
+
             _paneW = widthPx;
             _paneH = heightPx;
+
+            // The pane size just changed -- typically the real size replacing the 960x1080
+            // placeholder used before RankView.Loaded fires. Whatever is already on screen may
+            // have been decoded too small for it; recheck now rather than waiting for the next
+            // Show(), which would otherwise leave the very first pair permanently soft whenever
+            // neither side happens to change on the next vote.
+            if (_folder is { } folder && _visible is { } visible)
+            {
+                EnsureFreshLocked(folder, visible.Left, DecodeQueue.VisibleRank);
+                EnsureFreshLocked(folder, visible.Right, DecodeQueue.VisibleRank);
+            }
         }
     }
 

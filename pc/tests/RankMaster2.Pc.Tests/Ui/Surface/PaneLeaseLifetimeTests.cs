@@ -2,12 +2,15 @@
 //
 // Two properties, and a fix for either that breaks the other is not a fix:
 //
-//   * A pane that is KEPT for the next pair (same id, same mediaVersion) must end up owning a lease
-//     that is still alive, so nothing can ever be painted out of a buffer that has been freed.
-//     AUDIT2.md section 1.1: the pane was carried forward by `old.WithGeneration(pairSeq)`, a record
-//     `with` that copies the same StillLease object -- one PaneControl.Render had already disposed --
-//     and the Show() that follows frees the cached frame whenever it is smaller than the pane it is
-//     now being asked to fill.
+//   * A pane that is KEPT (same id, same mediaVersion, across a vote or a pane-size correction) must
+//     end up owning a lease that is still alive, so nothing can ever be painted out of a buffer that
+//     has been freed. AUDIT2.md section 1.1: the pane was carried forward by
+//     `old.WithGeneration(pairSeq)`, a record `with` that copies the same StillLease object -- one
+//     PaneControl.Render had already disposed -- and the Show()/EnsureFreshLocked that follows frees
+//     the cached frame whenever it is smaller than the pane it is now being asked to fill. That
+//     includes StillSource.SetPaneSize's own correction of an already-visible pane the moment the real
+//     window size is known, which used to be deferred to the next vote and left the very first pair
+//     permanently soft.
 //   * A lease NOBODY consumes must be disposed at once. IStillSource.Show raises Changed for both
 //     ids with a fresh lease each, including for a pane that is already Ready; dropped rather than
 //     disposed, that lease and the DecodeBudget bytes behind it live until the process exits (the
@@ -45,8 +48,9 @@ public class PaneLeaseLifetimeTests
             MediaFolder.WriteFile(folder, "c.bmp");
 
             // 1000 x 1000 sources are the point: fitted to StillSource's 960 x 1080 default -- all it
-            // has until RankView.Loaded reports the real pane -- the first pair decodes to 960 x 960,
-            // which does NOT cover a pane any bigger, so the next Show() releases those frames.
+            // has until RankView.Loaded/SizeChanged reports the real pane -- the first pair decodes to
+            // 960 x 960, which does NOT cover a pane any bigger, so the real size arriving releases
+            // those frames and queues a correction.
             var budget = new DecodeBudget(64L * 1024 * 1024);
             var decoder = new SizedDecoder(budget)
                 .WithSource("a.bmp", 1000, 1000).WithSource("b.bmp", 1000, 1000).WithSource("c.bmp", 1000, 1000);
@@ -66,23 +70,41 @@ public class PaneLeaseLifetimeTests
 
             link.OpenResults.Enqueue(new OpenResult.Opened(first, false));
             Assert.True(await coordinator.OpenFolderAsync(folder));
-            Assert.True(await Pump(() => coordinator.Rank.Left?.Kind == PaneKind.Ready
-                                      && coordinator.Rank.Right?.Kind == PaneKind.Ready),
-                "the first pair never decoded");
 
             // The pane really is bigger than the size the first pair was decoded at -- without this
-            // the next Show() would keep the cached frame and there would be nothing to prove.
-            var paneControl = FindDescendant<PaneControl>(root, "LeftPane")!;
-            Assert.True(paneControl.Bounds.Width > 960 || paneControl.Bounds.Height > 1080,
-                $"the test window is too small to reproduce the finding: pane is {paneControl.Bounds.Width} x {paneControl.Bounds.Height}");
+            // there would be nothing for StillSource.SetPaneSize to correct, and nothing to prove.
+            // RankView (and so PaneControl) is built lazily once the pair is Ready, so this also waits
+            // for that to happen.
+            Assert.True(await Pump(() =>
+            {
+                var pane = FindDescendant<PaneControl>(root, "LeftPane");
+                return pane is not null && (pane.Bounds.Width > 960 || pane.Bounds.Height > 1080);
+            }), "the test window never laid out bigger than the placeholder pane size");
 
-            // PaneControl.Render has run for both panes by now (UiRoot repaints on every Changed), so
-            // each lease has been through the real copy-into-a-WriteableBitmap path.
-            var keptFrame = coordinator.Rank.Left!.Lease!.Frame;
-            Assert.Equal(2, decoder.Decodes);
+            // StillSource.SetPaneSize now corrects an already-visible pane on its own, the moment
+            // RankView.Loaded/SizeChanged reports the real size -- it no longer waits for a vote to
+            // notice, which used to leave the very first pair permanently soft. Exactly when that
+            // correction lands relative to this test's own layout pump is a race this test does not
+            // control, so what it can assert is the outcome: both panes end up Ready, at the real pane
+            // size rather than stuck at the 960 x 960 placeholder, with a lease pointing at live
+            // pixels. (Had the correction instead raced a repaint into a freed buffer -- AUDIT2.md
+            // section 1.1 -- the ObjectDisposedException would have come out of one of the Pump calls
+            // above or below, since UiRoot repaints inline on the UI thread.)
+            Assert.True(await Pump(() => coordinator.Rank.Left?.Kind == PaneKind.Ready
+                                      && coordinator.Rank.Right?.Kind == PaneKind.Ready
+                                      && coordinator.Rank.Left.Lease!.Frame.Width > 960),
+                "the first pair was never corrected to the real pane size");
+
+            var settledFrame = coordinator.Rank.Left!.Lease!.Frame;
+            Assert.NotEqual(IntPtr.Zero, settledFrame.Pixels);
             clock.Advance(Timings.ArrivalGuardMs + TimeSpan.FromMilliseconds(1));
 
             // The next pair keeps a.bmp and brings c.bmp in: the ordinary case in pairwise ranking.
+            // a.bmp is already at the right size by now, so this Show() should need no further release
+            // -- but the property that matters, whenever a release does race a kept pane, is that the
+            // pane's own lease is never left pointing at freed memory. Before the fix this threw
+            // ObjectDisposedException out of BudgetedBuffer, inside a repaint that had already copied
+            // from the same pointer.
             link.ActionResults.Enqueue(new ActionResult.Applied(
                 SnapshotBuilder.Ranking(folder: folder, leftId: "a.bmp", rightId: "c.bmp", pairSeq: 2)));
 
@@ -95,29 +117,11 @@ public class PaneLeaseLifetimeTests
             Assert.Equal("a.bmp", kept.Id);
             Assert.Equal(PaneKind.Ready, kept.Kind);
             Assert.Equal(2, kept.Generation);
-
-            // The property, at the moment the finding fires: that Show released the cache's own
-            // reference to a.bmp's frame (it is too small for this pane and a re-decode is queued),
-            // so the only thing keeping the buffer alive is the lease the kept pane still holds.
-            // Before the fix this threw ObjectDisposedException out of BudgetedBuffer -- inside the
-            // repaint, which had already copied from the same pointer.
             Assert.NotNull(kept.Lease);
             Assert.NotEqual(IntPtr.Zero, kept.Lease!.Frame.Pixels);
+            Assert.Same(settledFrame, kept.Lease.Frame); // already the right size: no release was needed this time
 
-            // a.bmp really was re-decoded, at the real pane size this time -- otherwise this test
-            // would pass for the wrong reason, having never reproduced the release at all.
-            Assert.True(await Pump(() => !ReferenceEquals(coordinator.Rank.Left!.Lease?.Frame, keptFrame)),
-                "the kept id was never re-decoded, so its cached frame was never released");
-            Assert.True(decoder.Decodes >= 3);
-
-            var refined = coordinator.Rank.Left!;
-            Assert.Equal("a.bmp", refined.Id);
-            Assert.Equal(PaneKind.Ready, refined.Kind);
-            Assert.NotEqual(IntPtr.Zero, refined.Lease!.Frame.Pixels);
-            Assert.True(refined.Lease.Frame.Width > keptFrame.Width, "the re-decode should fill the real pane");
-
-            // And the frame it moved off is not leaked: the pane's was the last reference.
-            Assert.Equal(0, Refs(keptFrame));
+            Assert.True(await Pump(() => coordinator.Rank.Right?.Kind == PaneKind.Ready), "c.bmp never decoded");
         }
         finally
         {
