@@ -62,4 +62,8 @@
   <SolidColorBrush x:Key="ErrorBoxFill">#1AEF4444</SolidColorBrush>
   <SolidColorBrush x:Key="ErrorBoxBorder">#80EF4444</SolidColorBrush>
   <SolidColorBrush x:Key="ErrorBoxText">#F87171</SolidColorBrush>
+
+  <SolidColorBrush x:Key="SuccessBoxFill">#1A10B981</SolidColorBrush>
+  <SolidColorBrush x:Key="SuccessBoxBorder">#8010B981</SolidColorBrush>
+  <SolidColorBrush x:Key="SuccessBoxText">#34D399</SolidColorBrush>
 </ResourceDictionary>

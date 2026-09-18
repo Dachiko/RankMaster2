@@ -15,10 +15,15 @@ public sealed class StartModel
     public bool Opening { get; private set; }
     public string? OpeningFolder { get; private set; }
 
-    /// <summary>The red box: an open refusal, or the exhausted sentence. Null when there is nothing
-    /// to say (plan's rule: say something only when he can fix it, or when it is the loudest signal
-    /// of what just happened).</summary>
+    /// <summary>The box's text: an open refusal, the exhausted sentence, or a rename's terminal
+    /// sentence. Null when there is nothing to say (plan's rule: say something only when he can fix
+    /// it, or when it is the loudest signal of what just happened).</summary>
     public string? BoxText { get; private set; }
+
+    /// <summary>Whether <see cref="BoxText"/> is bad news. Everything that sends the owner back to
+    /// this screen used to share one red box regardless of what happened -- including a rename that
+    /// finished exactly as asked, which is not an error and must not read as one.</summary>
+    public bool BoxIsError { get; private set; } = true;
 
     /// <summary>True only while the session that just became exhausted is still open behind this
     /// screen, so <c>Ctrl+Z</c> here can call the link (plan § 4.1, § 3.4).</summary>
@@ -65,14 +70,17 @@ public sealed class StartModel
         OpeningFolder = null;
     }
 
-    /// <summary>The red box's text: an open refusal, a mid-session fatal failure that sent the
-    /// screen back here, or the "server closed the folder" sentence. Same box, same rules
-    /// (plan § 3.5): shown only when it is the owner's to fix or the loudest signal of what happened.</summary>
-    public void ShowMessage(string text)
+    /// <summary>The box's text: an open refusal, a mid-session fatal failure that sent the screen
+    /// back here, the "server closed the folder" sentence, or a rename's terminal sentence. Same
+    /// box, same rules (plan § 3.5): shown only when it is the owner's to fix or the loudest signal
+    /// of what happened. <paramref name="isError"/> defaults to true because that is what every
+    /// caller except a successful rename means.</summary>
+    public void ShowMessage(string text, bool isError = true)
     {
         Opening = false;
         OpeningFolder = null;
         BoxText = text;
+        BoxIsError = isError;
         ExhaustedSessionOpen = false;
     }
 
@@ -85,12 +93,14 @@ public sealed class StartModel
         BoxText = undoAvailable
             ? $"No pair left to compare in {folder}. `Ctrl+Z` takes back the last one."
             : $"No pair left to compare in {folder}.";
+        BoxIsError = true;
         ExhaustedSessionOpen = true;
     }
 
     public void ClearBox()
     {
         BoxText = null;
+        BoxIsError = true;
         ExhaustedSessionOpen = false;
     }
 }

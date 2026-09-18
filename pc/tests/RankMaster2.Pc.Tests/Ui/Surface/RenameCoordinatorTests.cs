@@ -33,6 +33,30 @@ public class RenameCoordinatorTests
 
     // ---- confirm stage ---------------------------------------------------------------------------
 
+    /// <summary>
+    /// The owner's report: after renaming, "Open folder" does nothing. StartView's rename-picker
+    /// flow calls BeginDialog() while Screen is still Start (setting Start.DialogOpen), then
+    /// BeginRenameConfirm() switches Screen to Rename, then its `finally` calls EndDialog() -- which
+    /// used to read Screen fresh and so cleared Rank.DialogOpen instead, leaving Start.DialogOpen
+    /// stuck true and every later "Open folder" click a silent no-op via that guard.
+    /// </summary>
+    [Fact]
+    public void EndDialog_clears_the_flag_BeginDialog_set_even_if_the_screen_changed_in_between()
+    {
+        var (c, _, _) = Build();
+
+        c.BeginDialog(); // as StartView.RenameViaPicker does, while still on the Start screen
+        Assert.True(c.Start.DialogOpen);
+
+        c.BeginRenameConfirm("/lib/photos"); // the folder picker returned a folder: screen moves on
+        Assert.Equal(AppScreen.Rename, c.Screen);
+
+        c.EndDialog(); // StartView's `finally`, now running with Screen == Rename
+
+        Assert.False(c.Start.DialogOpen, "Start.DialogOpen must not be left stuck true");
+        Assert.False(c.Rank.DialogOpen);
+    }
+
     [Fact]
     public void BeginRenameConfirm_moves_to_the_rename_screen_without_calling_the_link()
     {
@@ -137,6 +161,7 @@ public class RenameCoordinatorTests
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.Contains("Renamed 6 file", c.Start.BoxText);
+        Assert.False(c.Start.BoxIsError);
         Assert.Equal(1, link.CallCount(nameof(link.CloseAsync)));
     }
 
@@ -163,6 +188,7 @@ public class RenameCoordinatorTests
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.Contains("Renamed 6 file", c.Start.BoxText);
+        Assert.False(c.Start.BoxIsError);
 
         // No further polling once the screen has already moved on.
         c.Tick();
@@ -260,9 +286,9 @@ public class RenameCoordinatorTests
     // ---- every terminus (§ 3.13 item 2) --------------------------------------------------------
 
     [Theory]
-    [InlineData("succeeded", "Renamed")]
-    [InlineData("cancelled", "cancelled")]
-    public async Task Terminal_states_show_one_line_and_return_to_start(string state, string expectedSubstring)
+    [InlineData("succeeded", "Renamed", false)]
+    [InlineData("cancelled", "cancelled", true)]
+    public async Task Terminal_states_show_one_line_and_return_to_start(string state, string expectedSubstring, bool expectedIsError)
     {
         var snapshot = SnapshotBuilder.Ranking(folder: "/lib/photos");
         var (c, link, _) = Build(snapshot);
@@ -276,6 +302,9 @@ public class RenameCoordinatorTests
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.Contains(expectedSubstring, c.Start.BoxText);
+        // A rename that finished exactly as asked is not bad news and must not paint the red box
+        // (the owner's report: "Success can't be red"). Cancelled/failed still do.
+        Assert.Equal(expectedIsError, c.Start.BoxIsError);
     }
 
     [Fact]
@@ -294,6 +323,7 @@ public class RenameCoordinatorTests
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.Contains("nothing was renamed", c.Start.BoxText);
+        Assert.True(c.Start.BoxIsError);
     }
 
     [Fact]
@@ -313,6 +343,7 @@ public class RenameCoordinatorTests
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.Contains("/lib/photos/.rankmaster-rename.json", c.Start.BoxText);
         Assert.Contains("retry", c.Start.BoxText);
+        Assert.True(c.Start.BoxIsError);
     }
 
     // ---- transient poll failures do not abandon the bar (§ 3.5's "say nothing on a hiccup") ------

@@ -7,8 +7,9 @@ namespace RankMaster2.Pc.Ui.Views;
 
 /// <summary>
 /// The start screen (plan § 4.1): Open, Resume (focused when shown), the link status line, the red
-/// box for open refusals and the exhausted sentence. Resume never auto-starts -- it is a button
-/// like any other, just already focused so <c>Enter</c> takes it.
+/// box for open refusals and the exhausted sentence, and the green box for a rename that finished
+/// as asked. Resume never auto-starts -- it is a button like any other, just already focused so
+/// <c>Enter</c> takes it.
 /// </summary>
 public partial class StartView : UserControl, IRefreshable
 {
@@ -20,6 +21,8 @@ public partial class StartView : UserControl, IRefreshable
     private readonly TextBlock _openingLine;
     private readonly Border _errorBox;
     private readonly TextBlock _errorText;
+    private readonly Border _successBox;
+    private readonly TextBlock _successText;
     private readonly TextBlock _statusLine;
     private readonly Border _helpButton;
     private readonly HelpSheet _help;
@@ -38,6 +41,8 @@ public partial class StartView : UserControl, IRefreshable
         _openingLine = this.FindControl<TextBlock>("OpeningLine")!;
         _errorBox = this.FindControl<Border>("ErrorBox")!;
         _errorText = this.FindControl<TextBlock>("ErrorText")!;
+        _successBox = this.FindControl<Border>("SuccessBox")!;
+        _successText = this.FindControl<TextBlock>("SuccessText")!;
         _statusLine = this.FindControl<TextBlock>("StatusLine")!;
         _helpButton = this.FindControl<Border>("HelpButton")!;
         _help = this.FindControl<HelpSheet>("Help")!;
@@ -121,8 +126,11 @@ public partial class StartView : UserControl, IRefreshable
         _openingLine.IsVisible = start.Opening;
         _openingLine.Text = start.Opening ? $"Opening {start.OpeningFolder}…" : "";
 
-        _errorBox.IsVisible = !string.IsNullOrEmpty(start.BoxText);
-        _errorText.Text = start.BoxText ?? "";
+        var hasBox = !string.IsNullOrEmpty(start.BoxText);
+        _errorBox.IsVisible = hasBox && start.BoxIsError;
+        _errorText.Text = start.BoxIsError ? start.BoxText ?? "" : "";
+        _successBox.IsVisible = hasBox && !start.BoxIsError;
+        _successText.Text = start.BoxIsError ? "" : start.BoxText ?? "";
 
         var status = _coordinator.LinkStatusLine;
         _statusLine.IsVisible = !string.IsNullOrEmpty(status);

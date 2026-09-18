@@ -44,6 +44,11 @@
         <TextBlock Name="ErrorText" Foreground="{DynamicResource ErrorBoxText}" FontSize="13" TextWrapping="Wrap" />
       </Border>
 
+      <Border Name="SuccessBox" Background="{DynamicResource SuccessBoxFill}" BorderBrush="{DynamicResource SuccessBoxBorder}" BorderThickness="1"
+              CornerRadius="8" Padding="16" IsVisible="False">
+        <TextBlock Name="SuccessText" Foreground="{DynamicResource SuccessBoxText}" FontSize="13" TextWrapping="Wrap" />
+      </Border>
+
       <TextBlock Name="StatusLine" Foreground="{DynamicResource VersionText}" HorizontalAlignment="Center" FontSize="12" IsVisible="False" />
     </StackPanel>
 

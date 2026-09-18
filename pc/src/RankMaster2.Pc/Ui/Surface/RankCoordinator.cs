@@ -138,15 +138,25 @@ public sealed class RankCoordinator
 
     // ---- start screen ----------------------------------------------------------------------------
 
+    // Which screen's flag BeginDialog set, so EndDialog clears that same one even if the screen
+    // changed while the dialog was open -- exactly what RenameViaPicker does: it begins on Start,
+    // then BeginRenameConfirm switches to Rename before the picker's `finally` runs EndDialog. Read
+    // Screen fresh at both ends used to clear Rank.DialogOpen there, leaving Start.DialogOpen stuck
+    // true forever and every later "Open folder" click a silent no-op.
+    private AppScreen? _dialogScreen;
+
     public void BeginDialog()
     {
+        _dialogScreen = Screen;
         if (Screen == AppScreen.Start) Start.DialogOpen = true; else Rank.DialogOpen = true;
         RaiseChanged();
     }
 
     public void EndDialog()
     {
-        if (Screen == AppScreen.Start) Start.DialogOpen = false; else Rank.DialogOpen = false;
+        var screen = _dialogScreen ?? Screen;
+        _dialogScreen = null;
+        if (screen == AppScreen.Start) Start.DialogOpen = false; else Rank.DialogOpen = false;
         RaiseChanged();
     }
 
@@ -350,13 +360,13 @@ public sealed class RankCoordinator
     {
         var message = Notices.ForRenameTerminal(operation, Rename.Folder);
         _ = _link.CloseAsync();
-        ReturnToStartWithMessage(message);
+        ReturnToStartWithMessage(message, isError: operation.State != "succeeded");
     }
 
-    private void ReturnToStartWithMessage(string message)
+    private void ReturnToStartWithMessage(string message, bool isError = true)
     {
         Screen = AppScreen.Start;
-        Start.ShowMessage(message);
+        Start.ShowMessage(message, isError);
         RaiseChanged();
     }
 
