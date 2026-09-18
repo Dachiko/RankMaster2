@@ -1,4 +1,3 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Markup.Xaml;
@@ -34,9 +33,15 @@ public partial class MatchStrip : UserControl
             {
                 Width = 12,
                 Height = 12,
+                // Theme.axaml is merged into UiRoot's own Resources (Ui/Views/UiRoot.axaml), not the
+                // Application's -- Application.Current.FindResource looks only at the latter and
+                // returns AvaloniaProperty.UnsetValue for a key it never has, crashing this cast the
+                // moment the strip first has a cue to draw. this.FindResource walks the logical tree
+                // from this control upward, the same resolution {DynamicResource ...} bindings use in
+                // XAML, and reaches UiRoot's merged dictionary correctly.
                 Fill = cue == "upset"
-                    ? (IBrush)Application.Current!.FindResource("StripUpset")!
-                    : (IBrush)Application.Current!.FindResource("StripConfirmation")!,
+                    ? (IBrush)this.FindResource("StripUpset")!
+                    : (IBrush)this.FindResource("StripConfirmation")!,
             });
         }
         _lastCount = cues.Count;
