@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 # A-startup-and-shell.md § 4.5. The owner's one line:
 #   irm https://bormin.fintebtc.de/rm2/install.ps1 | iex
-# Downloads the latest client, swaps it into C:\Utils\rank-master-2\pc, builds the libvlc plugin
+# Downloads the latest client, swaps it into C:\Utils\RankMaster v3\pc, builds the libvlc plugin
 # index (§ 4.3), then measures the result and puts the report block on the clipboard.
 #
-# Never touches C:\Utils\rank-master-2\RankMaster2.exe (the old app), libvlc\ at the root, tray\,
-# server\, or %LOCALAPPDATA%\RankMaster2\server.
+# Never touches C:\Utils\rank-master-2 (the frozen Rank Master 2 app), or
+# %LOCALAPPDATA%\RankMaster2\server.
 [CmdletBinding()]
 param(
     [switch]$NoMeasure,
@@ -18,7 +18,7 @@ function Say([string]$msg) { Write-Host $msg }
 function Warn([string]$msg) { Write-Host $msg -ForegroundColor Red }
 
 # ---------------------------------------------------------------- step 1: paths
-$root = "C:\Utils\rank-master-2"
+$root = "C:\Utils\RankMaster v3"
 $dst = Join-Path $root "pc"
 $tmp = Join-Path $env:TEMP "rm2pc"
 Say "install.ps1: target $dst"

@@ -30,12 +30,13 @@ The .NET 8 SDK only to build.
 From the repository folder:
 
 ```powershell
-.\publish-tray.ps1      # -> ..\tray\   (tray + console host together)
-.\publish-server.ps1    # -> ..\server\ (console host only)
+.\publish-tray.ps1      # -> C:\Utils\RankMaster v3\tray\   (tray + console host together)
+.\publish-server.ps1    # -> C:\Utils\RankMaster v3\server\ (console host only)
 ```
 
-Both write **one level above** the repository, so a rebuild never lands inside the source tree.
-`.\publish-tray.ps1` is the one you want; it ships the console host alongside.
+Both write into **Rank Master 3's install folder**, not the frozen Rank Master 2 tree
+(`C:\Utils\rank-master-2`). `.\publish-tray.ps1` is the one you want; it ships the console host
+alongside.
 
 Both scripts fail loudly if `libSkiaSharp.dll` is missing from the output. It is the native image
 decoder and must sit next to the exe — the same arrangement as `libvlc\` for the desktop app.

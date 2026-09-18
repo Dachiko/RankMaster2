@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$out = Join-Path (Split-Path $root -Parent) "server"
+# Rank Master 3 ships beside the frozen Rank Master 2 tree, not inside it.
+$out = Join-Path "C:\Utils\RankMaster v3" "server"
+New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
 
 dotnet publish "$root\src\RankMaster2.Server\RankMaster2.Server.csproj" `
   -c Release -r win-x64 --self-contained `
