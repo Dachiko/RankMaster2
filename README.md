@@ -114,7 +114,9 @@ go on using it. Proven by `ConnectTests.C4_ServerNotRunningStartAllowed`, which 
 asserts the client brought it back.
 
 **The PC client** — `pc/`. Built and published from `pc/publish.sh` / `pc/install.ps1`; see
-[PC_CLIENT_PLAN.md](PC_CLIENT_PLAN.md). This is what replaces the old desktop app.
+[PC_CLIENT_PLAN.md](PC_CLIENT_PLAN.md). Installed at `C:\Utils\RankMaster v3\pc\RankMaster2.exe`.
+This is what replaces the old desktop app. The frozen Rank Master 2 stays at
+`C:\Utils\rank-master-2\RankMaster2.exe`.
 
 **The server** — it normally needs no attention, because the client starts it. Building, configuring
 and troubleshooting it is [SERVER_RUNNING.md](SERVER_RUNNING.md). It runs behind the notification-area

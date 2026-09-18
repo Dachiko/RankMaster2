@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$out = Join-Path (Split-Path $root -Parent) "tray"
+# Rank Master 3 ships beside the frozen Rank Master 2 tree, not inside it.
+$out = Join-Path "C:\Utils\RankMaster v3" "tray"
+New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
 
 # Ships both hosts: RankMaster2.Tray.exe is the notification-area one and is what you run;
 # RankMaster2.Server.exe comes along as the console host, which is the one to start when you
