@@ -1,25 +1,32 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="RankMaster2.Pc.Ui.Views.InfoCard"
-             Focusable="False" Width="256" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16">
+             Focusable="False" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16">
   <Border Background="{DynamicResource InfoCardFill}" BorderBrush="{DynamicResource InfoCardBorder}"
-          BorderThickness="1" CornerRadius="8" Padding="12">
-    <StackPanel Spacing="4">
-      <TextBlock Name="FolderLabel" Text="FOLDER" FontSize="10" Foreground="{DynamicResource CardLabel}" />
-      <TextBlock Name="FolderText" FontSize="12" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
+          BorderThickness="1" CornerRadius="8" Padding="10,6">
+    <StackPanel Orientation="Horizontal" Spacing="14">
+      <TextBlock Name="FolderText" FontSize="11" FontWeight="Light" Foreground="White"
+                 TextTrimming="CharacterEllipsis" MaxWidth="140" VerticalAlignment="Center" />
 
-      <TextBlock Text="CONFIDENCE" FontSize="10" Foreground="{DynamicResource CardLabel}" Margin="0,6,0,0" />
-      <TextBlock Name="ConfidenceText" FontFamily="Consolas,monospace" FontSize="12" Foreground="{DynamicResource CardConfidence}" />
-      <Border Height="6" Background="{DynamicResource CardBarTrack}" CornerRadius="3" Width="232" HorizontalAlignment="Left">
-        <Border Name="ConfidenceBar" Height="6" Background="{DynamicResource CardBarFill}" CornerRadius="3"
-                HorizontalAlignment="Left" Width="0" />
-      </Border>
+      <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+        <TextBlock Text="CONF" FontSize="9" FontWeight="Light" Foreground="{DynamicResource CardLabel}" VerticalAlignment="Center" />
+        <TextBlock Name="ConfidenceText" FontFamily="Consolas,monospace" FontSize="11" FontWeight="Light"
+                   Foreground="{DynamicResource CardConfidence}" VerticalAlignment="Center" />
+        <Border Height="4" Width="48" Background="{DynamicResource CardBarTrack}" CornerRadius="2" VerticalAlignment="Center">
+          <Border Name="ConfidenceBar" Height="4" Background="{DynamicResource CardBarFill}" CornerRadius="2"
+                  HorizontalAlignment="Left" Width="0" />
+        </Border>
+      </StackPanel>
 
-      <TextBlock Text="UNRANKED" FontSize="10" Foreground="{DynamicResource CardLabel}" Margin="0,6,0,0" />
-      <TextBlock Name="UnrankedText" FontSize="14" Foreground="{DynamicResource CardUnranked}" />
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+        <TextBlock Text="UNRANKED" FontSize="9" FontWeight="Light" Foreground="{DynamicResource CardLabel}" VerticalAlignment="Center" />
+        <TextBlock Name="UnrankedText" FontSize="11" FontWeight="Light" Foreground="{DynamicResource CardUnranked}" VerticalAlignment="Center" />
+      </StackPanel>
 
-      <TextBlock Text="SESSION" FontSize="10" Foreground="{DynamicResource CardLabel}" Margin="0,6,0,0" />
-      <TextBlock Name="SessionText" FontSize="14" Foreground="{DynamicResource CardSession}" />
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+        <TextBlock Text="SESSION" FontSize="9" FontWeight="Light" Foreground="{DynamicResource CardLabel}" VerticalAlignment="Center" />
+        <TextBlock Name="SessionText" FontSize="11" FontWeight="Light" Foreground="{DynamicResource CardSession}" VerticalAlignment="Center" />
+      </StackPanel>
     </StackPanel>
   </Border>
 </UserControl>

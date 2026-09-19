@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Markup.Xaml;
@@ -13,7 +14,13 @@ namespace RankMaster2.Pc.Ui.Views;
 public partial class MatchStrip : UserControl
 {
     private readonly StackPanel _balls;
-    private int _lastCount;
+
+    // A snapshot of the last cues actually drawn, so a real content change can be told from a
+    // no-op repaint. The strip caps at 10 (SPEC.md), so once a session has 10 votes its Count never
+    // changes again -- comparing only Count (as this used to) meant every vote past the tenth
+    // silently stopped updating the balls, even though which ones are confirmations vs upsets keeps
+    // shifting as the oldest one drops off the front.
+    private IReadOnlyList<string> _lastCues = [];
 
     public MatchStrip()
     {
@@ -24,7 +31,7 @@ public partial class MatchStrip : UserControl
     public void Render(IReadOnlyList<string> cues)
     {
         IsVisible = cues.Count > 0;
-        if (cues.Count == _lastCount && cues.Count == _balls.Children.Count) return;
+        if (cues.SequenceEqual(_lastCues)) return;
 
         _balls.Children.Clear();
         foreach (var cue in cues)
@@ -44,6 +51,6 @@ public partial class MatchStrip : UserControl
                     : (IBrush)this.FindResource("StripConfirmation")!,
             });
         }
-        _lastCount = cues.Count;
+        _lastCues = cues.ToArray(); // snapshot: the caller's list may be reused/mutated after this returns
     }
 }

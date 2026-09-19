@@ -36,8 +36,8 @@
   <SolidColorBrush x:Key="HelpSheetFill">#CC000000</SolidColorBrush>
   <SolidColorBrush x:Key="HelpSheetLabel">#9CA3AF</SolidColorBrush>
 
-  <SolidColorBrush x:Key="StripConfirmation">#B310B981</SolidColorBrush>
-  <SolidColorBrush x:Key="StripUpset">#B3F59E0B</SolidColorBrush>
+  <SolidColorBrush x:Key="StripConfirmation">#6610B981</SolidColorBrush>
+  <SolidColorBrush x:Key="StripUpset">#66F59E0B</SolidColorBrush>
   <SolidColorBrush x:Key="StripFill">#66000000</SolidColorBrush>
   <SolidColorBrush x:Key="StripBorder">#0DFFFFFF</SolidColorBrush>
 

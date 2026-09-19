@@ -7,21 +7,25 @@
       <Button Name="DiscardLeftButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
               Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
               Content="[1]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
-              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+              ToolTip.Tip="Discard the left photo — moves it to discarded/" />
       <Button Name="SpecialLeftButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
               Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
               Content="[4]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
-              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+              ToolTip.Tip="Mark the left photo special — moves it to special 1/" />
     </StackPanel>
     <StackPanel Orientation="Horizontal" Spacing="12">
       <Button Name="SpecialRightButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
               Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
               Content="[5]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
-              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+              ToolTip.Tip="Mark the right photo special — moves it to special 1/" />
       <Button Name="DiscardRightButton" Focusable="False" Width="48" Height="48" CornerRadius="24"
               Background="{DynamicResource ActionBarFill}" BorderBrush="{DynamicResource ActionBarBorder}" BorderThickness="1"
               Content="[2]" FontFamily="Consolas,monospace" FontWeight="Bold" FontSize="11"
-              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+              Foreground="{DynamicResource ActionBarCaption}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+              ToolTip.Tip="Discard the right photo — moves it to discarded/" />
     </StackPanel>
   </StackPanel>
 </UserControl>

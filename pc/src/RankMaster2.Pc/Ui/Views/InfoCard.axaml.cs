@@ -8,6 +8,9 @@ namespace RankMaster2.Pc.Ui.Views;
 /// progress figure on this screen -- "a quiet percent only", no tier name, no hairline.</summary>
 public partial class InfoCard : UserControl
 {
+    // Matches the confidence track's Width in InfoCard.axaml -- keep the two in step.
+    private const double ConfidenceBarMaxWidth = 48;
+
     private readonly TextBlock _folderText;
     private readonly TextBlock _confidenceText;
     private readonly Border _confidenceBar;
@@ -28,7 +31,7 @@ public partial class InfoCard : UserControl
     {
         _folderText.Text = snapshot.FolderName;
         _confidenceText.Text = $"{snapshot.ProgressPercent}%";
-        _confidenceBar.Width = 232 * (snapshot.ProgressPercent / 100.0);
+        _confidenceBar.Width = ConfidenceBarMaxWidth * (snapshot.ProgressPercent / 100.0);
         _unrankedText.Text = snapshot.Counts.Unranked.ToString();
         _sessionText.Text = snapshot.SessionVotes.ToString();
     }
