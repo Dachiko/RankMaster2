@@ -28,8 +28,8 @@
                FontSize="14" Foreground="{DynamicResource PaneSentenceText}" TextWrapping="Wrap"
                TextAlignment="Center" MaxWidth="480" IsVisible="False" />
 
-    <!-- Filename, dim (plan § 1.2). Left pane: top-left after the card. Right pane: top-right. -->
+    <!-- Filename, dim (plan § 1.2). Left pane: bottom-left. Right pane: bottom-right. -->
     <TextBlock Name="Filename" FontSize="11" Foreground="{DynamicResource FilenameText}"
-               VerticalAlignment="Top" Margin="0,18,0,0" />
+               VerticalAlignment="Bottom" Margin="0,0,0,18" />
   </Grid>
 </UserControl>

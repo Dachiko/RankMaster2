@@ -74,15 +74,17 @@ public partial class PaneControl : UserControl
         }
 
         _filename.Text = pane.Id;
+        // Bottom corners: nothing else sits there (InfoCard/Help are top, the match strip and the
+        // toast are bottom-CENTER), so both sides just clear the pane's own edge by the same amount.
         if (side == Side.Left)
         {
             _filename.HorizontalAlignment = HorizontalAlignment.Left;
-            _filename.Margin = new Thickness(280, 18, 0, 0);
+            _filename.Margin = new Thickness(24, 0, 0, 18);
         }
         else
         {
             _filename.HorizontalAlignment = HorizontalAlignment.Right;
-            _filename.Margin = new Thickness(0, 18, 64, 0);
+            _filename.Margin = new Thickness(0, 0, 24, 18);
         }
 
         var showsSentence = pane.Kind is PaneKind.Gone or PaneKind.Undecodable or PaneKind.NoVideoEngine;

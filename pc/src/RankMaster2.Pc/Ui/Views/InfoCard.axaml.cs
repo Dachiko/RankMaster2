@@ -9,7 +9,7 @@ namespace RankMaster2.Pc.Ui.Views;
 public partial class InfoCard : UserControl
 {
     // Matches the confidence track's Width in InfoCard.axaml -- keep the two in step.
-    private const double ConfidenceBarMaxWidth = 48;
+    private const double ConfidenceBarMaxWidth = 60;
 
     private readonly TextBlock _folderText;
     private readonly TextBlock _confidenceText;

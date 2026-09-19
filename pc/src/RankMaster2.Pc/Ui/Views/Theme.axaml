@@ -27,7 +27,7 @@
   <SolidColorBrush x:Key="CardUnranked">#FB923C</SolidColorBrush>
   <SolidColorBrush x:Key="CardSession">#93C5FD</SolidColorBrush>
 
-  <SolidColorBrush x:Key="FilenameText">#66FFFFFF</SolidColorBrush>
+  <SolidColorBrush x:Key="FilenameText">#40FFFFFF</SolidColorBrush>
 
   <SolidColorBrush x:Key="ActionBarFill">#66000000</SolidColorBrush>
   <SolidColorBrush x:Key="ActionBarBorder">#1AFFFFFF</SolidColorBrush>
