@@ -4,6 +4,20 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## 3.3.0 — 2026-10-04 (PC client + tray; phone unchanged)
+- House style (`pc/plans/H-house-style.md`, version C "Quiet"; the compare screen is untouched).
+- PC start screen: paper, no gradient; the last folder fills the screen in dot-matrix with
+  `ENTER RESUME · O OPEN · R RENAME` under it; server lamp and `F1 KEYS` in the corner; one short
+  status line. New key **R** = rename by rank; ←/→ move between the captions.
+- Rename: the question and the progress are a dark card over the start screen; progress is a
+  percent with a row of red dots, never "done / total". Shorter result and error sentences.
+- F1 on the start screen opens a keys page (the compare screen keeps its own sheet).
+- Motion: cards fade, the folder name and status line decode in at the owner's action.
+- Tray: two-pane icon (left pane red while a folder is open), menu = Show QR and Exit only, a single
+  click shows the QR. The pairing window is a borderless card with only the QR, renewed before it
+  expires, closing itself once a phone pairs. No six-digit code, no warnings, no balloons.
+- App and tray executables use the two-pane icon.
+
 ## Phone 3.2.4 — 2026-10-04 (phone only) — the release
 - Mike confirmed Review on his phone with 3.2.3 (videos show). The debug panel and the video
   diagnostics from 3.2.2–3.2.3 are removed; the TextureView fix stays. Release build (R8) checked

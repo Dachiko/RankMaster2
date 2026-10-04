@@ -142,12 +142,15 @@ Start `RankMaster2.Tray.exe`. On a fresh install it:
    you configured,
 3. opens a pairing window automatically, because no phone is enrolled yet.
 
-The icon's menu shows the address it is listening on and, once you open a folder from the phone,
-which folder that is.
+The icon is two panes; the left one turns red while a folder is open. Its menu has two items:
+**Show QR** and **Exit** (since 3.3.0 it no longer shows the address, the folder, warnings or
+balloons; the bound address and certificate fingerprint are in `logs\server-*.log`).
 
-**Pair the phone:** double-click the icon, or menu → **Show pairing QR…**. The window shows a QR code
-and the same credential as six digits. Scan it. The code lasts five minutes, works once, and dies
-after five wrong guesses; **New code** replaces it.
+**Pair the phone:** click the icon (or menu → **Show QR**). A card shows only the QR code; scan it.
+Each code still lasts five minutes on the server and works once, but the card fetches a fresh one
+about ten seconds before the current one runs out, so the QR on screen always works. The card
+closes by itself once a phone pairs; Esc closes it, drag moves it. No six-digit code is shown on
+the PC any more (the phone's "type the code" path stays, unused).
 
 That is the whole setup. From here the phone opens folders, ranks, and the PC screen can stay off.
 
@@ -166,7 +169,7 @@ dotnet run --project src\rm2ctl -- cycle --folder "D:\Photos\Trip"
 
 With no `--pin`, `rm2ctl` accepts the self-signed certificate and prints its fingerprint. Pass
 `--pin sha256:…` to make it behave like the phone and refuse anything else. `pair --take` needs a
-pairing window to be open — the tray's **Show pairing QR…** opens one.
+pairing window to be open — the tray's **Show QR** opens one.
 
 `cycle` drives the entire ranking cycle — open, fetch, vote, skip, discard, special, undo, save,
 close — and then every refusal the contract specifies, checking each answer. It exits non-zero if
@@ -256,14 +259,14 @@ other, not both. Either one alone is completely safe.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Phone cannot reach the server at all | still listening on `127.0.0.1` | § 3. Check the icon's menu — it shows the bound address |
+| Phone cannot reach the server at all | still listening on `127.0.0.1` | § 3. The bound address is in `logs\server-*.log` |
 | …and the address is right | firewall, or the network is marked Public | § 4 |
 | …and both are right | phone is on guest Wi-Fi, or the PC is on a different adapter | put both on the same network |
 | Tray says "already running" | a server is already up | use the existing icon; there is only one |
 | Startup fails naming the port | something else holds 18611 | close the other server, or set `Port` |
 | Phone reports a certificate mismatch | the data directory was deleted or moved, so the certificate is new | re-pair from the tray |
 | Everything answers 401 | token revoked, or `devices.json` gone | re-pair |
-| Pairing code refused | expired (5 min), already used, or five wrong guesses destroyed the window | **New code** |
+| Pairing code refused | already used, or five wrong guesses destroyed the window | close the QR card and click the icon again |
 | A folder answers 423 | a session is open on it, here or in another server | close the session from the phone, or exit the server |
 | Handshake drops instantly on Windows | a build older than `c56bd64`, whose certificate carried an RSA-only key-usage bit that Windows refuses | rebuild from current `master` |
 | Nothing to go on | `logs\server-*.log` in the data directory | it records the bound address and the certificate fingerprint at every start |

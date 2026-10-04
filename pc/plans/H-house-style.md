@@ -1,6 +1,6 @@
 # H — House-style redesign of the PC side (all screens except compare)
 
-Status: **approved 2026-10-04, building** (see § 5 for each stage).
+Status: **built and deployed as 3.3.0 (2026-10-04)**; S5 visual check waits for Mike's yes.
 
 The PC client's start screen, rename flow and F1 keys page, and the tray's menu, icon and pairing
 window, move to Mike's house style (`C:\ai\workflows\app-design\DESIGN.md`, skill
@@ -165,10 +165,10 @@ git worktree so builds never collide. The orchestrator (the main session) merges
 | Stage | Who | Branch | Depends on | Status |
 |---|---|---|---|---|
 | S0 icons + fonts + plan commit | orchestrator | `master` | Mike's OK | done |
-| S1 tray: icon, menu, QR card | worker **T** | `house/tray` | S0 | todo |
-| S2 PC: start screen, ink card, keys page, R key (static) | worker **P** | `house/pc` | S0 | todo |
-| S3 PC: motion | worker **P** | `house/pc` | S2 | todo |
-| S4 docs, version 3.3.0, changelog, merge, deploy | orchestrator | `master` | S1, S3 | todo |
+| S1 tray: icon, menu, QR card | worker **T** | `house/tray` | S0 | done 9847871 (reviewed) |
+| S2 PC: start screen, ink card, keys page, R key (static) | worker **P** | `house/pc` | S0 | done 734a4dd (reviewed) |
+| S3 PC: motion | worker **P** | `house/pc` | S2 | done 1f3c910 (reviewed) |
+| S4 docs, version 3.3.0, changelog, merge, deploy | orchestrator | `master` | S1, S3 | done (push waits for Mike) |
 | S5 visual check (targeted) | orchestrator | — | S4 + Mike's yes | todo |
 
 S1 and S2 run **in parallel** (disjoint files). S3 follows S2 in the same worktree.

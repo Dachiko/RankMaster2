@@ -4,11 +4,15 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
-- **In progress: house-style redesign of the PC side** (start screen, rename, F1 keys page, tray
-  menu/icon, QR card; compare screen untouched). Plan, decisions and stage status:
-  `pc/plans/H-house-style.md`. Workers on branches `house/tray`, `house/pc` (worktrees
-  `..\wt-house-tray`, `..\wt-house-pc`).
-- **Server/tray/PC 3.2.0** (tag `v3.2.0`) is deployed on this PC. **Phone 3.2.4** (tag
+- **Server/tray/PC 3.3.0** (tag `v3.3.0`, deployed 2026-10-04): **house-style redesign** of every
+  PC-side surface except the compare screen — start screen, rename card, start-screen keys page (R =
+  rename), tray two-pane icon, tray menu (Show QR + Exit only), QR-only pairing card. Plan,
+  decisions and stage record: `pc/plans/H-house-style.md`. Mockup: `C:\ai\projects\rankmaster\mockups\house-style\index.html`
+  (tab C). **Not yet seen by anyone on screen**: the targeted visual
+  check (H § 5 S5) waits for Mike's yes; things to look at are listed there and in the S1/S2 reports
+  (Doto font resolving, pill focus, decode, menu corner pixels, card dot grid strength, percent width
+  9→10→100). `master` not pushed yet (waits for Mike's OK). The phone app is the next round.
+- Before that: server/tray/PC 3.2.0 (tag `v3.2.0`). **Phone 3.2.4** (tag
   `phone-v3.2.4`, versionCode 9) is the head of `master` and `origin/master`: **Review mode**, done
   and confirmed on Mike's phone 2026-10-04 (see `CHANGELOG.md`). Server `GET /session/items`,
   `POST /session/items/discard`, `PUT /session/review-position` (SERVER_SPEC.md § 10.17–10.19);
