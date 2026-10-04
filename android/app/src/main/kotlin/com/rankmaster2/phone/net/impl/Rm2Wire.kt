@@ -45,6 +45,13 @@ internal data class SideActionRequest(
 @Serializable
 internal data class CancelRequest(val clientRequestId: String)
 
+/** `POST /session/items/discard` (review mode). Names the file by id; there is no pair token. */
+@Serializable
+internal data class DiscardItemRequest(
+    val id: String,
+    val clientRequestId: String,
+)
+
 /** § 10.11. */
 @Serializable
 internal data class PairRequest(

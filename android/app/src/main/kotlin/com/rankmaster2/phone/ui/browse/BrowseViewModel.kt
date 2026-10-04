@@ -39,12 +39,19 @@ import kotlinx.coroutines.launch
  *
  * @param onOpened handed the [Snapshot] from a successful `POST /session`. The ranking screen
  *   belongs to someone else; this class's job ends the moment a session exists.
+ * @param onReview the same, for a folder opened with "Review" rather than "Rank": it is the same
+ *   `POST /session`, with every failure handled the same way, and only what happens next differs.
+ *   Declared *before* [onOpened] so that a trailing lambda still means the ranking hand-over.
  */
 class BrowseViewModel(
     private val client: Rm2Client,
     private val lastFolders: LastFolderStore = InMemoryLastFolderStore(),
+    private val onReview: (Snapshot) -> Unit = {},
     private val onOpened: (Snapshot) -> Unit = {},
 ) : ViewModel() {
+
+    /** Whether the open in flight (or the one a "Close it and open this" retry repeats) is for review. */
+    private var openingForReview = false
 
     private val _state = MutableStateFlow(BrowseUiState(lastFolder = lastFolders.last()))
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
@@ -276,8 +283,23 @@ class BrowseViewModel(
      * minutes old, `counts=false` leaves every `rankable` null, and the owner can always open the
      * folder they are *standing in*, whose rankability the browse endpoint never reports.
      */
-    fun open(path: String) {
+    fun open(path: String) = begin(path, review = false)
+
+    /** Open the folder the browser is standing in, for review (one file at a time, keep or discard). */
+    fun reviewCurrent() {
+        (_state.value.place as? Place.Folder)?.let { review(it.path) }
+    }
+
+    /**
+     * The same open as [open], handed to the review screen. A review does not become "Last ranked":
+     * that card is rank-only ("Open it again" opens for ranking), so remembering a folder only
+     * looked at would point it at somewhere that was never ranked.
+     */
+    fun review(path: String) = begin(path, review = true)
+
+    private fun begin(path: String, review: Boolean) {
         if (_state.value.isOpening) return
+        openingForReview = review
         _state.update { it.copy(openingPath = path, openFailure = null) }
         scope.launch { attemptOpen(path) }
     }
@@ -299,6 +321,11 @@ class BrowseViewModel(
         when (val result = client.openSession(path)) {
             is Rm2Result.Ok -> {
                 val snapshot = result.value
+                if (openingForReview) {
+                    _state.update { it.copy(openingPath = null, openFailure = null) }
+                    onReview(snapshot)
+                    return
+                }
                 // The server's own spelling of both, from the snapshot - so the remembered path is
                 // the resolved one it will accept next time, and the label is its `folderName`
                 // rather than something this app sliced off the end of a Windows path.
@@ -424,8 +451,9 @@ class BrowseViewModel(
             client: Rm2Client,
             lastFolders: LastFolderStore,
             onOpened: (Snapshot) -> Unit,
+            onReview: (Snapshot) -> Unit = {},
         ): ViewModelProvider.Factory = viewModelFactory {
-            initializer { BrowseViewModel(client, lastFolders, onOpened) }
+            initializer { BrowseViewModel(client, lastFolders, onReview, onOpened) }
         }
     }
 }

@@ -295,6 +295,97 @@ class OkHttpRm2ClientEndpointsTest {
         assertNull(body["pairToken"])
     }
 
+    // -- review --------------------------------------------------------------------------------
+
+    @Test
+    fun `items reads the whole list with the snapshot, ids with a space and a hash intact`() = runTest {
+        rm2.enqueue(
+            200,
+            """
+            {"session": $SNAPSHOT_RANKING,
+             "items": [
+               {"id":"IMG_0042.jpg","kind":"still","sizeBytes":3128844,"mediaVersion":"1a0b9c8d7e6f5041",
+                "links":{"meta":"/api/v1/media/IMG_0042.jpg/meta",
+                         "still":"/api/v1/media/IMG_0042.jpg/still?v=1a0b9c8d7e6f5041",
+                         "thumb":"/api/v1/media/IMG_0042.jpg/thumb?v=1a0b9c8d7e6f5041","video":null}},
+               {"id":"beach day #2.mp4","kind":"video","sizeBytes":99,"mediaVersion":"44cc21a0be7f1d93",
+                "links":{"meta":"/api/v1/media/beach%20day%20%232.mp4/meta","still":null,"thumb":null,
+                         "video":"/api/v1/media/beach%20day%20%232.mp4/video?v=44cc21a0be7f1d93"}}
+             ]}
+            """,
+        )
+
+        val items = (rm2.client.items() as Rm2Result.Ok).value
+        assertEquals("Qv8kZ2r5tN0pXbA1cD3eFg", items.session.sessionId)
+        assertEquals(listOf("IMG_0042.jpg", "beach day #2.mp4"), items.items.map { it.id })
+        assertTrue(items.items[0].isStill)
+        assertTrue(items.items[1].isVideo)
+        assertEquals(
+            "/api/v1/media/beach%20day%20%232.mp4/video?v=44cc21a0be7f1d93",
+            items.items[1].links.video,
+        )
+
+        val request = rm2.take()
+        assertEquals("GET", request.method)
+        assertEquals("/api/v1/session/items", request.path)
+    }
+
+    @Test
+    fun `items with no session is a refusal carrying its code`() = runTest {
+        rm2.enqueue(404, errorEnvelope("no_session", "No session is open."))
+
+        val refused = rm2.client.items() as Rm2Result.Refused
+
+        assertEquals(404, refused.status)
+        assertEquals(ErrorCodes.NO_SESSION, refused.code)
+    }
+
+    @Test
+    fun `discardItem sends the id and clientRequestId and never a pairToken`() = runTest {
+        rm2.enqueue(200, SNAPSHOT_EXHAUSTED)
+
+        val snapshot = (rm2.client.discardItem("beach day #2.jpg", "req-review-1") as Rm2Result.Ok).value
+        assertEquals("discard", snapshot.lastAction!!.type)
+        assertTrue(snapshot.undoAvailable)
+
+        val request = rm2.take()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/session/items/discard", request.path)
+        assertTrue(request.getHeader("Content-Type")!!.startsWith("application/json"))
+        val body = request.jsonBody()
+        assertEquals(setOf("id", "clientRequestId"), body.keys)
+        assertEquals("beach day #2.jpg", body.str("id"))
+        assertEquals("req-review-1", body.str("clientRequestId"))
+    }
+
+    @Test
+    fun `discardItem unknown_media_id is a refusal with the snapshot it carried`() = runTest {
+        rm2.enqueue(
+            404,
+            """{"error":{"code":"unknown_media_id","message":"No such file in the session.",
+               "requestId":"01J8Z5K0QF3V8A0M6R9Q2B7T4C","session":$SNAPSHOT_RANKING}}""",
+        )
+
+        val refused = rm2.client.discardItem("gone.jpg", "req-review-2") as Rm2Result.Refused
+
+        assertEquals(404, refused.status)
+        assertEquals(ErrorCodes.UNKNOWN_MEDIA_ID, refused.code)
+        assertEquals("Qv8kZ2r5tN0pXbA1cD3eFg", refused.session!!.sessionId)
+    }
+
+    @Test
+    fun `a retried discardItem repeats the same id and the same clientRequestId`() = runTest {
+        rm2.enqueue(200, SNAPSHOT_EXHAUSTED)
+        rm2.enqueue(200, SNAPSHOT_EXHAUSTED)
+
+        rm2.client.discardItem("a.jpg", "req-same")
+        rm2.client.discardItem("a.jpg", "req-same")
+
+        val first = rm2.take().jsonBody()
+        val second = rm2.take().jsonBody()
+        assertEquals(first, second)
+    }
+
     @Test
     fun `a retried action repeats the same token, which is what makes one vote stay one vote`() =
         runTest {

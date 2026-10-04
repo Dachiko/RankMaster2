@@ -15,6 +15,12 @@ public sealed record SessionOutcome
 
     public SessionSnapshot? Snapshot { get; private init; }
 
+    /// <summary>
+    /// § 10.17: set only by <c>GET /session/items</c>, whose body is the snapshot plus this list.
+    /// Null for every other outcome.
+    /// </summary>
+    public IReadOnlyList<SnapshotMediaRef>? Items { get; private init; }
+
     public string? ErrorCode { get; private init; }
 
     public string? ErrorMessage { get; private init; }
@@ -29,8 +35,11 @@ public sealed record SessionOutcome
 
     public bool IsError => ErrorCode is not null;
 
-    public static SessionOutcome Ok(SessionSnapshot snapshot, int status = StatusCodes.Status200OK) =>
-        new() { Status = status, Snapshot = snapshot };
+    public static SessionOutcome Ok(
+        SessionSnapshot snapshot,
+        int status = StatusCodes.Status200OK,
+        IReadOnlyList<SnapshotMediaRef>? items = null) =>
+        new() { Status = status, Snapshot = snapshot, Items = items };
 
     public static SessionOutcome NoContent() =>
         new() { Status = StatusCodes.Status204NoContent };

@@ -3,6 +3,7 @@ package com.rankmaster2.phone.browse
 import com.rankmaster2.phone.net.Browse
 import com.rankmaster2.phone.net.BrowseEntry
 import com.rankmaster2.phone.net.Counts
+import com.rankmaster2.phone.net.Items
 import com.rankmaster2.phone.net.PairedDevice
 import com.rankmaster2.phone.net.Ping
 import com.rankmaster2.phone.net.Rm2Client
@@ -80,6 +81,8 @@ class FakeRm2Client : Rm2Client {
     override suspend fun discard(pairToken: String, side: String, clientRequestId: String): Rm2Result<Snapshot> = notUsed()
     override suspend fun special(pairToken: String, side: String, clientRequestId: String): Rm2Result<Snapshot> = notUsed()
     override suspend fun cancel(clientRequestId: String): Rm2Result<Snapshot> = notUsed()
+    override suspend fun items(): Rm2Result<Items> = notUsed()
+    override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> = notUsed()
 
     override fun url(link: String): String = baseUrl + link
 

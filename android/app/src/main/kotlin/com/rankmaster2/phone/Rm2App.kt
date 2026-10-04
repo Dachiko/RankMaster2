@@ -57,6 +57,9 @@ import com.rankmaster2.phone.ui.pairing.PairingRoute
 import com.rankmaster2.phone.ui.pairing.PairingViewModel
 import com.rankmaster2.phone.ui.rank.RankRoute
 import com.rankmaster2.phone.ui.rank.RankViewModel
+import com.rankmaster2.phone.ui.review.PrefsReviewPositionStore
+import com.rankmaster2.phone.ui.review.ReviewRoute
+import com.rankmaster2.phone.ui.review.ReviewViewModel
 
 /**
  * The whole app's flow, which is short on purpose: pair once, pick a folder, rank.
@@ -70,6 +73,9 @@ fun Rm2App(context: Context) {
     val credentials: Credentials = remember { CredentialsStore.create(context) }
     var identity by remember { mutableStateOf(credentials.current()) }
     var opened by rememberSaveable(stateSaver = SessionSaver) { mutableStateOf<Snapshot?>(null) }
+    // Which screen the open session is shown on. Saved with `opened`, for the same reason: an
+    // activity that is rebuilt must come back to the screen it was on, not the other one.
+    var reviewing by rememberSaveable { mutableStateOf(false) }
     var crash by remember { mutableStateOf(CrashLog.lastCrash(context)) }
 
     /**
@@ -108,7 +114,8 @@ fun Rm2App(context: Context) {
             context = context,
             identity = paired,
             round = pairings,
-            onOpened = { opened = it },
+            onOpened = { reviewing = false; opened = it },
+            onReview = { reviewing = true; opened = it },
             // The only way back to the pairing screen. It exists because the PC can stop trusting
             // this phone - a regenerated certificate, a revoked token - and until now that left
             // the app permanently telling the owner to pair again with nothing that could.
@@ -120,11 +127,21 @@ fun Rm2App(context: Context) {
             },
         )
 
+        reviewing -> ReviewGate(
+            context = context,
+            identity = paired,
+            opened = opened!!,
+            onLeave = {
+                opened = null
+                reviewing = false
+            },
+        )
+
         else -> RankGate(
             context = context,
             identity = paired,
             opened = opened!!,
-            onLeave = { opened = null },
+            onLeave = { opened = null; reviewing = false },
         )
     }
 }
@@ -167,6 +184,7 @@ private fun BrowseGate(
     identity: ServerIdentity,
     round: Int,
     onOpened: (Snapshot) -> Unit,
+    onReview: (Snapshot) -> Unit,
     onPairAgain: () -> Unit,
 ) {
     val client: Rm2Client = remember(identity) { OkHttpRm2Client(identity) }
@@ -178,6 +196,7 @@ private fun BrowseGate(
             client = client,
             lastFolders = PrefsLastFolderStore(context),
             onOpened = onOpened,
+            onReview = onReview,
         ),
     )
     val scope = rememberCoroutineScope()
@@ -225,6 +244,31 @@ private fun RankGate(
     LaunchedEffect(opened) { viewModel.resume(opened) }
 
     RankRoute(viewModel = viewModel, media = media, onLeave = onLeave)
+}
+
+/**
+ * The review screen, beside [RankGate]: the same open session, shown one file at a time.
+ *
+ * Keyed by the session like the ranking view model, and told about the snapshot it was opened with
+ * for the same reason: the key can match a view model from a visit that has since ended.
+ */
+@Composable
+private fun ReviewGate(
+    context: Context,
+    identity: ServerIdentity,
+    opened: Snapshot,
+    onLeave: () -> Unit,
+) {
+    val client: Rm2Client = remember(identity) { OkHttpRm2Client(identity) }
+    val media = rememberMedia(context, identity)
+
+    val viewModel: ReviewViewModel = viewModel(
+        key = "review-" + opened.sessionId,
+        factory = ReviewViewModel.factory(client, opened, PrefsReviewPositionStore(context)),
+    )
+    LaunchedEffect(opened) { viewModel.resume(opened) }
+
+    ReviewRoute(viewModel = viewModel, media = media, onLeave = onLeave)
 }
 
 /**

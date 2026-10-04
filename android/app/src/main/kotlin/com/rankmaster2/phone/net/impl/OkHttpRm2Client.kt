@@ -1,6 +1,7 @@
 package com.rankmaster2.phone.net.impl
 
 import com.rankmaster2.phone.net.Browse
+import com.rankmaster2.phone.net.Items
 import com.rankmaster2.phone.net.PairedDevice
 import com.rankmaster2.phone.net.Ping
 import com.rankmaster2.phone.net.PinMismatchException
@@ -157,6 +158,14 @@ class OkHttpRm2Client(
 
     override suspend fun cancel(clientRequestId: String): Rm2Result<Snapshot> =
         call(post("/session/undo", CancelRequest(clientRequestId))) { decode<Snapshot>(it) }
+
+    // -- review --------------------------------------------------------------------------------
+
+    override suspend fun items(): Rm2Result<Items> =
+        call(get("/session/items")) { decode<Items>(it) }
+
+    override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> =
+        call(post("/session/items/discard", DiscardItemRequest(id, clientRequestId))) { decode<Snapshot>(it) }
 
     // -- bytes ---------------------------------------------------------------------------------
 

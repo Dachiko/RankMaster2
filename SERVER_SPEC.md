@@ -266,7 +266,7 @@ produce a misleading error path.
 
 | Code | Status | When | `details` |
 |---|---|---|---|
-| `unknown_media_id` | 404 | the id is not a record in the open session | `{ "id": string }` |
+| `unknown_media_id` | 404 | the id is not a record in the open session — also `POST /session/items/discard` (§ 10.18) naming a record that is not there | `{ "id": string }` |
 | `media_file_missing` | 404 | the id is a record but the file is gone from disk | `{ "id": string }` |
 | `media_outside_session` | 403 | the decoded id escapes the session folder (separator, `..`, rooted path) | `{ "id": string }` |
 | `media_extension_not_allowed` | 403 | the extension is in neither list in `SPEC.md` § Media policy | `{ "id": string, "extension": string }` |
@@ -363,14 +363,16 @@ file, or by closing and reopening the session.
 | ranking | `POST /session` same folder | ranking | unchanged | pure read; `Start()` MUST NOT be called again |
 | ranking\|exhausted | `POST /session` other folder | unchanged | unchanged | `409 session_already_open` |
 | ranking\|exhausted | `GET /session`, `GET /session/pair` | unchanged | unchanged | pure reads |
+| ranking\|exhausted | `GET /session/items` | unchanged | unchanged | pure read: the snapshot plus every record (§ 10.17) |
 | ranking\|exhausted | `POST /session/save` | unchanged | unchanged | writes JSON, never touches the pair |
 | ranking | `POST /session/vote` ok | ranking or exhausted | +1 | save, then advance |
 | ranking | `POST /session/skip` ok | ranking or exhausted | +1 | save, then advance |
 | ranking | `POST /session/discard`, `/special` ok | ranking or exhausted | +1 | move file, `Drop`, save |
+| ranking\|exhausted | `POST /session/items/discard` ok | ranking or exhausted | +1 | review mode, § 10.18: the named record, in the pair or not — move file, `Drop`, save. Needs no pair, so allowed while exhausted. Undoable like a pair discard |
 | ranking\|exhausted | `POST /session/undo` ok | ranking | +1 | move file back, `Restore`, save |
 | ranking\|exhausted | `DELETE /session` | closed | — | releases the lock; writes nothing |
 | ranking\|exhausted | `DELETE /session` **during a rename** | unchanged | unchanged | `409 rename_in_progress` — refused; cancel the rename first (§ 10.4, § 10.16) |
-| exhausted | vote / skip / discard / special | exhausted | unchanged | `409 no_current_pair` |
+| exhausted | vote / skip / discard / special (the pair-based ones) | exhausted | unchanged | `409 no_current_pair`; `POST /session/items/discard` is not among them (§ 10.18) |
 | ranking\|exhausted | `POST /session/rename` started | unchanged | unchanged | `202`; every other mutating call answers `409 rename_in_progress` until it settles (§ 10.16) |
 | ranking\|exhausted | rename succeeded | ranking or exhausted | +1 | every id new; `lastAction.type == "rename"` |
 | ranking\|exhausted | rename cancelled or failed | ranking or exhausted, **resynced from disk** | **+1** | same `sessionId`; records re-read, `Current` re-picked, `sessionVotes` and `cues` **kept**, undo cleared, `lastAction` null; ratings intact, filenames possibly mixed (§ 10.16). A cancel in `preparing` changes nothing at all |
@@ -469,6 +471,7 @@ The asymmetry is deliberate and mirrors the library:
 | vote/skip cannot be saved (the write failed and is latched, § 13.1) | nothing applied — full in-memory rollback (§ 7.4.5), `500 save_failed` | unchanged | **still valid — retry with the same token** |
 | discard/special: move throws | nothing changed | unchanged | still valid |
 | discard/special: move ok, `Drop` ok, `Save` throws | file already moved, record already gone | **+1** | stale |
+| `POST /session/items/discard` (§ 10.18) | the two discard rows above apply unchanged; there is no token to keep or lose, so a client retries with the same `clientRequestId` | as above | — |
 | undo of a vote/skip: succeeds | the snapshot is restored and the pair it consumed is current again | **+1** | stale |
 | undo of a vote/skip: `Save` throws | full in-memory rollback — the action stays applied | unchanged | still valid |
 | undo of a move: move-back throws | nothing changed | unchanged | still valid |
@@ -494,7 +497,10 @@ inside the session lock, before touching anything:
 4. `pairToken != current` → `409 stale_pair_token`.
 5. Apply.
 
-`POST /session/undo` takes **no** `pairToken` — see § 10.10.
+`POST /session/undo` takes **no** `pairToken` — see § 10.10. Neither does `POST /session/items/discard`
+(§ 10.18), which is not a pair action: it names a record, so steps 3 and 4 do not apply to it and it works
+while `exhausted`. Its own order, inside the lock: no session; rename in progress; body; id (§ 11.1, § 11.2
+step 3); idempotent retry; unknown id; apply.
 
 ### 8.5 Exactly what happens on a stale token
 
@@ -534,9 +540,11 @@ obvious retry.
 ## 9. The session snapshot
 
 **Every** 2xx JSON response from `POST /session`, `GET /session`, `GET /session/pair`,
-`POST /session/save`, `POST /session/vote`, `/skip`, `/discard`, `/special`, `/undo` is the same
+`POST /session/save`, `POST /session/vote`, `/skip`, `/discard`, `/special`, `/undo`,
+`POST /session/items/discard` is the same
 object, with the same fields, in the same shape. There is no "small" variant and no partial update.
-`error.session` in a 409 is the same object. Four implementations, one shape.
+`error.session` in a 409 is the same object. Four implementations, one shape. The one wrapper is
+`GET /session/items` (§ 10.17), whose body is `{ session, items }` — `session` is this same object.
 
 ### 9.1 `SessionSnapshot`
 
@@ -609,12 +617,12 @@ The most recent **successful** mutation of this session. Used for retry disambig
 | Field | Type | Null? | Meaning |
 |---|---|---|---|
 | `seq` | integer | no | The `pairSeq` value this action produced. |
-| `type` | enum | no | `vote` \| `skip` \| `discard` \| `special` \| `undo` \| `drop_missing` \| `rename` (§ 10.16 — every other field null). |
-| `pairToken` | string | **yes** | The token this action consumed. `null` for `undo` and `drop_missing`, which do not take one. |
+| `type` | enum | no | `vote` \| `skip` \| `discard` \| `special` \| `undo` \| `drop_missing` \| `rename` (§ 10.16 — every other field null). `discard` and `drop_missing` also come from `POST /session/items/discard` (§ 10.18). |
+| `pairToken` | string | **yes** | The token this action consumed. `null` for `undo` and `drop_missing`, which do not take one, and for a `discard` made by id (§ 10.18). |
 | `clientRequestId` | string | **yes** | Echoed verbatim from the request body, or `null` if the client sent none. |
 | `winner` | enum | **yes** | `left` \| `right` — `vote` only. |
-| `side` | enum | **yes** | `left` \| `right` — `discard` and `special` only. |
-| `id` | string | **yes** | The media id the action moved or dropped — `discard`, `special`, `drop_missing`. |
+| `side` | enum | **yes** | `left` \| `right` — `discard` and `special` of a pair only. `null` for a `discard` made by id (§ 10.18): the record was named, not a side. |
+| `id` | string | **yes** | The media id the action moved or dropped — `discard`, `special`, `drop_missing`. Always set for those three, whichever endpoint made them. |
 | `restoredId` | string | **yes** | `undo` of a move only. The id the file came back as, which **differs** from `id` when the original name was taken and `FileOps.UniqueFileName` produced `name (2).ext`. `null` when the cancelled action moved no file. |
 | `undoneType` | enum | **yes** | `undo` only: which action was cancelled — `vote` \| `skip` \| `discard` \| `special`. `null` for every other type. It is what lets a client say "vote taken back" rather than a bare "undone". |
 | `at` | string | no | RFC 3339 UTC. |
@@ -810,6 +818,15 @@ that costs nothing to keep would break a client for no gain.
 Moves the named side of the **current pair** to `<folder>/discarded/`. The id is taken from the pair
 the token names — the client never sends an id, so it cannot act on an item that is not on screen.
 
+**One exception, review mode (§ 10.18).** `POST /session/items/discard` does take an id, because review
+mode steps through every record of the folder and the one on screen is not necessarily in the pair. It is
+safe for three reasons: the id is validated exactly like a media id (§ 11.1, § 11.2 step 3 — a separator, a
+`..`, a rooted path or a non-media extension is refused before anything moves) and must then be a record of
+the open session, so it can only ever name a file the session already owns, directly inside the folder; it
+runs the very same code from the flush onward, so the move, `Drop`, save, rating carry, failure rows and
+missing-file case below are one implementation, not two; and it arms the same undo point, so
+`POST /session/undo` takes it back exactly like a pair discard. No other action takes an id.
+
 Order (`LibraryActions.Move`): release any server-side decode of the id → `FileOps.MoveToSubfolder`
 (creates the folder on demand, uniquifies on collision as `name (2).ext`) → `RankingSession.Drop` →
 `RankingSession.Save` → **carry the rating into the subfolder**.
@@ -863,7 +880,8 @@ Identical to § 10.8 in every respect except the destination, `<folder>/special 
 ```
 
 Cancels the **last successful action of this session** — one level, no stack. An action is a `vote`,
-`skip`, `discard` or `special`.
+`skip`, `discard` or `special` (a `discard` made by id in review mode, § 10.18, included — it is cancelled
+in exactly the same way, and `lastAction.restoredId` can differ from `id` in the same case).
 
 This is the endpoint a phone's cancel button calls. It covers votes because a mis-tap on a touch
 screen is a real vote: without it the only way back from a wrong tap is to keep voting and hope the
@@ -1297,6 +1315,89 @@ than a spinner, so that "nothing is happening" and "it is working slowly" look d
 endpoint itself is open to any paired token. The *recommendation* — PC client yes, phone no — is a
 client concern (`PC_CLIENT_PARTS.md`), not an availability restriction.
 
+### 10.17 `GET /session/items`
+
+The whole item list of the open session, plus the current snapshot, in one response. It exists for the
+phone's review mode, which shows every photo and video of the folder one at a time (and lets the owner
+discard any of them, § 10.18). Pure read: `pairSeq` does not change, no impression is counted, nothing is
+saved. Allowed in `ranking` and `exhausted`, and while a rename runs (like `GET /session`).
+
+```json
+{ "session": { "…": "a SessionSnapshot, exactly § 9.1" },
+  "items":   [ { "id": "DSC_0123.jpg", "kind": "still", "sizeBytes": 4210332, "mediaVersion": "9f2a1c77b0e4d310",
+                 "links": { "meta": "…", "still": "…", "thumb": "…", "video": null } },
+               { "…": "MediaRef, exactly § 9.3" } ] }
+```
+
+- `items` is **every record** of the session (`RankingSession.Records`), both kinds, whatever `policy` is —
+  review mode shows what is in the folder, not only what ranks. `items.length == session.counts.total`.
+- Each entry is a `MediaRef` built by the same code as the pair's, so `links` are server-built,
+  percent-encoded and carry `v=`. A file that is gone from disk has `sizeBytes: null` and
+  `mediaVersion: null` (§ 11.3) and is still listed; discarding it is the `drop_missing` case of § 10.18.
+- **Order:** by `id`, `StringComparer.OrdinalIgnoreCase`, with an ordinal tie-break so the order is total.
+  That is plain character order, case-blind — `DSC_9.jpg` sorts after `DSC_10.jpg`. It is **not** natural
+  ("Explorer") order; the codebase has no natural comparer. Names that are zero-padded (the usual camera
+  and phone pattern) sort as a person would expect.
+- The list and the snapshot are materialised in one critical section (§ 7.3), so `session.pairSeq` is the
+  generation the list belongs to. A client refreshes the list after anything that changes records
+  (`discard`, `undo`, a rename) rather than patching it, or removes the discarded id itself and keeps going.
+- `404 no_session` when closed; `503 session_busy` on lock timeout. Same auth as every `/session*` route.
+
+### 10.18 `POST /session/items/discard`
+
+```json
+{ "id": "DSC_0123.jpg", "clientRequestId": "1f0c…" }
+```
+
+Review mode's discard: moves **the named record** to `<folder>/discarded/`, whether or not it is in the
+current pair. `id` is required and is the decoded filename exactly as in `MediaRef.id` (§ 9.3, § 11.1.6 —
+compared the platform's way, § 11.1.3, the on-disk spelling is what is used and echoed). `clientRequestId`
+is optional, ≤ 64 characters, like every action. There is no `pairToken`, because the target is not a
+pair member by definition (§ 8.4); `pairSeq` and the pair are not checked.
+
+The steps, the outcome table, the missing-file special case, the rating carry and the failure semantics
+are those of § 10.8, **one implementation**: flush anything unsaved → (file missing: `Drop`, save,
+`drop_missing`, no undo entry) → release decode → `FileOps.MoveToSubfolder` → `RankingSession.Drop` → save
+→ carry the rating into `discarded/rankmaster_db.json`. `move_failed` (`details.stage:"move"`) leaves
+everything unchanged; a save that throws after the move is `save_failed { recordsChanged:true,
+fileMoved:true }` with `pairSeq` +1 and undo armed (§ 13.1's latch applies). Success is `200` with the
+SessionSnapshot, `pairSeq` +1.
+
+**The pair afterwards.** `Drop` does the work: if the id was in `pair`, `Current` is cleared and a fresh
+pair is picked (the session may become `exhausted` if fewer than two records remain); if it was in
+`warmPairs`, those warm pairs are removed; otherwise `pair` is unchanged — but `pairSeq` still advances,
+so the `pairToken` changes (§ 8.1) and a vote in flight on the old token gets `409 stale_pair_token`. A
+client in review mode that is not also showing the pair simply ignores `pair`.
+
+`lastAction`: `type: "discard"` (or `"drop_missing"` for a vanished file), `id` = the id, `side: null`,
+`pairToken: null`, `clientRequestId` echoed. `undoAvailable` is `true` afterwards (not after
+`drop_missing`), and **`POST /session/undo` cancels it exactly like a pair discard** (§ 10.10): the file
+comes back, the record is restored, `lastAction.type = "undo"`, `undoneType = "discard"`, `id` the old id,
+`restoredId` the id the file came back as. A new current pair is picked, as always after undo (§ 7.4.4).
+
+Allowed in `ranking` **and** `exhausted` (§ 7.2): it needs no pair.
+
+| Outcome | Status |
+|---|---|
+| discarded | `200` snapshot |
+| the file is missing on disk | `200` snapshot, `lastAction.type:"drop_missing"` |
+| body not JSON / wrong types / `id` absent or null | `400 invalid_request` / `400 missing_field` (§ 5.2) |
+| id is not a legal id (empty, > 255, control character) | `400 invalid_media_id { reason }` |
+| id contains a separator, is `.`/`..`, or rooted | `403 media_outside_session { id }` — nothing moved |
+| id's extension is not a media extension | `403 media_extension_not_allowed { id, extension }` |
+| id is not a record of the session | `404 unknown_media_id { id }` — **except** the idempotent retry below |
+| a rename is running | `409 rename_in_progress` |
+| the session lock times out | `503 session_busy` |
+| no session | `404 no_session` |
+
+**Idempotent retry (§ 13.3).** If `lastAction.type` is `discard` or `drop_missing`, its `id` equals the
+requested id and its `clientRequestId` equals the request's **non-null** `clientRequestId`, the first
+attempt was applied and only its response was lost: the server answers `200` with the current snapshot and
+changes nothing (`pairSeq` does not move; if a deferred write is latched, it is retried first, § 13.1). The
+match is on the last action only, so once anything else has happened the retry falls through to `404
+unknown_media_id`, which is just as safe — the record is gone. A client that wants the first answer back
+MUST send a `clientRequestId` and keep it for the retry.
+
 ---
 
 ## 11. Media identity
@@ -1664,7 +1765,8 @@ its safety rests on the journal (§ 10.16), not on the response.
 | `GET /session`, `/session/pair` | none | — |
 | `POST /session/save` | JSON written | **yes** — forced and synchronous; this is the endpoint that makes a point durable |
 | `POST /session/vote`, `/skip` | the pair advances; JSON written **within the bound** (§ 13.1) | **no, and by design** — the response does not wait for the write. Applied at once, on disk within 2 s or 5 choices |
-| `POST /session/discard`, `/special` | anything unsaved is flushed, then the file is moved, then JSON written | **yes**, and in that order — a move is never deferred |
+| `POST /session/discard`, `/special`, `POST /session/items/discard` | anything unsaved is flushed, then the file is moved, then JSON written | **yes**, and in that order — a move is never deferred |
+| `GET /session/items` | none | — |
 | `POST /session/undo` | of a move: flush, file moved back, then JSON written — **yes**. Of a vote/skip: no file touched, JSON written within the bound — **no**, like the vote it reverses | as stated per case |
 | `DELETE /session` | unsaved choices flushed, then the lock file closed and removed; **no other JSON write** | yes |
 | `GET /media/*` | none | — |
@@ -1687,6 +1789,7 @@ The client does not know the outcome. It MUST resolve, never guess:
 | `DELETE /session` | yes | a second call is `404 no_session` |
 | `POST /session/vote`, `/skip` | **yes, with the same `pairToken`** | if it landed, the retry gets `409 stale_pair_token`; if it did not, the retry votes. Either way one vote, never two. A retry with a *new* token after resyncing is a **double vote** and MUST NOT be done. |
 | `POST /session/discard`, `/special` | **yes, with the same `pairToken`** | same reasoning |
+| `POST /session/items/discard` | **yes, with the same `id` and the same `clientRequestId`** | if the first attempt landed, the retry is answered `200` with the current snapshot and changes nothing (§ 10.18); if it did not, the retry discards. A retry **without** a `clientRequestId` of a discard that landed gets `404 unknown_media_id` — also safe, the record is gone |
 | `POST /session/undo` | yes | a second undo is `409 nothing_to_undo`; it cannot reach back two actions, because only one is ever recorded |
 | `POST /pair` | **no** | the code is single-use; a retry of a landed pairing gets `401 invalid_pairing_code` and the token is lost. Restart pairing. |
 

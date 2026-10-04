@@ -662,111 +662,231 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             if (conflict is not null)
                 return conflict;
 
-            // § 13.1, "What is never deferred", and § 13.2: anything the write-behind is still
-            // holding is written *before* the file moves. That is what keeps § 13.2's ordering —
-            // file moved, then JSON written — and with it the self-heal: if the process dies between
-            // the move and the save, the only row the next Scan/Save drops is the file that really
-            // did move away. A flush that fails refuses the move outright, with nothing applied and
-            // the token still current, because moving a file on a disk that will not take the
-            // database is how a rating gets separated from its picture.
-            var flushed = FlushOrRefuse(open);
-            if (flushed is not null)
-                return flushed;
-
             // The id comes from the pair the token names; the client never sends one, so it cannot
-            // act on an item that is not on screen (§ 10.8).
+            // act on an item that is not on screen (§ 10.8). The one exception is review mode's
+            // POST /session/items/discard (§ 10.18), which shares everything below this line.
             var current = open.Session.Current!.Value;
             var id = side == Sides.Left ? current.Left : current.Right;
-            var actionType = special ? ActionTypes.Special : ActionTypes.Discard;
+            return ApplyMove(open, id, special, token, side, clientRequestId);
+        });
 
-            // The missing-file special case (§ 10.8). FileOps.MoveToSubfolder throws
-            // FileNotFoundException on a vanished source, which would wedge the pair forever: it
-            // cannot be voted (the media will not load) and it cannot be discarded. So drop the
-            // record and save directly, and record no undo entry — there is no file to put back,
-            // and undoAvailable is left exactly as it was.
-            if (!File.Exists(Path.Combine(open.Folder, id.Filename)))
-            {
-                open.Session.Drop(id);
-                open.PairSeq++;
+    /// <summary>
+    /// § 10.8 from the flush onward, shared by the pair-based discard/special and by review mode's
+    /// discard of one record by id (§ 10.18): flush, then the missing-file special case, then
+    /// <c>LibraryActions.Discard/MoveToSpecial</c> (move, <c>Drop</c>, save, carry the rating), with
+    /// the § 8.3 failure semantics. <paramref name="token"/> and <paramref name="side"/> are null for
+    /// the by-id discard, which has no pair to name.
+    /// </summary>
+    private SessionOutcome ApplyMove(
+        OpenSession open,
+        MediaId id,
+        bool special,
+        string? token,
+        string? side,
+        string? clientRequestId)
+    {
+        // § 13.1, "What is never deferred", and § 13.2: anything the write-behind is still
+        // holding is written *before* the file moves. That is what keeps § 13.2's ordering —
+        // file moved, then JSON written — and with it the self-heal: if the process dies between
+        // the move and the save, the only row the next Scan/Save drops is the file that really
+        // did move away. A flush that fails refuses the move outright, with nothing applied and
+        // the token still current, because moving a file on a disk that will not take the
+        // database is how a rating gets separated from its picture.
+        var flushed = FlushOrRefuse(open);
+        if (flushed is not null)
+            return flushed;
 
-                // § 10.10: drop_missing is not cancellable, and it does not hand the cancel on to
-                // whatever came before it. Drop already cleared the engine's snapshot; clearing the
-                // recorded move too is what stops a discard from three actions ago being restored by
-                // an undo the client was told was available (H5, A7).
-                open.Actions.ClearLastMove();
-                open.UndoPoint = UndoPoint.None;
+        var actionType = special ? ActionTypes.Special : ActionTypes.Discard;
 
-                try
-                {
-                    open.Session.Save();
-                }
-                catch (Exception)
-                {
-                    // The record is gone from memory and the database does not know: that is an
-                    // unsaved change, and § 13.1 latches it so the next call retries the write and
-                    // says so rather than stacking more on top of it.
-                    open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
-                    open.LatchSaveFailure(DateTimeOffset.UtcNow);
-                    open.LastAction = NewAction(
-                        open, ActionTypes.DropMissing, pairToken: null, clientRequestId, id: id.Filename);
-                    return SessionOutcome.Fail(
-                        ErrorCodes.SaveFailed,
-                        "The record was dropped but the ranking file could not be written.",
-                        new { recordsChanged = true, fileMoved = false },
-                        Materialise(open));
-                }
+        // The missing-file special case (§ 10.8). FileOps.MoveToSubfolder throws
+        // FileNotFoundException on a vanished source, which would wedge the pair forever: it
+        // cannot be voted (the media will not load) and it cannot be discarded. So drop the
+        // record and save directly, and record no undo entry — there is no file to put back,
+        // and undoAvailable is left exactly as it was.
+        if (!File.Exists(Path.Combine(open.Folder, id.Filename)))
+        {
+            open.Session.Drop(id);
+            open.PairSeq++;
 
-                open.MarkSaved(DateTimeOffset.UtcNow);
-                open.LastAction = NewAction(
-                    open, ActionTypes.DropMissing, pairToken: null, clientRequestId, id: id.Filename);
-                return SessionOutcome.Ok(Materialise(open));
-            }
+            // § 10.10: drop_missing is not cancellable, and it does not hand the cancel on to
+            // whatever came before it. Drop already cleared the engine's snapshot; clearing the
+            // recorded move too is what stops a discard from three actions ago being restored by
+            // an undo the client was told was available (H5, A7).
+            open.Actions.ClearLastMove();
+            open.UndoPoint = UndoPoint.None;
 
             try
             {
-                if (special)
-                    open.Actions.MoveToSpecial(id);
-                else
-                    open.Actions.Discard(id);
+                open.Session.Save();
             }
             catch (Exception)
             {
-                // LibraryActions.Move runs move -> Drop -> Save. Drop is what tells the two failure
-                // stages apart: if the record is still there, Drop never ran, so the move threw and
-                // nothing changed. If it is gone, the file is already in discarded/ or special 1/
-                // and it was the save that threw — Drop does not save and cannot roll back, so that
-                // change is committed and pairSeq has to advance (§ 8.3).
-                if (open.Session.TryFind(id, out _))
-                {
-                    return SessionOutcome.Fail(
-                        ErrorCodes.MoveFailed,
-                        "The file could not be moved.",
-                        new { id = id.Filename, stage = "move" },
-                        Materialise(open));
-                }
-
-                open.PairSeq++;
-                // The file is in discarded/ or special 1/ and the database did not follow: undo is
-                // the only way back, so it must be offered (§ 8.3). The database is now behind the
-                // truth, so the same latch applies (§ 13.1) — the next mutating call retries the
-                // write first.
+                // The record is gone from memory and the database does not know: that is an
+                // unsaved change, and § 13.1 latches it so the next call retries the write and
+                // says so rather than stacking more on top of it.
                 open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
                 open.LatchSaveFailure(DateTimeOffset.UtcNow);
-                open.UndoPoint = UndoPoint.LastMove;
-                open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
+                open.LastAction = NewAction(
+                    open, ActionTypes.DropMissing, pairToken: null, clientRequestId, id: id.Filename);
                 return SessionOutcome.Fail(
                     ErrorCodes.SaveFailed,
-                    "The file was moved but the ranking file could not be written.",
-                    new { recordsChanged = true, fileMoved = true },
+                    "The record was dropped but the ranking file could not be written.",
+                    new { recordsChanged = true, fileMoved = false },
+                    Materialise(open));
+            }
+
+            open.MarkSaved(DateTimeOffset.UtcNow);
+            open.LastAction = NewAction(
+                open, ActionTypes.DropMissing, pairToken: null, clientRequestId, id: id.Filename);
+            return SessionOutcome.Ok(Materialise(open));
+        }
+
+        try
+        {
+            if (special)
+                open.Actions.MoveToSpecial(id);
+            else
+                open.Actions.Discard(id);
+        }
+        catch (Exception)
+        {
+            // LibraryActions.Move runs move -> Drop -> Save. Drop is what tells the two failure
+            // stages apart: if the record is still there, Drop never ran, so the move threw and
+            // nothing changed. If it is gone, the file is already in discarded/ or special 1/
+            // and it was the save that threw — Drop does not save and cannot roll back, so that
+            // change is committed and pairSeq has to advance (§ 8.3).
+            if (open.Session.TryFind(id, out _))
+            {
+                return SessionOutcome.Fail(
+                    ErrorCodes.MoveFailed,
+                    "The file could not be moved.",
+                    new { id = id.Filename, stage = "move" },
                     Materialise(open));
             }
 
             open.PairSeq++;
-            // LibraryActions.Move saved after the move (§ 13.2), so the session is clean again.
-            open.MarkSaved(DateTimeOffset.UtcNow);
+            // The file is in discarded/ or special 1/ and the database did not follow: undo is
+            // the only way back, so it must be offered (§ 8.3). The database is now behind the
+            // truth, so the same latch applies (§ 13.1) — the next mutating call retries the
+            // write first.
+            open.RecordUnsavedChoice(DateTimeOffset.UtcNow);
+            open.LatchSaveFailure(DateTimeOffset.UtcNow);
             open.UndoPoint = UndoPoint.LastMove;
             open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
-            return SessionOutcome.Ok(Materialise(open));
+            return SessionOutcome.Fail(
+                ErrorCodes.SaveFailed,
+                "The file was moved but the ranking file could not be written.",
+                new { recordsChanged = true, fileMoved = true },
+                Materialise(open));
+        }
+
+        open.PairSeq++;
+        // LibraryActions.Move saved after the move (§ 13.2), so the session is clean again.
+        open.MarkSaved(DateTimeOffset.UtcNow);
+        open.UndoPoint = UndoPoint.LastMove;
+        open.LastAction = NewAction(open, actionType, token, clientRequestId, side: side, id: id.Filename);
+        return SessionOutcome.Ok(Materialise(open));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // GET /session/items — § 10.17. Pure read: the whole record list plus the snapshot.
+    // ---------------------------------------------------------------------------------------
+
+    public Task<SessionOutcome> ItemsAsync(CancellationToken cancellation) =>
+        WithLockAsync(cancellation, () =>
+        {
+            if (_open is not { } open)
+                return NoSession();
+
+            // Materialised inside the lock (§ 7.3), like every snapshot. Every record, both kinds,
+            // whatever the policy: review mode shows what is in the folder, not what ranks. By id,
+            // case-insensitively (no natural-order comparer exists in the codebase), with an ordinal
+            // tie-break so two names that differ only by case still have one fixed order.
+            var items = open.Session.Records
+                .OrderBy(r => r.Id.Filename, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(r => r.Id.Filename, StringComparer.Ordinal)
+                .Select(r => MediaRefOf(open, r.Id, r.Kind))
+                .ToList();
+
+            return SessionOutcome.Ok(Materialise(open), items: items);
+        });
+
+    // ---------------------------------------------------------------------------------------
+    // POST /session/items/discard — § 10.18. Review mode: discard one record by id.
+    // ---------------------------------------------------------------------------------------
+
+    public Task<SessionOutcome> DiscardItemAsync(JsonElement? body, BodyError? bodyError, CancellationToken cancellation) =>
+        WithLockAsync(cancellation, () =>
+        {
+            if (_open is not { } open)
+                return NoSession();
+
+            if (open.RenameInProgress)
+                return RenameInProgress(open);
+
+            // § 8.4 step 1 before step 2, as for every action.
+            if (bodyError is not null)
+                return BodyFail(bodyError, open);
+
+            var idFieldError = SessionBody.RequiredString(body, "id", out var requested);
+            var requestIdError = SessionBody.OptionalClientRequestId(body, out var clientRequestId);
+            if ((idFieldError ?? requestIdError) is { } error)
+                return BodyFail(error, open);
+
+            // The same id rules the media endpoints apply (§ 11.1, § 11.2 steps 2 and 3), so an id
+            // such as a backslash path or "sub/x.jpg" can never reach the file move.
+            var valid = Media.MediaIdCodec.Validate(requested);
+            if (!valid.Ok)
+            {
+                return valid.Fault == Media.MediaIdFault.Escapes
+                    ? SessionOutcome.Fail(
+                        ErrorCodes.MediaOutsideSession,
+                        "The id would leave the session folder.",
+                        new { id = requested },
+                        Materialise(open))
+                    : SessionOutcome.Fail(
+                        ErrorCodes.InvalidMediaId,
+                        "The id is not a legal media id.",
+                        new { reason = valid.Reason },
+                        Materialise(open));
+            }
+
+            if (MediaExtensions.KindOf(requested) is null)
+            {
+                return SessionOutcome.Fail(
+                    ErrorCodes.MediaExtensionNotAllowed,
+                    "The id's extension is not a media extension.",
+                    new { id = requested, extension = Path.GetExtension(requested).TrimStart('.').ToLowerInvariant() },
+                    Materialise(open));
+            }
+
+            // § 13.3 spirit: the first attempt landed and its response was lost, so the record is
+            // already gone. Recognised by the last action alone — same id, same non-null
+            // clientRequestId — and answered with the current snapshot, changing nothing. If a
+            // deferred write is still latched, it is retried first, exactly as for any other call.
+            if (clientRequestId is not null &&
+                open.LastAction is { Type: ActionTypes.Discard or ActionTypes.DropMissing } last &&
+                last.ClientRequestId == clientRequestId &&
+                last.Id is not null &&
+                string.Equals(last.Id, requested, PathComparison))
+            {
+                return RefuseWhileSaveIsLatched(open) ?? SessionOutcome.Ok(Materialise(open));
+            }
+
+            // Membership is the platform's comparison (§ 11.1.3); from here the on-disk spelling is
+            // the id, not the caller's (§ 11.1.6).
+            var record = open.Session.Records.FirstOrDefault(
+                r => string.Equals(r.Id.Filename, requested, PathComparison));
+            if (record is null)
+            {
+                return SessionOutcome.Fail(
+                    ErrorCodes.UnknownMediaId,
+                    "The id is not a record in the open session.",
+                    new { id = requested },
+                    Materialise(open));
+            }
+
+            return ApplyMove(open, record.Id, special: false, token: null, side: null, clientRequestId);
         });
 
     // ---------------------------------------------------------------------------------------
@@ -1803,12 +1923,13 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
     private SnapshotPair PairOf(OpenSession open, Pair pair) =>
         new(MediaRefOf(open, pair.Left), MediaRefOf(open, pair.Right));
 
-    private SnapshotMediaRef MediaRefOf(OpenSession open, MediaId id)
-    {
-        var kind = open.Session.TryFind(id, out var record)
+    private SnapshotMediaRef MediaRefOf(OpenSession open, MediaId id) =>
+        MediaRefOf(open, id, open.Session.TryFind(id, out var record)
             ? record.Kind
-            : MediaExtensions.KindOf(id.Filename) ?? MediaKind.Still;
+            : MediaExtensions.KindOf(id.Filename) ?? MediaKind.Still);
 
+    private SnapshotMediaRef MediaRefOf(OpenSession open, MediaId id, MediaKind kind)
+    {
         var (size, version) = FingerprintOf(open.Folder, id.Filename);
         var encoded = Uri.EscapeDataString(id.Filename);
         var query = version is null ? "" : "?v=" + version;

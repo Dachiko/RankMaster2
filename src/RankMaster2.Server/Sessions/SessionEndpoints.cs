@@ -4,7 +4,7 @@ using RankMaster2.Server.Contracts;
 namespace RankMaster2.Server.Sessions;
 
 /// <summary>
-/// Route registration for the whole <c>/session*</c> group (SERVER_SPEC.md § 10.1 – § 10.10).
+/// Route registration for the whole <c>/session*</c> group (SERVER_SPEC.md § 10.1 – § 10.10, § 10.17, § 10.18).
 /// One call from <c>Program.cs</c>, everything else in this folder.
 /// </summary>
 public static class SessionEndpoints
@@ -90,6 +90,19 @@ public static class SessionEndpoints
             return Respond(http, await registry.UndoAsync(body, bodyError, cancellation));
         });
 
+        // § 10.17. Pure read: the snapshot plus every record of the session, both kinds.
+        group.MapGet("/items", async (HttpContext http, CancellationToken cancellation) =>
+            Respond(http, await registry.ItemsAsync(cancellation)));
+
+        // § 10.18. Review mode: discard one record by id, in or out of the current pair. The only
+        // action that takes an id; it is validated like a media id and moves the file the way § 10.8
+        // does, so POST /session/undo cancels it the same way.
+        group.MapPost("/items/discard", async (HttpContext http, CancellationToken cancellation) =>
+        {
+            var (body, bodyError) = await SessionBody.ReadAsync(http, required: true);
+            return Respond(http, await registry.DiscardItemAsync(body, bodyError, cancellation));
+        });
+
         return endpoints;
     }
 
@@ -112,6 +125,9 @@ public static class SessionEndpoints
             http.Response.Headers.XContentTypeOptions = "nosniff";
             return Results.NoContent();
         }
+
+        if (outcome.Items is not null)
+            return SessionResults.Items(http, new SessionItems(outcome.Snapshot!, outcome.Items), outcome.Status);
 
         return SessionResults.Snapshot(http, outcome.Snapshot!, outcome.Status);
     }

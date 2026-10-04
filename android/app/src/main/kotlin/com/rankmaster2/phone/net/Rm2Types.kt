@@ -50,6 +50,13 @@ data class Counts(
 @Serializable
 data class Pair(val left: MediaRef, val right: MediaRef)
 
+/**
+ * `GET /session/items`: every file of the open session, stills and videos both, in filename order,
+ * with the snapshot it was read against. Review mode's whole list; a pure read.
+ */
+@Serializable
+data class Items(val session: Snapshot, val items: List<MediaRef>)
+
 @Serializable
 data class MediaRef(
     val id: String,
@@ -176,6 +183,9 @@ object ErrorCodes {
     const val WRONG_MEDIA_KIND = "wrong_media_kind"
     const val FOLDER_LOCKED = "folder_locked"
     const val RENAME_IN_PROGRESS = "rename_in_progress"
+
+    /** A route the server does not have: an older server than this app (e.g. no review endpoints). */
+    const val NOT_FOUND = "not_found"
 }
 
 object Sides {

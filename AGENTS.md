@@ -49,13 +49,21 @@ rename engine), `.Actions`. `src/rm2ctl` is a headless command-line client (also
 
 ## Build, test, deploy (this PC)
 
-.NET 8 SDK is installed here. No Android SDK here.
+.NET 8 SDK is installed here. Since 2026-10-04 there is also a local Android toolchain (JDK 17 in
+`C:\Utils\jdk-17`, SDK in `C:\Utils\android-sdk`), so the phone app builds and unit-tests here too.
+Release APKs are still signed on the build box (its keystore is not here); a local build is a debug
+APK (`com.rankmaster2.phone.debug`), which installs beside the release app.
 
 ```powershell
 dotnet test RankMaster2.sln            # engine, server, audits (no windows)
 dotnet test pc\RankMaster2.Pc.sln      # PC client logic
 powershell -File deploy.ps1            # pull origin/master, publish tray + PC client into C:\Utils\RankMaster v3, start the tray
 powershell -File deploy.ps1 -SkipPull  # same, from the local tree
+```
+
+```bash
+. /c/Utils/android-sdk/rm-env.sh       # JAVA_HOME + ANDROID_HOME for this shell only (rm-env.ps1 for PowerShell)
+cd android && ./gradlew.bat testDebugUnitTest assembleDebug   # phone tests + app/build/outputs/apk/debug/app-debug.apk
 ```
 
 - The suites were written and kept green on the Linux build box. On Windows some tests fail for

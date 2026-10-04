@@ -647,6 +647,78 @@ paths:
         "503": { $ref: '#/components/responses/SessionBusy' }
         default: { $ref: '#/components/responses/InternalError' }
 
+  /session/items:
+    get:
+      tags: [session]
+      operationId: getSessionItems
+      summary: The open session's snapshot plus every record, for review mode.
+      description: |
+        Pure read (`SERVER_SPEC.md` § 10.17): `pairSeq` does not change, no impression is counted.
+        `items` is every record of the session, **both kinds** whatever `session.policy` is, each a
+        `MediaRef` built by the same code as the pair's (server-built, encoded `links` with `v=`; a
+        file gone from disk has `sizeBytes: null`). Sorted by `id` with `OrdinalIgnoreCase` (plain
+        character order, case-blind - not Explorer "natural" order). `session` is the same
+        `SessionSnapshot` every other `/session*` success returns, taken in the same critical section.
+        Works while `ranking` and `exhausted`.
+      responses:
+        "200":
+          description: The snapshot and the full item list.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Items' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/items/discard:
+    post:
+      tags: [actions]
+      operationId: discardItem
+      summary: Review mode - move one named record to discarded/, in the current pair or not.
+      description: |
+        The only action that takes an id (`SERVER_SPEC.md` § 10.18). It is safe because the id is
+        validated exactly like a media id (`invalid_media_id`, `media_outside_session`,
+        `media_extension_not_allowed`) and must then be a record of the open session
+        (`unknown_media_id`), and because it runs the same code as `discard` from the flush onward:
+        move to `<folder>/discarded/`, `RankingSession.Drop`, save, carry the rating into
+        `discarded/rankmaster_db.json`, with the same `move_failed` / `save_failed` semantics and the
+        same **missing-file case** (`lastAction.type: drop_missing`, no undo entry).
+
+        No `pairToken` and no pair needed, so it works while `exhausted`. If the id was in the
+        current pair a fresh pair is picked (or the session becomes `exhausted`); if it was in a warm
+        pair that pair is removed. `pairSeq` still advances on success. `lastAction` is
+        `type: discard`, `id` = the id, `side: null`, `pairToken: null`, `clientRequestId` echoed;
+        `undoAvailable` is true and `POST /session/undo` cancels it exactly like a pair discard.
+
+        **Idempotent retry.** If `lastAction` is a `discard`/`drop_missing` of this same id with this
+        same non-null `clientRequestId`, the first attempt was applied and only its response was
+        lost: the answer is `200` with the current snapshot and nothing changes. Keep the
+        `clientRequestId` identical across retries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiscardItemRequest' }
+            example:
+              id: "DSC_0123.jpg"
+              clientRequestId: "6b41-…"
+      responses:
+        "200": { $ref: '#/components/responses/Snapshot' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/MediaForbidden' }
+        "404": { $ref: '#/components/responses/MediaNotFound' }
+        "409": { $ref: '#/components/responses/RenameInProgress' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/MoveOrSaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
   /session/undo:
     post:
       tags: [actions]
@@ -665,7 +737,8 @@ paths:
           snapshot, never by inverse arithmetic.
         * **`skip`** — the same, minus the rating change.
         * **`discard` / `special`** — the file is moved back out of `discarded/` or `special 1/`, the
-          record is restored, and a freshly picked pair follows.
+          record is restored, and a freshly picked pair follows. A `discard` made by id
+          (`POST /session/items/discard`) is cancelled in exactly the same way.
 
         `lastAction.undoneType` names which of the four it was.
 
@@ -2060,7 +2133,7 @@ components:
         type: { $ref: '#/components/schemas/ActionType' }
         pairToken:
           type: [string, "null"]
-          description: The token this action consumed. Null for `undo` and `drop_missing`, which take none.
+          description: The token this action consumed. Null for `undo` and `drop_missing`, which take none, and for a `discard` made by id (`POST /session/items/discard`).
         clientRequestId:
           type: [string, "null"]
           description: Echoed verbatim from the request, or null if the client sent none.
@@ -2068,7 +2141,7 @@ components:
           description: '`vote` only.'
           oneOf: [{ $ref: '#/components/schemas/Side' }, { type: "null" }]
         side:
-          description: '`discard` and `special` only.'
+          description: '`discard` and `special` of a pair only; null for a `discard` made by id.'
           oneOf: [{ $ref: '#/components/schemas/Side' }, { type: "null" }]
         id:
           type: [string, "null"]
@@ -2085,6 +2158,34 @@ components:
             client say "vote taken back" rather than a bare "undone".
           oneOf: [{ $ref: '#/components/schemas/ActionType' }, { type: "null" }]
         at: { type: string, format: date-time }
+
+    Items:
+      type: object
+      additionalProperties: false
+      required: [session, items]
+      description: |
+        The body of `GET /session/items` (`SERVER_SPEC.md` § 10.17). `items.length` equals
+        `session.counts.total`.
+      properties:
+        session: { $ref: '#/components/schemas/SessionSnapshot' }
+        items:
+          type: array
+          description: Every record of the session, both kinds, sorted by `id` (`OrdinalIgnoreCase`).
+          items: { $ref: '#/components/schemas/MediaRef' }
+
+    DiscardItemRequest:
+      type: object
+      additionalProperties: false
+      required: [id]
+      description: |
+        Review mode's discard (`SERVER_SPEC.md` § 10.18). `id` is the decoded filename exactly as in
+        `MediaRef.id`; it is validated like a media id before anything moves.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 255
+        clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
 
     OpenSessionRequest:
       type: object
@@ -2122,7 +2223,8 @@ components:
       required: [pairToken, side]
       description: |
         The id is taken from the pair the token names — a client sends a side, never an id, so it
-        cannot act on an item that is not on screen.
+        cannot act on an item that is not on screen. (The one exception is review mode's
+        `POST /session/items/discard`, which names a record and is validated like a media id.)
       properties:
         pairToken: { type: string }
         side: { $ref: '#/components/schemas/Side' }

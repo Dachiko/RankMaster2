@@ -64,6 +64,21 @@ interface Rm2Client {
      */
     suspend fun cancel(clientRequestId: String): Rm2Result<Snapshot>
 
+    // -- review --------------------------------------------------------------------------------
+    // Review mode (one file at a time, keep or discard). It rides on the same session, and its
+    // undo is [cancel] - one level, the same one as everywhere else.
+
+    /** `GET /session/items`. Every file of the open session in filename order. `404 no_session` with none. */
+    suspend fun items(): Rm2Result<Items>
+
+    /**
+     * `POST /session/items/discard`. Moves the file into `<folder>/discarded/` (undoable with
+     * [cancel]). Carries the file's id rather than a pair token: review has no pair. A retry after a
+     * timeout MUST reuse [clientRequestId] - the server answers an already-applied one with `200`,
+     * where a fresh id would be `404 unknown_media_id`.
+     */
+    suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot>
+
     // -- bytes ---------------------------------------------------------------------------------
 
     /**

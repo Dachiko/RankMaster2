@@ -2,6 +2,7 @@ package com.rankmaster2.phone.rank
 
 import com.rankmaster2.phone.net.Browse
 import com.rankmaster2.phone.net.LastAction
+import com.rankmaster2.phone.net.Items
 import com.rankmaster2.phone.net.PairedDevice
 import com.rankmaster2.phone.net.Ping
 import com.rankmaster2.phone.net.Rm2Client
@@ -761,6 +762,8 @@ class RankViewModelTest {
         override suspend fun discard(pairToken: String, side: String, clientRequestId: String) = error("n/a")
         override suspend fun special(pairToken: String, side: String, clientRequestId: String) = error("n/a")
         override suspend fun cancel(clientRequestId: String) = error("n/a")
+        override suspend fun items(): Rm2Result<Items> = error("n/a")
+        override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> = error("n/a")
         override suspend fun save() = error("n/a")
         override suspend fun ping(): Rm2Result<Ping> = error("n/a")
         override suspend fun pair(code: String, deviceName: String): Rm2Result<PairedDevice> = error("n/a")
@@ -831,6 +834,8 @@ class RankViewModelTest {
         override suspend fun discard(pairToken: String, side: String, clientRequestId: String) = error("n/a")
         override suspend fun special(pairToken: String, side: String, clientRequestId: String) = error("n/a")
         override suspend fun cancel(clientRequestId: String) = error("n/a")
+        override suspend fun items(): Rm2Result<Items> = error("n/a")
+        override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> = error("n/a")
         override suspend fun save() = error("n/a")
         override suspend fun session(): Rm2Result<Snapshot> = error("n/a")
         override suspend fun ping(): Rm2Result<Ping> = error("n/a")

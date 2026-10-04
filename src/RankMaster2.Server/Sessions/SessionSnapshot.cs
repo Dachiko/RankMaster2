@@ -29,6 +29,11 @@ public sealed record SessionSnapshot(
     [property: JsonPropertyName("lastAction")] SnapshotLastAction? LastAction,
     [property: JsonPropertyName("lastSavedAt")] string? LastSavedAt);
 
+/// <summary>SERVER_SPEC.md § 10.17: the body of <c>GET /session/items</c>.</summary>
+public sealed record SessionItems(
+    [property: JsonPropertyName("session")] SessionSnapshot Session,
+    [property: JsonPropertyName("items")] IReadOnlyList<SnapshotMediaRef> Items);
+
 /// <summary>SERVER_SPEC.md § 9.2. <c>stills + videos == total</c>.</summary>
 public sealed record SnapshotCounts(
     [property: JsonPropertyName("total")] int Total,

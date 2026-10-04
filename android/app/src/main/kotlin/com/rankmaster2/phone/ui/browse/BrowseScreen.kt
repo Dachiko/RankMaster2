@@ -28,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -85,6 +86,8 @@ fun BrowseRoute(
         onEnter = viewModel::enter,
         onOpen = viewModel::open,
         onOpenCurrent = viewModel::openCurrent,
+        onReview = viewModel::review,
+        onReviewCurrent = viewModel::reviewCurrent,
         onOpenRemembered = viewModel::openRemembered,
         onUp = viewModel::up,
         onRefresh = viewModel::refresh,
@@ -102,6 +105,8 @@ fun BrowseScreen(
     onEnter: (String) -> Unit,
     onOpen: (String) -> Unit,
     onOpenCurrent: () -> Unit,
+    onReview: (String) -> Unit,
+    onReviewCurrent: () -> Unit,
     onOpenRemembered: () -> Unit,
     onUp: () -> Unit,
     onRefresh: () -> Unit,
@@ -149,12 +154,12 @@ fun BrowseScreen(
                     state.pairingLost -> PairingLost(onPairAgain)
                     state.listFailure != null -> ListFailure(state.listFailure, onRefresh)
                     state.place is Place.Roots -> RootList(state.roots, state.lastFolder, onEnter, onOpenRemembered)
-                    else -> EntryList(state, onEnter, onOpen, onRetryCounts)
+                    else -> EntryList(state, onEnter, onOpen, onReview, onRetryCounts)
                 }
             }
 
             if (state.place is Place.Folder && !state.pairingLost) {
-                OpenThisFolderBar(state, onOpenCurrent)
+                OpenThisFolderBar(state, onOpenCurrent, onReviewCurrent)
             }
         }
     }
@@ -406,6 +411,7 @@ private fun EntryList(
     state: BrowseUiState,
     onEnter: (String) -> Unit,
     onOpen: (String) -> Unit,
+    onReview: (String) -> Unit,
     onRetryCounts: () -> Unit,
 ) {
     LazyColumn(Modifier.fillMaxSize()) {
@@ -420,6 +426,7 @@ private fun EntryList(
                 openEnabled = !state.isOpening,
                 onEnter = onEnter,
                 onOpen = onOpen,
+                onReview = onReview,
             )
             HorizontalDivider(color = Line)
         }
@@ -461,6 +468,7 @@ private fun EntryRow(
     openEnabled: Boolean,
     onEnter: (String) -> Unit,
     onOpen: (String) -> Unit,
+    onReview: (String) -> Unit,
 ) {
     val dim = !row.openable
     Row(
@@ -491,7 +499,10 @@ private fun EntryRow(
         }
         when {
             opening -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            row.openable -> TextButton(onClick = { onOpen(row.path) }, enabled = openEnabled) { Text("Rank") }
+            row.openable -> {
+                TextButton(onClick = { onReview(row.path) }, enabled = openEnabled) { Text("Review") }
+                TextButton(onClick = { onOpen(row.path) }, enabled = openEnabled) { Text("Rank") }
+            }
             else -> Spacer(Modifier.width(8.dp))
         }
         if (row.enterable) Text("›", color = if (dim) Dimmed else Faint)
@@ -513,38 +524,52 @@ private fun Marker(bright: Boolean) {
 // -- the bottom bar ------------------------------------------------------------------------------
 
 @Composable
-private fun OpenThisFolderBar(state: BrowseUiState, onOpenCurrent: () -> Unit) {
+private fun OpenThisFolderBar(
+    state: BrowseUiState,
+    onOpenCurrent: () -> Unit,
+    onReviewCurrent: () -> Unit,
+) {
     val path = state.currentPath ?: return
     val opening = state.openingPath == path
     HorizontalDivider(color = Line)
-    Row(
+    Column(
         // Extra room underneath, because `safeDrawing` gives none here. This app hides the system
         // bars, so their insets come back as zero - but the *gesture* is still there, and the
         // bottom strip of the glass is the home swipe whether or not a bar is drawn on it. A
         // button sitting on it is a button that sometimes sends you to the launcher instead.
         modifier = Modifier.fillMaxWidth().padding(16.dp).padding(bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text("Rank the folder you are in", style = MaterialTheme.typography.bodyMedium)
-            // § 10.15 lists a folder's *children*; it never says whether the folder you are
-            // standing in is rankable. So this button is always live and the server decides.
-            Text(
-                path,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                color = Dimmed,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Button(onClick = onOpenCurrent, enabled = !state.isOpening) {
-            if (opening) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
+        Text("The folder you are in", style = MaterialTheme.typography.bodyMedium)
+        // § 10.15 lists a folder's *children*; it never says whether the folder you are
+        // standing in is rankable. So these buttons are always live and the server decides.
+        Text(
+            path,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = Dimmed,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Review is the sibling of Rank: same open, different screen. Outlined so that the
+            // filled button stays the one he has always pressed.
+            OutlinedButton(
+                onClick = onReviewCurrent,
+                enabled = !state.isOpening,
+                modifier = Modifier.weight(1f),
+            ) { Text("Review") }
+            Button(
+                onClick = onOpenCurrent,
+                enabled = !state.isOpening,
+                modifier = Modifier.weight(1f),
+            ) {
+                if (opening) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text("Open this folder")
             }
-            Text("Open this folder")
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.rankmaster2.phone.pairing
 
 import com.rankmaster2.phone.net.Browse
+import com.rankmaster2.phone.net.Items
 import com.rankmaster2.phone.net.PairedDevice
 import com.rankmaster2.phone.net.Ping
 import com.rankmaster2.phone.net.Rm2Client
@@ -63,6 +64,10 @@ class FakeRm2Client(
         unexpected<Snapshot>("special")
 
     override suspend fun cancel(clientRequestId: String) = unexpected<Snapshot>("cancel")
+
+    override suspend fun items() = unexpected<Items>("items")
+
+    override suspend fun discardItem(id: String, clientRequestId: String) = unexpected<Snapshot>("discardItem")
 
     override fun url(link: String): String = baseUrl + link
 

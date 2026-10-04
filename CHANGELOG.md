@@ -4,6 +4,16 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## 3.1.0 — 2026-10-04
+- New: **Review mode** on the phone (phone 3.1.0, versionCode 4). From the folder list, "Review"
+  beside "Rank" shows every photo and video of the folder one at a time, full screen, true aspect.
+  Swipe left (or Discard) moves it to `discarded/`, swipe right (or Next) keeps it, Cancel takes back
+  the last swipe (a discard only while it is the PC's last action). Progress in %, position
+  remembered per folder.
+- Server: `GET /session/items` (every file of the session plus the snapshot) and
+  `POST /session/items/discard` (discard one file by id, same move/undo as the pair discard).
+  SERVER_SPEC.md § 10.17, § 10.18. The PC client is unchanged.
+
 ## 3.0.6 — 2026-09-19
 - PC client: the info card (folder, confidence, unranked, session) is two lines again, larger.
 - Filenames moved to the bottom corners and made fainter, out of the card's way.

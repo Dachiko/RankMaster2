@@ -2,6 +2,7 @@ package com.rankmaster2.phone.rank
 
 import com.rankmaster2.phone.net.Browse
 import com.rankmaster2.phone.net.Counts
+import com.rankmaster2.phone.net.Items
 import com.rankmaster2.phone.net.LastAction
 import com.rankmaster2.phone.net.Links
 import com.rankmaster2.phone.net.MediaRef
@@ -99,6 +100,8 @@ class FakeRankClient : Rm2Client {
     override suspend fun roots(): Rm2Result<Roots> = error("not used")
     override suspend fun browse(path: String, counts: Boolean): Rm2Result<Browse> = error("not used")
     override suspend fun openSession(folder: String): Rm2Result<Snapshot> = error("not used")
+    override suspend fun items(): Rm2Result<Items> = error("not used")
+    override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> = error("not used")
     var sessionClosed = false
         private set
 
