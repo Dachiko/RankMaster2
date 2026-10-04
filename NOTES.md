@@ -8,6 +8,8 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
   **Review mode** on the phone (see `CHANGELOG.md`; server `GET /session/items` +
   `POST /session/items/discard`, SERVER_SPEC.md § 10.17–10.18; phone `android/.../ui/review/`).
   Pushed and deployed on this PC 2026-10-04 (`deploy.ps1 -SkipPull`; `/ping` answers 3.1.0).
+- **Debug APK 3.1.0 sent to Mike on Telegram 2026-10-04** (arm64 only, see `AGENTS.md`); waiting for
+  him to install, pair and try it.
 - **Review mode is untested on a phone.** Unit tests only (server 18 new, phone 51 new). A debug
   APK (`com.rankmaster2.phone.debug`, installs beside the release app, needs its own pairing) builds
   here; to check on the phone: swipe feel (30 % / fling threshold), the edge back-gesture conflict,
