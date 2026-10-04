@@ -20,6 +20,8 @@ public enum UiKey
     Escape,
     Enter,
     Space,
+    /// <summary>The folder browser's keys (plan I § 2.2 item 5). Letters are not here: they arrive as typed text.</summary>
+    Backspace, PageUp, PageDown, Home, End,
 }
 
 /// <summary>Modifier keys held alongside <see cref="UiKey"/>. Either physical Ctrl key is one flag.</summary>

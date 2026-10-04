@@ -68,4 +68,38 @@ public static class HelpRows
         new("02", "START", Start),
         new("03", "EVERYWHERE", Everywhere),
     ];
+
+    // ---- the folder browser's keys page (plan I § 2.2 item 5, same page as plan H § 3.3) ------------------------
+    // Each row's caption names the key MapBrowse maps to the row's Intent; the one typing row is None on purpose
+    // (letters arrive as text, not as a key).
+
+    public static readonly IReadOnlyList<HelpRow> BrowseMove =
+    [
+        new("Move", "↑ / ↓", Intent.BrowseUp),
+        new("Page", "PgUp / PgDn", Intent.BrowsePageUp),
+        new("First · last", "Home / End", Intent.BrowseHome),
+    ];
+
+    public static readonly IReadOnlyList<HelpRow> BrowseFolders =
+    [
+        new("Go into", "→", Intent.BrowseInto),
+        new("Go up", "←", Intent.BrowseOut),
+        new("Choose this folder", "Enter", Intent.BrowseEnter),
+    ];
+
+    public static readonly IReadOnlyList<HelpRow> BrowseFind =
+    [
+        new("Find by typing", "A–Z", Intent.None),
+        new("Delete a letter · go up", "Backspace", Intent.BrowseBackspace),
+        new("Clear letters · leave", "Esc", Intent.BrowseLeave),
+        new("Keys", "F1", Intent.ToggleHelp),
+    ];
+
+    /// <summary>The three columns of the browser's keys page.</summary>
+    public static readonly IReadOnlyList<HelpSection> BrowsePage =
+    [
+        new("01", "MOVE", BrowseMove),
+        new("02", "FOLDERS", BrowseFolders),
+        new("03", "FIND", BrowseFind),
+    ];
 }

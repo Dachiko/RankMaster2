@@ -2,7 +2,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
-using Avalonia.Platform.Storage;
 using Avalonia.Controls.Shapes;
 using RankMaster2.Pc.Ui.Surface;
 
@@ -72,7 +71,7 @@ public partial class StartView : UserControl, IRefreshable
         _statusLine = this.FindControl<TextBlock>("StatusLine")!;
         _keys = this.FindControl<KeysPage>("Keys")!;
 
-        _openButton.Click += (_, _) => _ = OpenViaPicker();
+        _openButton.Click += (_, _) => _coordinator.OpenBrowser(BrowseMode.Rank);
         _resumeButton.Click += (_, _) =>
         {
             // The first pill is "take back" while an exhausted session is open and can be undone
@@ -82,7 +81,7 @@ public partial class StartView : UserControl, IRefreshable
             else if (_coordinator.Start.LastFolder is { } folder)
                 _ = _coordinator.OpenFolderAsync(folder);
         };
-        _renameButton.Click += (_, _) => _ = RenameViaPicker();
+        _renameButton.Click += (_, _) => _coordinator.OpenBrowser(BrowseMode.Rename);
 
         // F1 by mouse: the same press the key makes, so the coordinator keeps the one rule.
         _keysCaption.PointerPressed += (_, e) =>
@@ -92,9 +91,6 @@ public partial class StartView : UserControl, IRefreshable
         };
         _keys.CloseRequested += () => _coordinator.OnStartKeyDown(UiKey.F1, UiModifiers.None);
 
-        _coordinator.OpenFolderRequested += () => _ = OpenViaPicker();
-        _coordinator.RenameRequested += () => _ = RenameViaPicker();
-
         // The hero may be as wide as the screen less a margin; past that it shrinks (Viewbox, DownOnly).
         // The busy line is as wide as the hero (plan H § 3.1), so it follows the hero's width.
         SizeChanged += (_, e) => _heroBox.MaxWidth = Math.Max(120, e.NewSize.Width - 120);
@@ -103,49 +99,6 @@ public partial class StartView : UserControl, IRefreshable
             if (e.Property == BoundsProperty) _busy.Width = _heroBox.Bounds.Width;
         };
         Loaded += (_, _) => Refresh();
-    }
-
-    private async Task OpenViaPicker()
-    {
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider is not { } storage || _coordinator.Start.DialogOpen) return;
-
-        _coordinator.BeginDialog();
-        try
-        {
-            var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Select a folder to rank" });
-            var folder = result.Count > 0 ? result[0].TryGetLocalPath() : null;
-            _motion.Activity.Note(); // picking a folder is the owner acting, though no key or click reached us
-            if (folder is not null)
-                await _coordinator.OpenFolderAsync(folder);
-        }
-        finally
-        {
-            _coordinator.EndDialog();
-        }
-    }
-
-    /// <summary>§ 3.13: the same native picker <see cref="OpenViaPicker"/> uses, but on a folder to
-    /// rename rather than to rank — the result opens the rename card's confirmation, nothing is
-    /// sent to the server yet.</summary>
-    private async Task RenameViaPicker()
-    {
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider is not { } storage || _coordinator.Start.DialogOpen) return;
-
-        _coordinator.BeginDialog();
-        try
-        {
-            var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Select a folder to rename by rank" });
-            var folder = result.Count > 0 ? result[0].TryGetLocalPath() : null;
-            _motion.Activity.Note();
-            if (folder is not null)
-                _coordinator.BeginRenameConfirm(folder);
-        }
-        finally
-        {
-            _coordinator.EndDialog();
-        }
     }
 
     /// <summary>Plan H § 3.4: ← / → move focus between the visible, enabled pills (no wrap: the ends
@@ -163,6 +116,14 @@ public partial class StartView : UserControl, IRefreshable
 
     /// <summary>The pill that has focus, by name, or null. For tests.</summary>
     public string? FocusedPill => new[] { _resumeButton, _openButton, _renameButton }.FirstOrDefault(b => b.IsFocused)?.Name;
+
+    /// <summary>Back from the browser (or the rename card): the screen was out of the tree, so it has lost focus and
+    /// the first pill gets it again.</summary>
+    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _focusPending = true;
+    }
 
     public void Refresh()
     {

@@ -63,4 +63,26 @@ public static class KeyMap
             _ => Intent.None,
         };
     }
+
+    /// <summary>
+    /// The folder browser's map (plan I § 2.2 item 5). Letters and digits are deliberately absent: in this
+    /// screen they type into the filter (they reach <see cref="RankCoordinator.OnBrowseText"/> as text), so
+    /// <c>O</c> and <c>R</c> mean nothing here. Modifiers are not looked at.
+    /// </summary>
+    public static Intent MapBrowse(UiKey key, UiModifiers modifiers) => key switch
+    {
+        UiKey.Up => Intent.BrowseUp,
+        UiKey.Down => Intent.BrowseDown,
+        UiKey.PageUp => Intent.BrowsePageUp,
+        UiKey.PageDown => Intent.BrowsePageDown,
+        UiKey.Home => Intent.BrowseHome,
+        UiKey.End => Intent.BrowseEnd,
+        UiKey.Right => Intent.BrowseInto,
+        UiKey.Left => Intent.BrowseOut,
+        UiKey.Backspace => Intent.BrowseBackspace,
+        UiKey.Enter => Intent.BrowseEnter,
+        UiKey.Escape => Intent.BrowseLeave,
+        UiKey.F1 => Intent.ToggleHelp,
+        _ => Intent.None,
+    };
 }

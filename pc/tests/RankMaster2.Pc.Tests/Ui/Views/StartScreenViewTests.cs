@@ -48,15 +48,14 @@ public class StartScreenViewTests
     // ---- keys -------------------------------------------------------------------------------------
 
     [AvaloniaFact]
-    public void R_on_the_start_screen_raises_the_rename_request()
+    public void R_on_the_start_screen_opens_the_browser_in_rename_mode()
     {
         var (window, _, c, _) = Build();
-        var raised = 0;
-        c.RenameRequested += () => raised++;
 
         window.KeyPress(Key.R, RawInputModifiers.None);
 
-        Assert.Equal(1, raised);
+        Assert.Equal(AppScreen.Browse, c.Screen);
+        Assert.Equal(BrowseMode.Rename, c.Browse.Mode);
     }
 
     [AvaloniaFact]
@@ -64,24 +63,21 @@ public class StartScreenViewTests
     {
         var (window, _, c, _) = Build();
         c.Start.BeginOpening("/lib");
-        var raised = 0;
-        c.RenameRequested += () => raised++;
 
         window.KeyPress(Key.R, RawInputModifiers.None);
 
-        Assert.Equal(0, raised);
+        Assert.Equal(AppScreen.Start, c.Screen);
     }
 
     [AvaloniaFact]
-    public void O_still_raises_the_open_request()
+    public void O_on_the_start_screen_opens_the_browser_in_rank_mode()
     {
         var (window, _, c, _) = Build();
-        var raised = 0;
-        c.OpenFolderRequested += () => raised++;
 
         window.KeyPress(Key.O, RawInputModifiers.None);
 
-        Assert.Equal(1, raised);
+        Assert.Equal(AppScreen.Browse, c.Screen);
+        Assert.Equal(BrowseMode.Rank, c.Browse.Mode);
     }
 
     [AvaloniaFact]
@@ -120,14 +116,11 @@ public class StartScreenViewTests
     public void Any_key_closes_the_keys_page_and_does_nothing_else()
     {
         var (window, root, c, _) = Build();
-        var opened = 0;
-        c.OpenFolderRequested += () => opened++;
-
         window.KeyPress(Key.F1, RawInputModifiers.None);
-        window.KeyPress(Key.O, RawInputModifiers.None); // closes the page; does not also open the picker
+        window.KeyPress(Key.O, RawInputModifiers.None); // closes the page; does not also open the browser
 
         Assert.False(Find<KeysPage>(root)!.IsOpen);
-        Assert.Equal(0, opened);
+        Assert.Equal(AppScreen.Start, c.Screen);
     }
 
     [AvaloniaFact]

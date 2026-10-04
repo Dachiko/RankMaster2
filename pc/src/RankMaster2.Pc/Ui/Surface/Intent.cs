@@ -24,6 +24,25 @@ public enum Intent
     RenameFolder,
     ToggleHelp,
     Quit,
+
+    // ---- the folder browser (plan I § 2.2 item 5); only KeyMap.MapBrowse produces these ----
+    /// <summary>↑ / ↓: move the selection (↑ from the first row lands on <b>here</b>).</summary>
+    BrowseUp,
+    BrowseDown,
+    BrowsePageUp,
+    BrowsePageDown,
+    BrowseHome,
+    BrowseEnd,
+    /// <summary>→: go into the selected folder.</summary>
+    BrowseInto,
+    /// <summary>←: go up one folder (from a drive: to THIS PC).</summary>
+    BrowseOut,
+    /// <summary>Backspace: delete a typed letter, or with none typed go up (like ←).</summary>
+    BrowseBackspace,
+    /// <summary>Enter: choose the selected folder (rank / rename), or go into one that cannot be chosen.</summary>
+    BrowseEnter,
+    /// <summary>Esc: clear the typed letters, or with none typed leave the browser.</summary>
+    BrowseLeave,
 }
 
 /// <summary>Small helpers so callers do not repeat the side-to-intent mapping by hand.</summary>

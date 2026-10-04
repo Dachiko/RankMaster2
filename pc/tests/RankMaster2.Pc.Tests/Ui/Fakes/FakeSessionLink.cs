@@ -49,6 +49,8 @@ public sealed class FakeSessionLink : ISessionLink
     public Task<OpenResult> OpenAsync(string folder, CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(OpenAsync), null, null));
+        if (ThrowOnOverlappingBrowseCalls && BrowseInFlight > 0)
+            throw new InvalidOperationException("FakeSessionLink: a link call is already in flight (the real link's gate).");
         if (OpenResults.Count > 0) return Task.FromResult(OpenResults.Dequeue());
         if (Snapshot is not null) return Task.FromResult<OpenResult>(new OpenResult.Opened(Snapshot, false));
         throw new InvalidOperationException("FakeSessionLink.OpenAsync: no scripted OpenResult and no default Snapshot set.");
@@ -147,20 +149,57 @@ public sealed class FakeSessionLink : ISessionLink
     /// flight (e.g. to check a stale answer is dropped).</summary>
     public Func<string, Task>? BeforeBrowseAnswer { get; set; }
 
+    /// <summary>The real link runs every call through one gate: a second call while one is in flight throws
+    /// <see cref="InvalidOperationException"/>. Set this to make the fake do the same for overlapping
+    /// GetRootsAsync / BrowseAsync / OpenAsync calls, so a test proves the browser never overlaps them.</summary>
+    public bool ThrowOnOverlappingBrowseCalls { get; set; }
+
+    /// <summary>How many GetRootsAsync / BrowseAsync calls are in flight now, and the most there ever were.</summary>
+    public int BrowseInFlight { get; private set; }
+    public int MaxBrowseInFlight { get; private set; }
+
+    private void EnterBrowseCall()
+    {
+        lock (Calls)
+        {
+            if (ThrowOnOverlappingBrowseCalls && BrowseInFlight > 0)
+                throw new InvalidOperationException("FakeSessionLink: a link call is already in flight (the real link's gate).");
+            BrowseInFlight++;
+            MaxBrowseInFlight = Math.Max(MaxBrowseInFlight, BrowseInFlight);
+        }
+    }
+
+    private void LeaveBrowseCall() { lock (Calls) BrowseInFlight--; }
+
+    private static ListingResult.Failed Cancelled() =>
+        new(new Failure(FailureKind.Unreachable, "Cancelled", "", "client_cancelled", null, false));
+
     public Task<RootsResult> GetRootsAsync(CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(GetRootsAsync), null, null));
-        if (RootsResults.Count > 0) return Task.FromResult(RootsResults.Dequeue());
-        return Task.FromResult<RootsResult>(new RootsResult.Ok(Roots.ToList()));
+        EnterBrowseCall();
+        try
+        {
+            if (RootsResults.Count > 0) return Task.FromResult(RootsResults.Dequeue());
+            return Task.FromResult<RootsResult>(new RootsResult.Ok(Roots.ToList()));
+        }
+        finally { LeaveBrowseCall(); }
     }
 
     public async Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default)
     {
         Calls.Add(new Call(nameof(BrowseAsync), null, null) { Path = path });
-        if (BeforeBrowseAnswer is not null) await BeforeBrowseAnswer(path).ConfigureAwait(false);
-        if (ListingResults.Count > 0) return ListingResults.Dequeue();
-        if (Listings.TryGetValue(path, out var listing)) return new ListingResult.Ok(listing);
-        return new ListingResult.Failed(new Failure(FailureKind.FolderNotFound, "Folder not found", path, "client_test", null, false));
+        EnterBrowseCall();
+        try
+        {
+            if (BeforeBrowseAnswer is not null) await BeforeBrowseAnswer(path).ConfigureAwait(false);
+            // Like the real link: a cancelled call answers quickly with Failed(client_cancelled).
+            if (ct.IsCancellationRequested) return Cancelled();
+            if (ListingResults.Count > 0) return ListingResults.Dequeue();
+            if (Listings.TryGetValue(path, out var listing)) return new ListingResult.Ok(listing);
+            return new ListingResult.Failed(new Failure(FailureKind.FolderNotFound, "Folder not found", path, "client_test", null, false));
+        }
+        finally { LeaveBrowseCall(); }
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

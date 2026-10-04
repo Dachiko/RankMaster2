@@ -539,35 +539,6 @@ public class RankCoordinatorTests
         Assert.All(video.Created, s => Assert.Equal(1, s.StopCalls));
     }
 
-    // ---- A27: Esc while a dialog is open is the picker's, not ours --------------------------------
-
-    [Fact]
-    public void Esc_on_the_start_screen_does_nothing_while_the_folder_picker_is_open()
-    {
-        var (c, _, _, _, _, _) = Build();
-        c.BeginDialog(); // on the start screen: Start.DialogOpen = true
-
-        var quit = false;
-        c.QuitRequested += () => quit = true;
-        c.OnStartKeyDown(UiKey.Escape, UiModifiers.None);
-
-        Assert.False(quit);
-    }
-
-    [Fact]
-    public async Task Esc_on_the_compare_screen_does_nothing_while_the_folder_picker_is_open()
-    {
-        var (c, link, _, _, clock, delay) = Build();
-        await EnterReadyCompareScreen(c, link, clock, SnapshotBuilder.Ranking());
-        c.BeginDialog(); // on the compare screen: Rank.DialogOpen = true
-
-        var quit = false;
-        c.QuitRequested += () => quit = true;
-        await c.OnCompareKeyDown(UiKey.Escape, UiModifiers.None);
-
-        Assert.False(quit);
-    }
-
     // ---- A20: the 250 ms repaint tick ---------------------------------------------------------------
 
     [Fact]
