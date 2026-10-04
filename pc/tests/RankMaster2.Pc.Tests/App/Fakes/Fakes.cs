@@ -40,6 +40,10 @@ public sealed class FakeSessionLink : ISessionLink
     public Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default) => NotUsedRename();
     public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => NotUsedRename();
 
+    // Plan I grew ISessionLink by the folder browser's two reads; A's own tests never browse.
+    public Task<RootsResult> GetRootsAsync(CancellationToken ct = default) => throw new NotSupportedException("not exercised by these tests");
+    public Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default) => throw new NotSupportedException("not exercised by these tests");
+
     public async Task CloseAsync(CancellationToken ct = default)
     {
         CloseCalls++;

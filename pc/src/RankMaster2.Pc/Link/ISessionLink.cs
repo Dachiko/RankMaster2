@@ -97,6 +97,21 @@ public interface ISessionLink : IAsyncDisposable
     /// token on Esc (PC_CLIENT_PLAN.md § 6.8 says 500 ms) and do not wait for more.
     /// </summary>
     Task CloseAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.14: GET /libraries/roots — the drives and shares, for the in-app folder
+    /// browser (pc/plans/I-folder-browser.md). A pure read with no session needed; never opens,
+    /// closes or changes a session.
+    /// </summary>
+    Task<RootsResult> GetRootsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.15: GET /libraries/browse?path=…&amp;counts=true — the direct child folders
+    /// of <paramref name="path"/>, each with <c>rankable</c>/<c>hasDatabase</c>/<c>accessible</c>
+    /// (plan I § 2.2 item 9: counts are asked for only so <c>rankable</c> is known). A pure read; no
+    /// session needed.
+    /// </summary>
+    Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default);
 }
 
 public enum LinkState
@@ -176,6 +191,21 @@ public abstract record RenameOperationResult
     /// do something about it (rename_failed with the session left untouched — StartRenameAsync
     /// only; the flag is set after the journal write succeeds, never before). Show Failure.</summary>
     public sealed record Refused(Failure Failure) : RenameOperationResult;
+}
+
+/// <summary>What GetRootsAsync ends with (plan I).</summary>
+public abstract record RootsResult
+{
+    public sealed record Ok(IReadOnlyList<LibraryRoot> Roots) : RootsResult;
+    public sealed record Failed(Failure Failure) : RootsResult;
+}
+
+/// <summary>What BrowseAsync ends with (plan I). A folder that is gone, not a directory or not
+/// readable comes back as Failed with the matching Folder* kind.</summary>
+public abstract record ListingResult
+{
+    public sealed record Ok(FolderListing Listing) : ListingResult;
+    public sealed record Failed(Failure Failure) : ListingResult;
 }
 
 public enum ResyncReason

@@ -483,6 +483,13 @@ internal sealed class SessionLink : ISessionLink
         return ClassifyRenameReply(reply);
     }, ct);
 
+    // Plan I, stage S1 (worker L) implements these two; S0 only fixes the contract.
+    public Task<RootsResult> GetRootsAsync(CancellationToken ct = default) =>
+        throw new NotImplementedException("plan I S1: GET /libraries/roots");
+
+    public Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default) =>
+        throw new NotImplementedException("plan I S1: GET /libraries/browse");
+
     public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => Gated(async () =>
     {
         var reply = await SendRenameSequence(

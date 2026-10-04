@@ -5,7 +5,7 @@ using RankMaster2.Pc.Link.Wire;
 using RankMaster2.Pc.Stills;
 using RankMaster2.Pc.Video;
 
-public enum AppScreen { Start, Rank, Rename }
+public enum AppScreen { Start, Rank, Rename, Browse }
 
 /// <summary>
 /// Intent → (release handles) → <see cref="ISessionLink"/> call → apply result → prefetch (plan

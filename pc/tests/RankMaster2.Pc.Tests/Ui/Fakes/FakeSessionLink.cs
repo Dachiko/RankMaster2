@@ -13,7 +13,11 @@ public sealed class FakeSessionLink : ISessionLink
     public Failure? LastFailure { get; set; }
     public bool IsBusy { get; set; }
 
-    public sealed record Call(string Method, Side? Side, long? PairSeq);
+    public sealed record Call(string Method, Side? Side, long? PairSeq)
+    {
+        /// <summary>The folder a BrowseAsync call asked for (plan I); null for every other call.</summary>
+        public string? Path { get; init; }
+    }
     public readonly List<Call> Calls = new();
 
     public Queue<ConnectResult> ConnectResults { get; } = new();
@@ -124,6 +128,39 @@ public sealed class FakeSessionLink : ISessionLink
         Calls.Add(new Call(nameof(CancelRenameAsync), null, null));
         if (CancelRenameResults.Count > 0) return Task.FromResult(CancelRenameResults.Dequeue());
         throw new InvalidOperationException("FakeSessionLink.CancelRenameAsync: no scripted RenameOperationResult.");
+    }
+
+    // ---- folder browser (plan I) -----------------------------------------------------------------
+
+    /// <summary>What GetRootsAsync answers. Empty by default.</summary>
+    public List<RankMaster2.Pc.Link.Wire.LibraryRoot> Roots { get; } = new();
+
+    /// <summary>What BrowseAsync answers, by path (exact string). A path not in here answers
+    /// <see cref="ListingResult.Failed"/> with <see cref="FailureKind.FolderNotFound"/>.</summary>
+    public Dictionary<string, RankMaster2.Pc.Link.Wire.FolderListing> Listings { get; } = new();
+
+    /// <summary>When set, the next GetRootsAsync / BrowseAsync answers exactly this instead.</summary>
+    public Queue<RootsResult> RootsResults { get; } = new();
+    public Queue<ListingResult> ListingResults { get; } = new();
+
+    /// <summary>When set, BrowseAsync awaits this before answering, so a test can hold a listing in
+    /// flight (e.g. to check a stale answer is dropped).</summary>
+    public Func<string, Task>? BeforeBrowseAnswer { get; set; }
+
+    public Task<RootsResult> GetRootsAsync(CancellationToken ct = default)
+    {
+        Calls.Add(new Call(nameof(GetRootsAsync), null, null));
+        if (RootsResults.Count > 0) return Task.FromResult(RootsResults.Dequeue());
+        return Task.FromResult<RootsResult>(new RootsResult.Ok(Roots.ToList()));
+    }
+
+    public async Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default)
+    {
+        Calls.Add(new Call(nameof(BrowseAsync), null, null) { Path = path });
+        if (BeforeBrowseAnswer is not null) await BeforeBrowseAnswer(path).ConfigureAwait(false);
+        if (ListingResults.Count > 0) return ListingResults.Dequeue();
+        if (Listings.TryGetValue(path, out var listing)) return new ListingResult.Ok(listing);
+        return new ListingResult.Failed(new Failure(FailureKind.FolderNotFound, "Folder not found", path, "client_test", null, false));
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

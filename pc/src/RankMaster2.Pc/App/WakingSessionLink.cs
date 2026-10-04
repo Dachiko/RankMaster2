@@ -105,6 +105,10 @@ public sealed class WakingSessionLink : ISessionLink
     public Task<RenameOperationResult> GetRenameAsync(CancellationToken ct = default) => _inner.GetRenameAsync(ct);
     public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => _inner.CancelRenameAsync(ct);
 
+    // Plan I: the folder browser's two reads; nothing about the video engine applies to them.
+    public Task<RootsResult> GetRootsAsync(CancellationToken ct = default) => _inner.GetRootsAsync(ct);
+    public Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default) => _inner.BrowseAsync(path, ct);
+
     public Task CloseAsync(CancellationToken ct = default) => _inner.CloseAsync(ct);
 
     public ValueTask DisposeAsync() => _inner.DisposeAsync();
