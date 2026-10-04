@@ -66,6 +66,13 @@ powershell -File deploy.ps1 -SkipPull  # same, from the local tree
 cd android && ./gradlew.bat testDebugUnitTest assembleDebug   # phone tests + app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Getting a local debug APK to Mike: Telegram bots can send at most 50 MB and the debug APK is ~64 MB.
+Drop `lib/x86*` and `lib/armeabi-v7a` (and the old `META-INF` signature files) from the zip, then
+`zipalign -p 4` and `apksigner sign` with `~/.android/debug.keystore` (pass `android`, alias
+`androiddebugkey`) from `build-tools/35.0.0`: ~49 MB, arm64 only. Send it with `sendDocument` through
+his bot (token and chat id in `C:\sd\GUIs\Comfy_v4\user\default\01Mike\telegram.json`, a secret:
+never print or commit it). Same debug key every time, so the next debug APK installs over the last.
+
 - The suites were written and kept green on the Linux build box. On Windows some tests fail for
   reasons of the platform, not of the app: see `NOTES.md` for the current list, and compare with
   it before blaming your change.
