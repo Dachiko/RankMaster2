@@ -19,9 +19,15 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
   and drops the full-screen `systemGestureExclusion`. Both unconfirmed. If videos are still black:
   compare with ranking's video panes on the same file, then get logcat from his phone (wireless
   debugging) or an emulator run (visual tier: ask first).
+- **3.2.1 did not fix the black videos** (edge back swipe: no report yet). The server log shows the
+  phone downloads every video completely, so it is decode/render on the phone; Review shows the
+  spinner (MediaPane's cover is up: no aspect ratio or never `Loaded`). **Phone 3.2.2** adds a
+  "Debug info" menu row in Review (`ui/review/ReviewDebug.kt`, `media/VideoDiagnostics.kt`) that
+  shows and copies player/decoder/surface diagnostics; waiting for Mike to send the text. Also asked
+  him whether videos show in Rank mode in the same test app.
 - Still to hear about: tap / swipe / long press feel, the two new menu glyphs (restart, back
   arrow), resume after leave/re-enter. Videos slide but don't tilt.
-- **Phone:** the tree's APK is `versionName 3.2.1` / `versionCode 6`. Which release build is on
+- **Phone:** the tree's APK is `versionName 3.2.2` / `versionCode 7`. Which release build is on
   Mike's phone is unknown; the debug app (`com.rankmaster2.phone.debug`) sits beside it.
 - **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 491 pass.
 - **Open phone bugs** (`android/BUGS.md`): 1 video wrong proportions, 2 cancel notch drawn wrong,

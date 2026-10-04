@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,11 +37,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.rankmaster2.phone.media.MediaDebugProbe
 import com.rankmaster2.phone.media.MediaPane
 import com.rankmaster2.phone.media.Rm2Media
 import com.rankmaster2.phone.ui.rank.CancelNotch
@@ -99,6 +104,20 @@ fun ReviewScreen(
     var container by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var dots by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
+    // The debug overlay: on until the menu row turns it off, across items (and a rotation).
+    var debugOn by rememberSaveable { mutableStateOf(false) }
+    val probe = remember { MediaDebugProbe() }
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val debugScreen = DebugScreen(
+        item = state.current,
+        phase = state.phase.name,
+        playing = state.playing,
+        foreground = state.foreground,
+        index = state.index,
+        count = state.items.size,
+    )
+
     BoxWithConstraints(
         modifier
             .fillMaxSize()
@@ -115,12 +134,23 @@ fun ReviewScreen(
             ReviewState.Phase.Reviewing -> Reviewer(
                 state = state,
                 media = media,
+                probe = probe,
                 onKeep = onKeep,
                 onDiscard = onDiscard,
                 onLongPress = { at ->
                     menuAt = at
                     onOpenMenu()
                 },
+            )
+        }
+
+        // Above the picture and below every control, so the dots and the notch stay reachable.
+        if (debugOn) {
+            ReviewDebugOverlay(
+                screen = debugScreen,
+                probe = probe,
+                onCopy = { clipboard.setText(AnnotatedString(it)) },
+                modifier = Modifier.fillMaxSize(),
             )
         }
 
@@ -172,6 +202,15 @@ fun ReviewScreen(
                 onRestart = onRestart,
                 onLeave = onLeave,
                 onDiscard = onDiscardFromMenu,
+                onDebug = {
+                    debugOn = !debugOn
+                    // Turning it on also copies, so one tap gets the text onto the clipboard.
+                    if (debugOn) {
+                        clipboard.setText(
+                            AnnotatedString(reviewDebugText(debugEnv(context), debugScreen, probe)),
+                        )
+                    }
+                },
             )
         }
 
@@ -191,6 +230,7 @@ fun ReviewScreen(
 private fun Reviewer(
     state: ReviewState,
     media: Rm2Media,
+    probe: MediaDebugProbe,
     onKeep: () -> Unit,
     onDiscard: () -> Unit,
     onLongPress: (Offset) -> Unit,
@@ -224,7 +264,7 @@ private fun Reviewer(
             }
         }
         Box(Modifier.fillMaxSize().then(mover), contentAlignment = Alignment.Center) {
-            MediaPane(ref = ref, media = media, playing = state.playing)
+            MediaPane(ref = ref, media = media, playing = state.playing, probe = probe)
         }
 
         // The gesture surface sits over the picture and does not move with it. One handler for the

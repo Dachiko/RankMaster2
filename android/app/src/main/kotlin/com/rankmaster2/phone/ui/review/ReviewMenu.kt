@@ -43,6 +43,7 @@ internal fun ReviewMenu(
     onRestart: () -> Unit,
     onLeave: () -> Unit,
     onDiscard: () -> Unit,
+    onDebug: () -> Unit = {},
 ) {
     PaneMenuShell(
         key = itemId,
@@ -67,6 +68,17 @@ internal fun ReviewMenu(
             onClick = onLeave,
         )
 
+        MenuAction(
+            label = "Debug info",
+            glyph = MenuGlyph.DEBUG,
+            accent = Ink,
+            enabled = true,
+            onClick = {
+                onDebug()
+                onDismiss()
+            },
+        )
+
         Hairline()
 
         MenuAction(
@@ -80,8 +92,8 @@ internal fun ReviewMenu(
     }
 }
 
-/** The rows the review menu stacks: two plain ones, the hairline, one that names a folder. */
-internal val ReviewMenuBodyHeight: Dp = RowHeight * 2 + HairlineBlockHeight + RowHeightWithDetail
+/** The rows the review menu stacks: three plain ones (the last is the debug toggle), the hairline, one that names a folder. */
+internal val ReviewMenuBodyHeight: Dp = RowHeight * 3 + HairlineBlockHeight + RowHeightWithDetail
 
 /**
  * The three dots that open the menu: a small, quiet mark in a corner, drawn the way the cancel

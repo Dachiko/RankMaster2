@@ -4,6 +4,11 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## Phone 3.2.2 — 2026-10-04 (phone only)
+- Review: "Debug info" in the menu shows a live diagnostics panel for the current item (player
+  state, format, decoder, first frame, errors, surface, last 40 events) and copies it to the
+  clipboard, to find why videos stay black in Review (3.2.1's fix did not help).
+
 ## Phone 3.2.1 — 2026-10-04 (phone only; server stays 3.2.0)
 - Review: videos were a black screen. The video is now hosted like ranking's (no graphics layer or
   clip above its SurfaceView; it slides by layout offset). Unconfirmed until seen on the phone.

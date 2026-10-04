@@ -27,9 +27,11 @@ class ReviewMenuDesignTest {
     }
 
     @Test
-    fun `the review menu is two plain rows, a hairline and one row that names a folder`() {
-        assertEquals(52.dp * 2 + 11.dp + 60.dp, ReviewMenuBodyHeight)
-        assertTrue(menuBoxHeightFor(ReviewMenuBodyHeight) < MenuBoxHeight)
+    fun `the review menu is three plain rows, a hairline and one row that names a folder`() {
+        // Start over, back to folders and the debug toggle; then the hairline; then Discard.
+        assertEquals(52.dp * 3 + 11.dp + 60.dp, ReviewMenuBodyHeight)
+        // Taller than the ranking menu now the debug row is in; still a compact panel.
+        assertTrue(menuBoxHeightFor(ReviewMenuBodyHeight) < 320.dp)
     }
 
     @Test
