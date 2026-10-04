@@ -1,6 +1,6 @@
 # I — In-app folder browser (replaces the Windows folder picker)
 
-Status: **approved 2026-10-04, building** (Mike: "Looks good, go"). Layout: simple (§ 2.1).
+Status: **built and deployed as 3.4.0 (2026-10-04)**; S4 visual check waits for Mike’s yes. See the S2 notes in § 6.
 
 Mike's request (2026-10-04): navigate folders inside the app instead of the Windows folder dialog —
 "simple, I don't need loads of information. I need to see a clean path": the full path on top
@@ -73,9 +73,9 @@ them), the rename ink card, the database.
 | Stage | Who | Branch | Depends on | Status |
 |---|---|---|---|---|
 | S0 contract: link signatures, wire records, fakes, `AppScreen.Browse` | orchestrator | `master` | Mike's go | done |
-| S1 link: roots + browse over the pinned client | worker **L** | `browse/link` | S0 | in progress |
-| S2 browser: model, view, keys, coordinator wiring | worker **U** | `browse/ui` | S0 | in progress |
-| S3 merge, docs, 3.4.0, deploy | orchestrator | `master` | S1, S2 | todo |
+| S1 link: roots + browse over the pinned client | worker **L** | `browse/link` | S0 | done 105c79f (reviewed) |
+| S2 browser: model, view, keys, coordinator wiring | worker **U** | `browse/ui` | S0 | done 554786b (reviewed) |
+| S3 merge, docs, 3.4.0, deploy | orchestrator | `master` | S1, S2 | done (push waits for Mike) |
 | S4 visual check (targeted) | orchestrator | — | S3 + Mike's yes | todo |
 
 S1 and S2 run in parallel in their own worktrees (`..\wt-browse-link`, `..\wt-browse-ui`).
@@ -128,3 +128,26 @@ Merge, re-run both suites, docs (`PC_CLIENT_PLAN.md` § 2.1 and `E` non-goals po
 
 This file's § 4 table is the source of truth (orchestrator writes it). Work in progress lives on the
 `browse/*` branches; resume by reading this file and `git log master..browse/*`.
+
+## 6. As built (S1/S2 reports, 2026-10-04)
+
+- The link is single-flight (`Gated`): the browser keeps one listing in flight and fires only the
+  latest target when it returns; a superseded call is cancelled and its `client_cancelled` failure is
+  silent. Enter cancels a pending listing and waits for it before `OpenAsync`.
+- Enter in Rank mode stays in the browser (busy line) until the compare screen opens; a refused
+  folder shows the accent status line and the browser stays.
+- Typing: letters arrive as text input; the best match (name starting with the letters first) is
+  selected; with no match nothing is selected and Enter does nothing; Esc clears the letters and
+  keeps the selection; Backspace with nothing typed goes up.
+- Enter on *here* acts unless the listing it came from said it isn't openable, or at THIS PC. An
+  unknown `rankable` counts as not openable (dimmed, still enterable if accessible).
+- If the last folder's parent can't be read, the browser falls back to THIS PC with the failure as
+  the status line.
+- Rows are one custom control (`BrowseList`): whole rows, no scrollbar, virtual, glide ~180 ms on a
+  filter reorder; a new listing lands still. Hover uses `paper`.
+- F1 shows the browser's own keys (MOVE / FOLDERS / FIND, `HelpRows.BrowsePage`).
+- The picker machinery is gone (`OpenFolderRequested`, `RenameRequested`, `BeginDialog`/`EndDialog`,
+  `DialogOpen`, three picker-only tests).
+- To look at in the visual check: column centring, path line (faint segments, red bar, *here*
+  inverted when selected), deep-path `…\` elision, row alignment and dimming, typing, busy line,
+  THIS PC, `NO FOLDERS INSIDE`, status line, F1, mouse, Esc back to the same pair.

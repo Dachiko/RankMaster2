@@ -4,6 +4,18 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## 3.4.0 — 2026-10-04 (PC client; server, tray and phone unchanged)
+- In-app folder browser replaces the Windows folder picker (`pc/plans/I-folder-browser.md`), for
+  `O` (start and compare screens) and `R`. Mike's simple layout: the full path on top in dot-matrix
+  with the folder you are in highlighted (red bar), only the names of the folders inside under it;
+  folders that can't be ranked (or, for rename, have no ranking) are dimmed.
+- Keys: ↑/↓, PageUp/PageDown/Home/End, → into, ← or Backspace up (to THIS PC), Enter ranks or renames
+  (or goes into a folder that can't be), ↑ from the first folder selects the folder you are in,
+  typing finds (letters in red after the path, matches move to the top), Esc clears / goes back
+  (to the pair, with the session still open, when opened from the compare screen). Mouse: click,
+  double-click, path segments, wheel.
+- Link: `GET /libraries/roots` and `GET /libraries/browse` (one call at a time, like every link call).
+
 ## 3.3.0 — 2026-10-04 (PC client + tray; phone unchanged)
 - House style (`pc/plans/H-house-style.md`, version C "Quiet"; the compare screen is untouched).
 - PC start screen: paper, no gradient; the last folder fills the screen in dot-matrix with

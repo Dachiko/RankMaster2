@@ -57,7 +57,7 @@ they would make a different key.
 | `5`, `NumPad5` | special right | full | " |
 | `Ctrl+Z` | undo | busy only | not gated on pane readiness — the panes it will replace do not matter; not gated on `undoAvailable` at the key level (§ 3.4) |
 | `Ctrl+S` | save | busy only | toast "Saved" on success |
-| `O` | open folder | not while a dialog is open | native picker; the session stays open behind it; cancelling returns to the pair |
+| `O` | open folder | not while a dialog is open | native picker; the session stays open behind it; cancelling returns to the pair *(3.4.0: the in-app folder browser, `I-folder-browser.md`; Esc returns to the pair)* |
 | `F1` | toggle help sheet (pinned) | none | |
 | `Esc` | quit | none | stops the cue if one is playing; raises `QuitRequested`; sends nothing |
 | anything else | nothing | — | swallowed, so Avalonia's own key handling (arrow-key focus navigation, Space/Enter on a focused button) never runs on this screen |
@@ -112,7 +112,7 @@ Listed in one place so the owner and the reviewer can see every deviation:
 - No optimistic UI. The pair on screen is the last snapshot the server sent; nothing is patched locally. A vote that has not been answered has not happened.
 - No confirmation dialogs during ranking. Discard and special have undo; the only confirmation in the program is rename's, on the start screen.
 - No whole-screen busy overlay, no modal error dialogs. Failures are a toast or a sentence on the start screen.
-- No settings, thumbnails, filmstrip, leaderboard, play/pause/seek/volume, folder browser over `/libraries/*` (`SPEC.md` § Non-goals; `PC_CLIENT_PLAN.md` § 2.1).
+- No settings, thumbnails, filmstrip, leaderboard, play/pause/seek/volume, folder browser over `/libraries/*` (`SPEC.md` § Non-goals; `PC_CLIENT_PLAN.md` § 2.1) *(the folder browser was added in 3.4.0, `I-folder-browser.md`)*.
 - No local ranking logic, no `pairSeq` in a request, no retry of any kind in `Ui/`. If a retry is ever needed it is part B's, inside the call.
 - No `Popup`, no second window, no `Segoe MDL2 Assets`.
 - No "Saved" screen. `Esc` quits.

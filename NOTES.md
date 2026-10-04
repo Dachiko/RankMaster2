@@ -4,6 +4,10 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
+- **PC 3.4.0** (tag `v3.4.0`, deployed 2026-10-04): **in-app folder browser** replaces the Windows
+  picker for `O` and `R` (Mike's simple layout: full path on top, current folder highlighted, folder
+  names under it). Plan, decisions and as-built notes: `pc/plans/I-folder-browser.md`. Not yet seen
+  on screen (visual check waits for Mike's yes); not pushed (waits for Mike's OK).
 - **Server/tray/PC 3.3.0** (tag `v3.3.0`, deployed 2026-10-04): **house-style redesign** of every
   PC-side surface except the compare screen — start screen, rename card, start-screen keys page (R =
   rename), tray two-pane icon, tray menu (Show QR + Exit only), QR-only pairing card. Plan,

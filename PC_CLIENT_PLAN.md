@@ -129,8 +129,9 @@ no `/media` requests at all. The snapshot's `folder` and `pair.left.id` are the 
 
 - No rating, score, μ or σ anywhere on the compare screen (`SERVER_SPEC.md` § 9.3).
 - No `/media` requests, no still cache, no `mediaVersion` bookkeeping. The disk is the cache.
-- No folder browser over `/libraries/*`. The PC has a native folder dialog; `/libraries` is for a phone
-  that does not.
+- ~~No folder browser over `/libraries/*`.~~ Reversed by Mike 2026-10-04: since 3.4.0 the PC client
+  has an in-app folder browser over `/libraries/*` instead of the native dialog
+  (`pc/plans/I-folder-browser.md`).
 - No offline mode. Without the server there is no session; the client starts the server rather than
   ranking alone.
 - No settings window, no thumbnails, no filmstrip, no recursive scan, no HEIC — every `SPEC.md` non-goal
