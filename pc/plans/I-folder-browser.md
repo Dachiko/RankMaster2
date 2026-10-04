@@ -1,6 +1,6 @@
 # I — In-app folder browser (replaces the Windows folder picker)
 
-Status: **built and deployed as 3.4.0 (2026-10-04)**; S4 visual check waits for Mike’s yes. See the S2 notes in § 6.
+Status: **built and deployed as 3.4.0 (2026-10-04)**; visual check skipped by Mike; pushed 2026-10-04. See the S2 notes in § 6.
 
 Mike's request (2026-10-04): navigate folders inside the app instead of the Windows folder dialog —
 "simple, I don't need loads of information. I need to see a clean path": the full path on top
@@ -75,8 +75,8 @@ them), the rename ink card, the database.
 | S0 contract: link signatures, wire records, fakes, `AppScreen.Browse` | orchestrator | `master` | Mike's go | done |
 | S1 link: roots + browse over the pinned client | worker **L** | `browse/link` | S0 | done 105c79f (reviewed) |
 | S2 browser: model, view, keys, coordinator wiring | worker **U** | `browse/ui` | S0 | done 554786b (reviewed) |
-| S3 merge, docs, 3.4.0, deploy | orchestrator | `master` | S1, S2 | done (push waits for Mike) |
-| S4 visual check (targeted) | orchestrator | — | S3 + Mike's yes | todo |
+| S3 merge, docs, 3.4.0, deploy | orchestrator | `master` | S1, S2 | done, pushed 2026-10-04 |
+| S4 visual check (targeted) | orchestrator | — | S3 + Mike's yes | skipped — Mike: "no, looks good" (2026-10-04) |
 
 S1 and S2 run in parallel in their own worktrees (`..\wt-browse-link`, `..\wt-browse-ui`).
 

@@ -4,6 +4,9 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## 3.4.1 — 2026-10-04 (tray)
+- Starting the tray a second time does nothing: no more "already running" message box.
+
 ## 3.4.0 — 2026-10-04 (PC client; server, tray and phone unchanged)
 - In-app folder browser replaces the Windows folder picker (`pc/plans/I-folder-browser.md`), for
   `O` (start and compare screens) and `R`. Mike's simple layout: the full path on top in dot-matrix

@@ -23,15 +23,12 @@ internal static class Program
     private static int Main(string[] args)
     {
         // One server, one port. A second instance would fail to bind and the owner would be left
-        // with two icons and one working server, which is worse than a plain refusal.
+        // with two icons and one working server, which is worse than a plain refusal. Since 3.4.1
+        // the refusal is silent (Mike, 2026-10-04: no OS message box): the running copy's icon is
+        // already there, so a second start simply does nothing.
         using var single = new Mutex(initiallyOwned: true, @"Local\RankMaster2.Tray.Single", out var isOnlyInstance);
         if (!isOnlyInstance)
-        {
-            MessageBox.Show(
-                "Rank Master 3 is already running. Look for its icon in the notification area.",
-                "Rank Master 3", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
-        }
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);

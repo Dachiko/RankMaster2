@@ -262,7 +262,7 @@ other, not both. Either one alone is completely safe.
 | Phone cannot reach the server at all | still listening on `127.0.0.1` | § 3. The bound address is in `logs\server-*.log` |
 | …and the address is right | firewall, or the network is marked Public | § 4 |
 | …and both are right | phone is on guest Wi-Fi, or the PC is on a different adapter | put both on the same network |
-| Tray says "already running" | a server is already up | use the existing icon; there is only one |
+| Starting the tray does nothing | a server is already up (since 3.4.1 a second start exits silently) | use the existing icon; there is only one |
 | Startup fails naming the port | something else holds 18611 | close the other server, or set `Port` |
 | Phone reports a certificate mismatch | the data directory was deleted or moved, so the certificate is new | re-pair from the tray |
 | Everything answers 401 | token revoked, or `devices.json` gone | re-pair |

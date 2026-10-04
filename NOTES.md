@@ -4,20 +4,26 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
-- **PC 3.4.0** (tag `v3.4.0`, deployed 2026-10-04): **in-app folder browser** replaces the Windows
-  picker for `O` and `R` (Mike's simple layout: full path on top, current folder highlighted, folder
-  names under it). Plan, decisions and as-built notes: `pc/plans/I-folder-browser.md`. Not yet seen
-  on screen (visual check waits for Mike's yes); not pushed (waits for Mike's OK).
-- **Server/tray/PC 3.3.0** (tag `v3.3.0`, deployed 2026-10-04): **house-style redesign** of every
-  PC-side surface except the compare screen — start screen, rename card, start-screen keys page (R =
-  rename), tray two-pane icon, tray menu (Show QR + Exit only), QR-only pairing card. Plan,
-  decisions and stage record: `pc/plans/H-house-style.md`. Mockup: `C:\ai\projects\rankmaster\mockups\house-style\index.html`
-  (tab C). **Not yet seen by anyone on screen**: the targeted visual
-  check (H § 5 S5) waits for Mike's yes; things to look at are listed there and in the S1/S2 reports
-  (Doto font resolving, pill focus, decode, menu corner pixels, card dot grid strength, percent width
-  9→10→100). `master` not pushed yet (waits for Mike's OK). The phone app is the next round.
+- **Server/tray/PC 3.4.1** (tag `v3.4.1`, deployed and pushed 2026-10-04) is the head of `master`
+  and `origin/master`. Three steps in one day, all Mike's requests:
+  - **3.3.0 house style** (`pc/plans/H-house-style.md`, version C "Quiet"): start screen, rename
+    ink card, start-screen keys page (R = rename), tray two-pane icon, tray menu Show QR + Exit only
+    (a click = Show QR), QR-only pairing card that renews before expiry and closes when a phone
+    pairs; no warnings, no balloons. Compare screen untouched. Mockup:
+    `C:/ai/projects/rankmaster/mockups/house-style/index.html` (tab C; tab 5 = folder browser).
+  - **3.4.0 in-app folder browser** (`pc/plans/I-folder-browser.md`, as-built notes in its § 6):
+    replaces the Windows picker for `O` and `R`; full path on top with the current folder
+    highlighted, only folder names under it.
+  - **3.4.1:** a second tray start exits silently (no "already running" box).
+  - Mike skipped the visual check ("looks good"); nobody has looked at 3.3.0/3.4.x on screen with
+    a checklist. If he reports a look problem, the lists in H § 5 S1/S2 reports and I § 6 say what
+    was never verified (Doto resolving, pill focus, decode, menu corner pixels, card dot grid,
+    percent width, browser column centring).
+  - Tests at 3.4.1: Pc.Tests 489 pass / 2 baseline fail; Link.Tests 38 pass / 58 baseline TLS fail;
+    server suites unchanged from the baseline below.
+  - **Next round (Mike, 2026-10-04): the phone app in the same house style.** Not planned yet.
 - Before that: server/tray/PC 3.2.0 (tag `v3.2.0`). **Phone 3.2.4** (tag
-  `phone-v3.2.4`, versionCode 9) is the head of `master` and `origin/master`: **Review mode**, done
+  `phone-v3.2.4`, versionCode 9): **Review mode**, done
   and confirmed on Mike's phone 2026-10-04 (see `CHANGELOG.md`). Server `GET /session/items`,
   `POST /session/items/discard`, `PUT /session/review-position` (SERVER_SPEC.md § 10.17–10.19);
   phone `android/.../ui/review/`.
@@ -65,7 +71,7 @@ Baseline to compare against; none of these failures was investigated.
     everything a second time before swapping the PC client folder. Looks like a real fix for a
     file lock. While it is uncommitted, `deploy.ps1` without `-SkipPull` refuses to run.
   - `open-grok.cmd` (untracked): launches Grok Build in this folder.
-- Tags: only `v3.0.0` exists; 3.0.1–3.0.6 are untagged.
+- Tags: `v3.0.0`, `v3.1.0`, `v3.2.0`, `v3.3.0`, `v3.4.0`, `v3.4.1`, `phone-v3.2.1`…`phone-v3.2.4` (3.0.1–3.0.6 untagged).
 - `README.md` and `pc/install.ps1` name the frozen app's folder `C:\Utils\rank-master-2`; it is
   really `C:\utils\rank master 2`.
 
@@ -76,6 +82,8 @@ Baseline to compare against; none of these failures was investigated.
 
 ## Next step
 
+0. Phone app in the house style (Mike's next round): mockup first, as for the PC (screens other
+   than ranking and his own Review design; ask which).
 1. Review mode: get the build box's signed release of `phone-v3.2.4` onto his phone; then tune
    from his use (swipe threshold, menu glyphs, resume).
 2. Commit (or drop) the `deploy.ps1` fix.
