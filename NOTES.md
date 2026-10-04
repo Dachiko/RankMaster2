@@ -4,6 +4,10 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
+- **In progress: house-style redesign of the PC side** (start screen, rename, F1 keys page, tray
+  menu/icon, QR card; compare screen untouched). Plan, decisions and stage status:
+  `pc/plans/H-house-style.md`. Workers on branches `house/tray`, `house/pc` (worktrees
+  `..\wt-house-tray`, `..\wt-house-pc`).
 - **Server/tray/PC 3.2.0** (tag `v3.2.0`) is deployed on this PC. **Phone 3.2.4** (tag
   `phone-v3.2.4`, versionCode 9) is the head of `master` and `origin/master`: **Review mode**, done
   and confirmed on Mike's phone 2026-10-04 (see `CHANGELOG.md`). Server `GET /session/items`,

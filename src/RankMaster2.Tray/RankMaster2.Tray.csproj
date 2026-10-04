@@ -13,6 +13,8 @@
     <AssemblyName>RankMaster2.Tray</AssemblyName>
     <RootNamespace>RankMaster2.Tray</RootNamespace>
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <!-- House-style two-pane mark (pc/plans/H-house-style.md § 3.5), made by pc/tools/make-pane-icon.py. -->
+    <ApplicationIcon>App.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
