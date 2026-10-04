@@ -36,6 +36,8 @@ namespace RankMaster2.Pc.Link.Wire;
 [JsonSerializable(typeof(RenameOperation))]
 [JsonSerializable(typeof(RenameOperationError))]
 [JsonSerializable(typeof(RenameStartRequest))]
+[JsonSerializable(typeof(RootsBody))]
+[JsonSerializable(typeof(FolderListing))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class WireJsonContext : JsonSerializerContext
 {

@@ -16,6 +16,9 @@ internal static class Codes
     public const string PairingNotOpen = "pairing_not_open";
     public const string TooManyRequests = "too_many_requests";
 
+    // § 5.2 request validation (the folder browser's path)
+    public const string InvalidPath = "invalid_path";
+
     // § 5.3 session and folder
     public const string NoSession = "no_session";
     public const string SessionAlreadyOpen = "session_already_open";

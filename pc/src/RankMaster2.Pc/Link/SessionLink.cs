@@ -483,12 +483,173 @@ internal sealed class SessionLink : ISessionLink
         return ClassifyRenameReply(reply);
     }, ct);
 
-    // Plan I, stage S1 (worker L) implements these two; S0 only fixes the contract.
-    public Task<RootsResult> GetRootsAsync(CancellationToken ct = default) =>
-        throw new NotImplementedException("plan I S1: GET /libraries/roots");
+    // ---- the folder browser's two reads (plan I; SERVER_SPEC.md § 10.14, § 10.15) -------------------
 
-    public Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default) =>
-        throw new NotImplementedException("plan I S1: GET /libraries/browse");
+    public Task<RootsResult> GetRootsAsync(CancellationToken ct = default) => Gated(async () =>
+    {
+        try
+        {
+            var (reply, failure) = await SendLibraryRead(FrozenRequest.GetRoots(), ct).ConfigureAwait(false);
+            return failure is not null
+                ? new RootsResult.Failed(failure)
+                : ClassifyRoots(reply!);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new RootsResult.Failed(RecordFailure(CancelledFailure()));
+        }
+    }, ct);
+
+    public Task<ListingResult> BrowseAsync(string path, CancellationToken ct = default) => Gated(async () =>
+    {
+        try
+        {
+            var (reply, failure) = await SendLibraryRead(FrozenRequest.Browse(path), ct).ConfigureAwait(false);
+            return failure is not null
+                ? new ListingResult.Failed(failure)
+                : ClassifyListing(reply!, path);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new ListingResult.Failed(RecordFailure(CancelledFailure()));
+        }
+    }, ct);
+
+    /// <summary>
+    /// The transport of both library reads: neither needs a session and neither changes one, so a
+    /// link that is not connected yet connects first (as <see cref="OpenCore"/> and
+    /// <see cref="RefreshCore"/> do), and the session state is left alone otherwise — in particular a
+    /// browse opened from the compare screen must not demote <see cref="LinkState.InSession"/>.
+    /// A GET is idempotent, so a lost response is simply sent again once (§ 5.1.4); a stale bearer
+    /// token is re-enrolled in place and the same request sent once more (§ 5.1.1 step 5). When the
+    /// server still does not answer and no session is open, the link reconnects once (which may start
+    /// the server, § 5.2) and sends the read a last time. The second element is a ready
+    /// <see cref="Failure"/> when the read could not be sent at all (connect failed, pairing lost,
+    /// pin mismatch, no answer, cancelled); otherwise the first is the reply to classify.
+    /// </summary>
+    private async Task<(Reply? Reply, Failure? Failure)> SendLibraryRead(FrozenRequest request, CancellationToken ct)
+    {
+        if (State == LinkState.Disconnected || _http is null)
+        {
+            var connect = await ConnectCore(ct).ConfigureAwait(false);
+            if (connect is ConnectResult.Failed failed) return (null, failed.Failure);
+        }
+
+        var reply = await _http!.Send(request, _options.ReadTimeout, ct).ConfigureAwait(false);
+
+        if (IsLostAnswer(reply))
+            reply = await _http.Send(request, _options.ReadTimeout, ct).ConfigureAwait(false);
+
+        if (reply is Reply.Refused(401, _, _, _, _, _) && !ct.IsCancellationRequested)
+        {
+            if (!await ReEnrolInPlace(ct).ConfigureAwait(false))
+                return (null, RecordFailure(LastFailure ?? PairingLostFailure()));
+            reply = await _http.Send(request, _options.ReadTimeout, ct).ConfigureAwait(false);
+        }
+
+        if (IsLostAnswer(reply) && !InSessionOfAnyKind && !ct.IsCancellationRequested)
+        {
+            var connect = await ConnectCore(ct).ConfigureAwait(false);
+            if (connect is ConnectResult.Failed failed) return (null, failed.Failure);
+            reply = await _http!.Send(request, _options.ReadTimeout, ct).ConfigureAwait(false);
+        }
+
+        if (reply is Reply.Unreachable(var kind, _))
+        {
+            if (kind == UnreachableKind.PinMismatch)
+            {
+                State = LinkState.Disconnected;
+                return (null, RecordFailure(NotYourServerFailure(_credential?.BaseUrl)));
+            }
+
+            return (null, RecordFailure(kind == UnreachableKind.Cancelled
+                ? CancelledFailure()
+                : ServerSilentFailure(kind == UnreachableKind.Timeout ? Codes.ClientTimeout : Codes.ClientUnreachable)));
+        }
+
+        return (reply, null);
+    }
+
+    /// <summary>An answer that did not come: worth sending a read again. A pin mismatch and the
+    /// caller's own cancellation are definite and are never retried.</summary>
+    private static bool IsLostAnswer(Reply reply) =>
+        reply is Reply.Unreachable(var kind, _) && kind is not (UnreachableKind.PinMismatch or UnreachableKind.Cancelled);
+
+    private RootsResult ClassifyRoots(Reply reply)
+    {
+        if (reply is Reply.Ok(_, var body, var okRequestId))
+        {
+            var roots = ParseRoots(body);
+            if (roots is null)
+                return new RootsResult.Failed(RecordFailure(UnexpectedFailure(Codes.ClientMalformedResponse, okRequestId)));
+            LastFailure = null;
+            return new RootsResult.Ok(roots);
+        }
+
+        if (reply is Reply.Refused(_, var code, var message, var requestId, _, _))
+            return new RootsResult.Failed(RecordFailure(FailureForCode(code, message, requestId)));
+
+        return new RootsResult.Failed(RecordFailure(UnexpectedFailure(Codes.ClientMalformedResponse, null)));
+    }
+
+    /// <summary>The refusals § 10.15 and § 5 give a browse: <c>404 folder_not_found</c>,
+    /// <c>400 folder_not_a_directory</c>, <c>403 folder_access_denied</c> and <c>400 invalid_path</c>
+    /// (UNC, relative, over-long). All are about the one folder asked for, so none is fatal: the
+    /// browser stays where it was and shows the failure on its status line.</summary>
+    private ListingResult ClassifyListing(Reply reply, string path)
+    {
+        if (reply is Reply.Ok(_, var body, var okRequestId))
+        {
+            var listing = ParseListing(body);
+            if (listing is null)
+                return new ListingResult.Failed(RecordFailure(UnexpectedFailure(Codes.ClientMalformedResponse, okRequestId)));
+            LastFailure = null;
+            return new ListingResult.Ok(listing);
+        }
+
+        if (reply is Reply.Refused(_, var code, var message, var requestId, _, _))
+        {
+            Failure failure = code switch
+            {
+                Codes.FolderNotFound => new Failure(FailureKind.FolderNotFound, "Folder not found", path, code, requestId, Fatal: false),
+                Codes.FolderNotADirectory => new Failure(FailureKind.FolderNotADirectory, "Not a folder", path, code, requestId, Fatal: false),
+                Codes.FolderAccessDenied => new Failure(FailureKind.FolderAccessDenied, "Access denied", path, code, requestId, Fatal: false),
+                Codes.InvalidPath => new Failure(FailureKind.FolderNotFound, "Folder not available", path, code, requestId, Fatal: false),
+                _ => FailureForCode(code, message, requestId),
+            };
+            return new ListingResult.Failed(RecordFailure(failure));
+        }
+
+        return new ListingResult.Failed(RecordFailure(UnexpectedFailure(Codes.ClientMalformedResponse, null)));
+    }
+
+    /// <summary>§ 10.14: <c>{ "roots": [...] }</c>. Null when the body is not that shape.</summary>
+    internal static IReadOnlyList<LibraryRoot>? ParseRoots(byte[] body) =>
+        TryParse(body, WireJsonContext.Default.RootsBody)?.Roots?.Where(r => r is not null).ToList();
+
+    /// <summary>§ 10.15: <c>{ path, parent, entries }</c>. A body without <c>entries</c> is malformed;
+    /// an absent <c>rankable</c> on an entry is <c>null</c> (unknown), never <c>false</c>.</summary>
+    internal static FolderListing? ParseListing(byte[] body)
+    {
+        var listing = TryParse(body, WireJsonContext.Default.FolderListing);
+        return listing is { Entries: not null }
+            ? listing with { Entries = listing.Entries.Where(e => e is not null).ToList() }
+            : null;
+    }
+
+    private Failure RecordFailure(Failure failure)
+    {
+        LastFailure = failure;
+        return failure;
+    }
+
+    private static Failure CancelledFailure() => new(
+        FailureKind.Unreachable, "Cancelled", "Nothing was changed.", Codes.ClientCancelled, null, Fatal: false);
+
+    /// <summary>Short words for a read: the votes' wording ("press the key again") does not fit a
+    /// folder list.</summary>
+    private static Failure ServerSilentFailure(string code) => new(
+        FailureKind.Unreachable, "Server not answering", "Try again in a moment.", code, null, Fatal: false);
 
     public Task<RenameOperationResult> CancelRenameAsync(CancellationToken ct = default) => Gated(async () =>
     {

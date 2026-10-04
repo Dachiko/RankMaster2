@@ -95,6 +95,18 @@ internal sealed record FrozenRequest(
     public static FrozenRequest CancelRename() =>
         new(HttpMethod.Post, "/session/rename/cancel", [], null, null);
 
+    /// <summary>SERVER_SPEC.md § 10.14: no query, no body.</summary>
+    public static FrozenRequest GetRoots() => Get("/libraries/roots");
+
+    /// <summary>
+    /// SERVER_SPEC.md § 10.15. <paramref name="path"/> is percent-encoded as one query value
+    /// (<see cref="Uri.EscapeDataString"/>: UTF-8 bytes, so spaces, <c>&amp;</c>, <c>#</c>, <c>%</c>,
+    /// <c>\</c> and non-ASCII names all survive), and <c>counts=true</c> is always sent — the browser
+    /// needs the server's counts only so <c>rankable</c> is known (plan I § 2.2 item 9).
+    /// </summary>
+    public static FrozenRequest Browse(string path) =>
+        Get("/libraries/browse?path=" + Uri.EscapeDataString(path) + "&counts=true");
+
     /// <summary>Unauthenticated (§ 3): the bearer token does not exist yet. Never retried (§ 13.3):
     /// the code is single-use, so the caller must set <c>Authenticate = false</c> and never resend
     /// this instance.</summary>
