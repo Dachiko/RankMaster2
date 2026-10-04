@@ -20,9 +20,9 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
   ranking always has chrome over its panes and keeps its SurfaceView. The 3.2.2 debug panel that
   found this is removed in 3.2.4 (in git history at `770b7d9` if ever needed again).
 - **Release APK:** signed only on the build box (keystore not here). Waiting for the build box to
-  build `phone-v3.2.4` as a release and send it to Mike. The local debug app
-  (`com.rankmaster2.phone.debug`, 3.2.3) is still on his phone beside the release app; he can
-  uninstall it once the release has Review.
+  build `phone-v3.2.4` as a release and send it to Mike (he was given the line to send it). Until
+  then he uses the local debug app (`com.rankmaster2.phone.debug`), **3.2.4 sent on Telegram
+  2026-10-04**, beside the release app; he can uninstall it once the release has Review.
 - **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 491 pass.
 - **Open phone bugs** (`android/BUGS.md`): 1 video wrong proportions, 2 cancel notch drawn wrong,
   3 Back leaves the app while browsing folders, 4 accidental votes near the screen edge. All four
