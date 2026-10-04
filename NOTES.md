@@ -42,6 +42,12 @@ Baseline to compare against; none of these failures was investigated.
 - `README.md` and `pc/install.ps1` name the frozen app's folder `C:\Utils\rank-master-2`; it is
   really `C:\utils\rank master 2`.
 
+## Waiting for Mike (asked 2026-10-04, not answered)
+
+- Commit the `deploy.ps1` fix, or is it someone else's work in progress?
+- Push the docs commits to GitHub? They are local only; the build box works from GitHub.
+- Which APK version is on his phone?
+
 ## Next step
 
 Nothing scheduled. Ask Mike what he wants. Likely candidates:
