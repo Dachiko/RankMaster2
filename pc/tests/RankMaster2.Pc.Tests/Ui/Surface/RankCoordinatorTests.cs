@@ -396,7 +396,8 @@ public class RankCoordinatorTests
 
         Assert.Equal(AppScreen.Start, c.Screen);
         Assert.True(c.Start.ExhaustedSessionOpen);
-        Assert.Contains("Ctrl+Z", c.Start.BoxText);
+        Assert.Equal(StartMessageKind.Exhausted, c.Start.MessageKind);
+        Assert.True(c.Start.UndoAvailable); // the first pill reads "CTRL+Z TAKE BACK" (plan H § 3.1)
     }
 
     [Fact]
@@ -412,7 +413,7 @@ public class RankCoordinatorTests
         await c.OnCompareKeyDown(UiKey.D1, UiModifiers.None);
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("no longer paired", c.Start.BoxText);
+        Assert.Contains("no longer paired", c.Start.MessageText);
     }
 
     [Fact]
@@ -459,7 +460,7 @@ public class RankCoordinatorTests
         await c.TryUndoFromStartAsync();
 
         Assert.False(c.Start.Opening);
-        Assert.Contains("Could not open the folder", c.Start.BoxText);
+        Assert.Contains("Could not open the folder", c.Start.MessageText);
         Assert.Equal(AppScreen.Start, c.Screen);
     }
 
@@ -476,7 +477,7 @@ public class RankCoordinatorTests
 
         Assert.False(ok);
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("Nothing to rank here", c.Start.BoxText);
+        Assert.Contains("Nothing to rank here", c.Start.MessageText);
     }
 
     [Fact]

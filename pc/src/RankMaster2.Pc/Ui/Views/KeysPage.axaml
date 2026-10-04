@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:surface="clr-namespace:RankMaster2.Pc.Ui.Surface"
+             x:Class="RankMaster2.Pc.Ui.Views.KeysPage"
+             Focusable="False" IsVisible="False">
+  <!-- Plan H § 3.3: the screen clears to the keys alone. The page is opaque `bg`, so what is under it
+       (the start screen) does not show through; it covers the corner captions too, as the mockup does. -->
+  <Grid Background="{DynamicResource House.Bg}">
+    <Grid Margin="34,26,34,0" VerticalAlignment="Top">
+      <TextBlock Classes="caps" Text="RANK MASTER 3 / KEYS" HorizontalAlignment="Left" />
+      <TextBlock Name="VersionText" Classes="caps faint" HorizontalAlignment="Right" />
+    </Grid>
+
+    <ItemsControl Name="Columns" Width="856" Margin="-18,0,-18,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <UniformGrid Rows="1" Columns="3" />
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="surface:HelpSection">
+          <StackPanel Margin="18,0">
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
+              <TextBlock Classes="caps accent" Text="{Binding Number}" />
+              <TextBlock Classes="caps ink" Text="{Binding Heading}" />
+            </StackPanel>
+            <ItemsControl ItemsSource="{Binding Rows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="surface:HelpRow">
+                  <Grid ColumnDefinitions="84,*" Margin="0,5">
+                    <ItemsControl Grid.Column="0" ItemsSource="{Binding Chips}" VerticalAlignment="Center">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <StackPanel Orientation="Horizontal" Spacing="4" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                          <Border Classes="kbd">
+                            <TextBlock Text="{Binding}" />
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="13.5" Foreground="{DynamicResource House.Mid}"
+                               VerticalAlignment="Center" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <TextBlock Classes="caps faint" Text="ANY KEY CLOSES" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,34" />
+  </Grid>
+</UserControl>

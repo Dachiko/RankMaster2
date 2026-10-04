@@ -82,6 +82,11 @@
 
   <ItemGroup>
     <AvaloniaResource Include="App/icon.ico" />
+    <!-- Plan H § 3: the hero, the big percent and the keys page's title. Inter (the other house font)
+         comes from Avalonia.Fonts.Inter, registered by Program.BuildAvaloniaApp. Doto-OFL.txt beside
+         the font is its licence and is deliberately not a resource. The family name inside the file
+         (name ID 16) is "Doto Rounded"; ID 1 reads "Doto Rounded Black", see HouseResources.axaml. -->
+    <AvaloniaResource Include="Ui/Fonts/Doto_Rounded-Black.ttf" />
   </ItemGroup>
 
   <!-- libvlc: only on a win-x64 publish, only what the manifest names, laid out where LibVLCSharp and

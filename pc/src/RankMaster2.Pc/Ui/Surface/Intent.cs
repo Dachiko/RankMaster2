@@ -3,9 +3,9 @@ namespace RankMaster2.Pc.Ui.Surface;
 using RankMaster2.Pc.Link;
 
 /// <summary>
-/// The ten intents left on the PC client's surface after the owner's ruling removed the skip
-/// action (2026-09-17, "I really don't use skip" -- the phone already had none): everything a key or a
-/// click can mean on either screen. <see cref="None"/> is "swallow the key, do nothing" -- the
+/// The intents left on the PC client's surface after the owner's ruling removed the skip
+/// action (2026-09-17, "I really don't use skip" -- the phone already had none), plus plan H's
+/// <see cref="RenameFolder"/>: everything a key or a click can mean on either screen. <see cref="None"/> is "swallow the key, do nothing" -- the
 /// compare screen's catch-all so Avalonia's own key handling never runs (plan § 3.7).
 /// </summary>
 public enum Intent
@@ -20,6 +20,8 @@ public enum Intent
     Undo,
     Save,
     OpenFolder,
+    /// <summary>`R` on the start screen: pick a folder, then the rename card (plan H § 3.4).</summary>
+    RenameFolder,
     ToggleHelp,
     Quit,
 }
@@ -32,7 +34,7 @@ public static class Intents
     public static Intent Special(Side side) => side == Side.Left ? Intent.SpecialLeft : Intent.SpecialRight;
 
     /// <summary>True for the six intents that name one particular pair action (the ones the gate
-    /// and the pane-readiness rule apply to). False for Undo, Save, OpenFolder, ToggleHelp, Quit, None.</summary>
+    /// and the pane-readiness rule apply to). False for Undo, Save, OpenFolder, RenameFolder, ToggleHelp, Quit, None.</summary>
     public static bool IsPairAction(this Intent intent) => intent is
         Intent.VoteLeft or Intent.VoteRight or
         Intent.DiscardLeft or Intent.DiscardRight or Intent.SpecialLeft or Intent.SpecialRight;

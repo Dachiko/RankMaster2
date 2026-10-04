@@ -104,37 +104,62 @@ public static class Notices
         };
     }
 
-    private static Notice ForFailure(Failure failure)
+    private static Notice ForFailure(Failure failure) =>
+        failure.Fatal
+            ? Notice.ForStartScreen(TitleAndDetail(failure.Title, failure.Detail))
+            : Notice.Toast(string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}");
+
+    /// <summary>Plan H § 3.1: every start-screen sentence about a failure is "title · detail" with no
+    /// trailing full stop (a status line is not prose). A toast keeps its own "title — detail" form:
+    /// the compare screen is not part of plan H.</summary>
+    public static string TitleAndDetail(string title, string? detail)
     {
-        var text = string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}";
-        return failure.Fatal ? Notice.ForStartScreen(text) : Notice.Toast(text);
+        title = title.TrimEnd().TrimEnd('.');
+        detail = detail?.Trim().TrimEnd('.');
+        return string.IsNullOrEmpty(detail) ? title : $"{title} · {detail}";
     }
 
-    /// <summary>An open-folder refusal. Always the start screen's red box (plan § 4.1) — that is
+    /// <summary>An open-folder refusal. Always the start screen's status line (plan § 4.1) — that is
     /// where Open lives — regardless of <see cref="Failure.Fatal"/>, which is about whether a
-    /// *ranking* session must be abandoned, not about where an open failure is shown.</summary>
+    /// *ranking* session must be abandoned, not about where an open failure is shown. Plan H § 3.1:
+    /// "Nothing to rank here · D:\Downloads has no photos or videos".</summary>
     public static Notice ForOpenFailure(Failure failure) =>
-        Notice.ForStartScreen(string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}");
+        Notice.ForStartScreen(TitleAndDetail(failure.Title, failure.Detail));
 
     /// <summary>§ 3.13 item 2: "on succeeded, cancelled or failed one line says which"; a failed run
     /// with <c>reunited:false</c> additionally "shows the journal path and 'open the folder again to
-    /// retry'". Always the start screen's box — the rename screen hands the operation off and
-    /// returns there the moment it is terminal.</summary>
+    /// retry'". Always the start screen's status line — the rename card hands the operation off and
+    /// returns there the moment it is terminal. Plan H § 3.2 shortened every sentence to
+    /// "what happened · what it means", and names the folder by its own name, not its path.</summary>
     public static string ForRenameTerminal(RenameOperation operation, string folder) => operation.State switch
     {
-        "succeeded" => $"Renamed {operation.Total} file{(operation.Total == 1 ? "" : "s")} by rank in {folder}.",
-        "cancelled" => "Rename cancelled. Nothing already done was undone; every rating is still on its file, " +
-                       "whatever that file is named now.",
+        "succeeded" => $"Renamed {FormatCount(operation.Total)} file{(operation.Total == 1 ? "" : "s")} · {LeafName(folder)}",
+        "cancelled" => "Rename stopped · what was done stays, ratings stay with their files",
         "failed" => ForRenameFailed(operation.Error),
-        _ => $"The rename ended in an unexpected state ({operation.State}).",
+        _ => $"Rename ended unexpectedly · {operation.State}",
     };
 
     private static string ForRenameFailed(RenameOperationError? error)
     {
-        if (error is null) return "Rename failed.";
+        if (error is null) return "Rename failed";
         return error.Reunited
-            ? "Rename failed, but nothing moved and nothing was renamed — every rating is exactly where it was."
-            : $"Rename failed and the journal at {error.Journal ?? "(unknown path)"} could not be read on its own. " +
-              "Open the folder again to retry.";
+            ? "Rename failed · nothing changed"
+            : $"Rename failed · open the folder again to retry · {error.Journal ?? "(unknown journal path)"}";
     }
+
+    /// <summary>The last segment of a folder path, either separator, trailing separators ignored; the
+    /// whole string when there is none (a drive root). Hero text, rename card and result line all use it.</summary>
+    public static string LeafName(string folder)
+    {
+        char[] separators = ['/', '\\'];
+        var trimmed = folder.TrimEnd(separators);
+        var cut = trimmed.LastIndexOfAny(separators);
+        var leaf = cut >= 0 ? trimmed[(cut + 1)..] : trimmed;
+        return leaf.Length > 0 ? leaf : folder;
+    }
+
+    /// <summary>"1 284": digits grouped in threes with a no-break space, as the mockup writes counts
+    /// (and so the line never breaks inside a number).</summary>
+    public static string FormatCount(int n) =>
+        n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture).Replace(',', ' ');
 }

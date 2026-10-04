@@ -63,6 +63,8 @@ public class HelpRowsTests
             "↑" => UiKey.Up,
             "↓" => UiKey.Down,
             "O" => UiKey.O,
+            "R" => UiKey.R,
+            "Enter" => UiKey.Enter,
             "Z" => UiKey.Z,
             "S" => UiKey.S,
             "F1" => UiKey.F1,
@@ -87,4 +89,48 @@ public class HelpRowsTests
         Assert.Equal("Exit", HelpRows.Compare[^1].Label);
         Assert.DoesNotContain(HelpRows.Compare, row => row.Label.Contains("Skip", StringComparison.Ordinal));
     }
+
+    /// <summary>Plan H § 3.3: the start screen's keys page reads <see cref="HelpRows.Start"/> and
+    /// <see cref="HelpRows.Everywhere"/>; each row's own caption must produce its Intent through
+    /// <see cref="KeyMap.MapStart"/>. Enter and the arrows are the two rows that map to None on purpose (the
+    /// focused pill's business, not KeyMap's).</summary>
+    [Fact]
+    public void Every_Start_and_Everywhere_row_maps_through_MapStart()
+    {
+        foreach (var row in HelpRows.Start.Concat(HelpRows.Everywhere))
+        {
+            var (key, modifiers) = ParsePrimaryKey(row.Keys);
+            Assert.Equal(row.Intent, KeyMap.MapStart(key, modifiers));
+        }
+    }
+
+    [Fact]
+    public void Only_the_focus_keys_map_to_None_in_the_Start_rows_and_R_is_there()
+    {
+        var none = HelpRows.Start.Where(r => r.Intent == Intent.None).Select(r => r.Label).ToList();
+        Assert.Equal(["Resume", "Move"], none);
+        Assert.Contains(HelpRows.Start, r => r.Keys == "R" && r.Intent == Intent.RenameFolder);
+    }
+
+    [Fact]
+    public void The_keys_page_has_three_numbered_columns_and_the_Rank_column_follows_Compare()
+    {
+        Assert.Equal(["01", "02", "03"], HelpRows.StartPage.Select(c => c.Number));
+        Assert.Equal(["RANK", "START", "EVERYWHERE"], HelpRows.StartPage.Select(c => c.Heading));
+        // Pair keys + undo + save only; open / help / exit live in the other two columns.
+        Assert.Equal(["Select Left", "Select Right", "Discard", "Special", "Undo last action", "Save"],
+            HelpRows.Rank.Select(r => r.Label));
+        foreach (var row in HelpRows.Rank)
+        {
+            var (key, modifiers) = ParsePrimaryKey(row.Keys);
+            Assert.Equal(row.Intent, KeyMap.MapCompare(key, modifiers));
+        }
+    }
+
+    [Theory]
+    [InlineData("Ctrl+Z", "Ctrl|Z")]
+    [InlineData("1 / 2", "1|2")]
+    [InlineData("F1", "F1")]
+    public void Chips_split_a_caption_into_one_chip_per_key(string caption, string expected) =>
+        Assert.Equal(expected, string.Join("|", new HelpRow("x", caption, Intent.None).Chips));
 }

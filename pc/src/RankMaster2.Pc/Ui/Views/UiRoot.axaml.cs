@@ -20,6 +20,7 @@ public partial class UiRoot : UserControl, IUiThread
     private StartView? _startView;
     private RankView? _rankView;
     private RenameView? _renameView;
+    private Grid? _startStack;
     private AppScreen? _renderedScreen;
     private DispatcherTimer? _repaintTimer;
 
@@ -68,18 +69,36 @@ public partial class UiRoot : UserControl, IUiThread
         var root = this.FindControl<ContentControl>("Root");
         if (root is null) return;
 
+        // Plan H § 3.2: the start screen and the rename card share one stack, so the start screen stays
+        // drawn under the card's veil during AppScreen.Rename. A control can have only one visual parent,
+        // which is why the start view lives in the stack for both screens instead of being swapped in and
+        // out of the ContentControl.
         if (_renderedScreen != _coordinator.Screen)
         {
             _renderedScreen = _coordinator.Screen;
-            root.Content = _coordinator.Screen switch
-            {
-                AppScreen.Rank => _rankView ??= new RankView(_coordinator),
-                AppScreen.Rename => _renameView ??= new RenameView(_coordinator),
-                _ => _startView ??= new StartView(_coordinator),
-            };
+            root.Content = _coordinator.Screen == AppScreen.Rank
+                ? _rankView ??= new RankView(_coordinator)
+                : StartStack();
         }
 
-        (root.Content as IRefreshable)?.Refresh();
+        if (_coordinator.Screen == AppScreen.Rank)
+        {
+            _rankView?.Refresh();
+            return;
+        }
+
+        var renaming = _coordinator.Screen == AppScreen.Rename;
+        _startView!.Refresh();
+        _renameView!.IsVisible = renaming;
+        if (renaming) _renameView.Refresh();
+    }
+
+    private Grid StartStack()
+    {
+        if (_startStack is not null) return _startStack;
+        _startView = new StartView(_coordinator!);
+        _renameView = new RenameView(_coordinator!) { IsVisible = false };
+        return _startStack = new Grid { Children = { _startView, _renameView } };
     }
 
     // ---- keys, tunnelled from the TopLevel (plan § 2.2, § 3.7) --------------------------------------
@@ -117,18 +136,44 @@ public partial class UiRoot : UserControl, IUiThread
 
         if (_coordinator.Screen == AppScreen.Rename)
         {
-            // § 3.13: "Esc on this screen cancels the rename, not the program" — everything else
-            // (Enter/Space/Tab on the Yes/No/Cancel buttons) is Avalonia's own focused-button
-            // behaviour, the same rule the start screen follows.
+            // § 3.13: "Esc on this screen cancels the rename, not the program". Plan H § 3.2: the ink card
+            // has no buttons any more, so Enter is ours too (ENTER RENAME) while the question shows.
+            // Everything else is nobody's: the start screen under the veil is disabled.
+            if (key == UiKey.Enter)
+            {
+                e.Handled = true;
+                _renameView?.ConfirmIfAllowed();
+                return;
+            }
             if (key != UiKey.Escape) return;
             e.Handled = true;
             _coordinator.OnRenameEscape();
             return;
         }
 
-        // Start screen: only O, F1, Esc and Ctrl+Z are ours (plan § 1.1, § 3.7); everything else,
-        // including Enter/Space/Tab, is Avalonia's own focused-button behaviour.
-        var isOurs = key is UiKey.O or UiKey.F1 or UiKey.Escape
+        // Start screen. Plan H § 3.3: with the keys page open, any key closes it -- the coordinator
+        // decides what "closes" means (Esc included), the key must not also do its normal job. A bare
+        // modifier is not a key press for this purpose (Ctrl on its way to Ctrl+Z must not close it).
+        if (_coordinator.Rank.HelpPinned)
+        {
+            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift
+                or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin) return;
+            e.Handled = true;
+            _coordinator.OnStartKeyDown(key, modifiers);
+            return;
+        }
+
+        // Plan H § 3.4: ← / → move focus between the pills. Enter/Space/Tab stay Avalonia's own
+        // focused-button behaviour (plan § 3.7).
+        if (key is UiKey.Left or UiKey.Right)
+        {
+            e.Handled = true;
+            if (!_coordinator.Start.Opening) _startView?.MovePillFocus(key == UiKey.Left ? -1 : 1);
+            return;
+        }
+
+        // O, R, F1, Esc and Ctrl+Z are ours (plan § 1.1, plan H § 3.4).
+        var isOurs = key is UiKey.O or UiKey.R or UiKey.F1 or UiKey.Escape
             || (key == UiKey.Z && modifiers.HasFlag(UiModifiers.Control));
         if (!isOurs) return;
 
@@ -168,6 +213,7 @@ internal static class KeyMapping
         Key.S => UiKey.S,
         Key.Z => UiKey.Z,
         Key.O => UiKey.O,
+        Key.R => UiKey.R,
         Key.D1 => UiKey.D1,
         Key.D2 => UiKey.D2,
         Key.D3 => UiKey.D3,

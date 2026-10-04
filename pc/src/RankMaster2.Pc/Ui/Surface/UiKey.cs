@@ -13,7 +13,7 @@ public enum UiKey
 {
     None = 0,
     Left, Right, Down, Up,
-    S, Z, O,
+    S, Z, O, R,
     D1, D2, D3, D4, D5,
     NumPad1, NumPad2, NumPad3, NumPad4, NumPad5,
     F1,

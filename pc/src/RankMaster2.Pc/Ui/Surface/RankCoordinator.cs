@@ -66,6 +66,12 @@ public sealed class RankCoordinator
     /// bracketed by <see cref="BeginDialog"/>/<see cref="EndDialog"/>.</summary>
     public event Action? OpenFolderRequested;
 
+    /// <summary>Raised by <c>R</c> on the start screen (plan H § 3.4), exactly like
+    /// <see cref="OpenFolderRequested"/> but for "rename by rank": Views shows the rename folder
+    /// picker (bracketed by <see cref="BeginDialog"/>/<see cref="EndDialog"/>) and hands the result to
+    /// <see cref="BeginRenameConfirm"/>.</summary>
+    public event Action? RenameRequested;
+
     public IVideoSurface? LeftVideoSurface { get; private set; }
     public IVideoSurface? RightVideoSurface { get; private set; }
 
@@ -92,6 +98,9 @@ public sealed class RankCoordinator
 
     /// <summary>The start screen's one status line (plan § 4.1), read from the link's own state.</summary>
     public string? LinkStatusLine => StartModel.StatusLineFor(_link.State, _link.LastFailure);
+
+    /// <summary>The start screen's corner lamp (plan H § 3.1), read from the link's own state.</summary>
+    public ServerLamp ServerLamp => StartModel.LampFor(_link.State, _link.LastFailure);
 
     /// <summary>D's engine state, for the "Starting video…" line and <c>NoVideoEngine</c> panes.
     /// <c>Failed</c> when no factory was supplied at all (plan § 2.3's gap: see the report).</summary>
@@ -346,10 +355,9 @@ public sealed class RankCoordinator
 
     private static string DescribeRenameRefusal(RenameOperationResult result) => result switch
     {
-        RenameOperationResult.Refused(var failure) =>
-            string.IsNullOrEmpty(failure.Detail) ? failure.Title : $"{failure.Title} — {failure.Detail}",
-        RenameOperationResult.NoOperation => "The rename could not be started.",
-        _ => "The rename could not be started.",
+        RenameOperationResult.Refused(var failure) => Notices.TitleAndDetail(failure.Title, failure.Detail),
+        RenameOperationResult.NoOperation => "Rename not started",
+        _ => "Rename not started",
     };
 
     /// <summary>A terminal operation, observed either by a poll or by the cancel call's own answer:
@@ -392,7 +400,7 @@ public sealed class RankCoordinator
             await _ui.InvokeAsync(() =>
             {
                 Start.EndOpening();
-                Start.ShowMessage($"Could not open the folder: {ex.Message}");
+                Start.ShowMessage(Notices.TitleAndDetail("Could not open the folder", ex.Message));
                 RaiseChanged();
             }).ConfigureAwait(false);
             return false;
@@ -440,7 +448,7 @@ public sealed class RankCoordinator
             await _ui.InvokeAsync(() =>
             {
                 Start.EndOpening();
-                Start.ShowMessage($"Could not open the folder: {ex.Message}");
+                Start.ShowMessage(Notices.TitleAndDetail("Could not open the folder", ex.Message));
                 RaiseChanged();
             }).ConfigureAwait(false);
             return;
@@ -496,6 +504,16 @@ public sealed class RankCoordinator
 
     public void OnStartKeyDown(UiKey key, UiModifiers modifiers)
     {
+        // Plan H § 3.3: the keys page closes on F1 *or any key*, and that includes Esc (which closes the
+        // page rather than quitting -- plan H § 3.4). Checked before the map so no key can also do its
+        // normal job behind the page it just closed.
+        if (Rank.HelpPinned)
+        {
+            Rank.HelpPinned = false;
+            RaiseChanged();
+            return;
+        }
+
         var intent = KeyMap.MapStart(key, modifiers);
         switch (intent)
         {
@@ -509,6 +527,11 @@ public sealed class RankCoordinator
             case Intent.ToggleHelp: Rank.HelpPinned = !Rank.HelpPinned; RaiseChanged(); return;
             case Intent.OpenFolder:
                 if (!Start.DialogOpen) OpenFolderRequested?.Invoke();
+                return;
+            case Intent.RenameFolder:
+                // Not while a folder is being opened: the link takes one call at a time and the rename
+                // card's first act is an open of its own.
+                if (!Start.DialogOpen && !Start.Opening) RenameRequested?.Invoke();
                 return;
             case Intent.Undo:
                 if (_startConsumed.Contains(key)) return;
@@ -702,7 +725,7 @@ public sealed class RankCoordinator
             _consecutiveUnreachable++;
             if (_consecutiveUnreachable >= 2)
             {
-                TransitionToStartWithMessage(notice.Text ?? "The server did not answer.");
+                TransitionToStartWithMessage(notice.Text ?? StartModel.ServerNotAnswering);
                 _consecutiveUnreachable = 0;
                 return;
             }
@@ -716,7 +739,7 @@ public sealed class RankCoordinator
         {
             // The session is simply gone and cannot be repainted (e.g. a reopen-after-no_session
             // that itself failed). Nothing left to show on the compare screen.
-            TransitionToStartWithMessage(notice.Text ?? "The server closed this session.");
+            TransitionToStartWithMessage(notice.Text ?? "Server closed this session");
             return;
         }
 

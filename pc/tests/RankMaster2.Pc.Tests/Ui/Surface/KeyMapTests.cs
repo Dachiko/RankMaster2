@@ -66,6 +66,13 @@ public class KeyMapTests
 
     // ---- start screen ------------------------------------------------------------------------------
 
+    [Fact]
+    public void Start_map_R_is_rename_by_rank_and_means_nothing_on_the_compare_screen()
+    {
+        Assert.Equal(Intent.RenameFolder, KeyMap.MapStart(UiKey.R, UiModifiers.None));
+        Assert.Equal(Intent.None, KeyMap.MapCompare(UiKey.R, UiModifiers.None));
+    }
+
     [Theory]
     [InlineData(UiKey.O, Intent.OpenFolder)]
     [InlineData(UiKey.F1, Intent.ToggleHelp)]

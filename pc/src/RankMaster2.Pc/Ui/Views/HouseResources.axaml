@@ -1,0 +1,38 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Plan H § 1's palette, as brushes, for the start screen, the rename ink card and the keys page.
+    The ten house colours and nothing else: any other colour in a file that is new or changed for
+    plan H fails HousePaletteTests. Alpha variants of these colours are allowed (the veil, the dot grid,
+    the shadow, the muted ink-card text); they are the same colour at less strength. The one exception
+    to "no other colour" is the plan's own § 3.2 value for the unfilled rename dots, #3A3A3A.
+    Existing keys in Theme.axaml are untouched (the compare screen still uses them).
+  -->
+  <SolidColorBrush x:Key="House.Bg">#FCFCFA</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Paper">#F1F2EF</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Ink">#141414</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Mid">#555555</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Dim">#737373</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Faint">#ABABA7</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Line">#DEDEDE</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Rule">#8C8C88</SolidColorBrush>
+  <SolidColorBrush x:Key="House.Accent">#E31B23</SolidColorBrush>
+  <SolidColorBrush x:Key="House.OnInk">#FCFCFA</SolidColorBrush>
+
+  <!-- bg at 78 % (plan H § 3.2's veil over the start screen). -->
+  <SolidColorBrush x:Key="House.Veil">#C7FCFCFA</SolidColorBrush>
+  <!-- on-ink at 7 % (the ink card's dot grid; the mockup's white at 7 %, kept inside the palette). -->
+  <SolidColorBrush x:Key="House.InkGrid">#12FCFCFA</SolidColorBrush>
+  <!-- on-ink at 75 % and 60 % (the card's sub line; its caps labels). -->
+  <SolidColorBrush x:Key="House.OnInk75">#BFFCFCFA</SolidColorBrush>
+  <SolidColorBrush x:Key="House.OnInk60">#99FCFCFA</SolidColorBrush>
+  <!-- ink at 25 % (the ink card's shadow). -->
+  <SolidColorBrush x:Key="House.Shadow">#40141414</SolidColorBrush>
+  <!-- Plan H § 3.2: "unfilled #3A3A3A". -->
+  <SolidColorBrush x:Key="House.DotOff">#3A3A3A</SolidColorBrush>
+
+  <!-- Doto Rounded Black. The file's typographic family (name ID 16) is "Doto Rounded"; its legacy
+       family (ID 1) is "Doto Rounded Black". Which one a platform's font loader reports differs, so
+       both are listed: the second is only used if the first does not resolve. -->
+  <FontFamily x:Key="House.Dot">avares://RankMaster2/Ui/Fonts#Doto Rounded,avares://RankMaster2/Ui/Fonts#Doto Rounded Black</FontFamily>
+</ResourceDictionary>
