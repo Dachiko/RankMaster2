@@ -4,8 +4,9 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
-- **Server/tray/PC 3.4.2** (tag `v3.4.2`, deployed 2026-10-04; `v3.4.1` is the last pushed) — 3.4.2
-  fixes the tray icon for a light taskbar (see `CHANGELOG.md`); push after Mike confirms the icon. Three steps in one day, all Mike's requests:
+- **Server/tray/PC 3.4.2** (tag `v3.4.2`, deployed and pushed 2026-10-04) is the head of `master`
+  and `origin/master`. 3.4.2 fixes the tray icon for a light taskbar (Mike's theme is light; the
+  3.3.0 icon was white on white); Mike confirmed it looks right. Three steps in one day, all Mike's requests:
   - **3.3.0 house style** (`pc/plans/H-house-style.md`, version C "Quiet"): start screen, rename
     ink card, start-screen keys page (R = rename), tray two-pane icon, tray menu Show QR + Exit only
     (a click = Show QR), QR-only pairing card that renews before expiry and closes when a phone
