@@ -61,16 +61,9 @@ public sealed class RankCoordinator
     /// timeout and exits; this class does not touch process lifetime.</summary>
     public event Action? QuitRequested;
 
-    /// <summary>Raised by <c>O</c> (or the start screen's Open button) when no dialog is already
-    /// open. Views shows the native picker and calls <see cref="OpenFolderAsync"/> with the result,
-    /// bracketed by <see cref="BeginDialog"/>/<see cref="EndDialog"/>.</summary>
-    public event Action? OpenFolderRequested;
-
-    /// <summary>Raised by <c>R</c> on the start screen (plan H § 3.4), exactly like
-    /// <see cref="OpenFolderRequested"/> but for "rename by rank": Views shows the rename folder
-    /// picker (bracketed by <see cref="BeginDialog"/>/<see cref="EndDialog"/>) and hands the result to
-    /// <see cref="BeginRenameConfirm"/>.</summary>
-    public event Action? RenameRequested;
+    /// <summary>The in-app folder browser (plan I): the screen's data. Shown while <see cref="Screen"/> is
+    /// <see cref="AppScreen.Browse"/>.</summary>
+    public BrowseModel Browse { get; } = new();
 
     public IVideoSurface? LeftVideoSurface { get; private set; }
     public IVideoSurface? RightVideoSurface { get; private set; }
@@ -147,26 +140,300 @@ public sealed class RankCoordinator
 
     // ---- start screen ----------------------------------------------------------------------------
 
-    // Which screen's flag BeginDialog set, so EndDialog clears that same one even if the screen
-    // changed while the dialog was open -- exactly what RenameViaPicker does: it begins on Start,
-    // then BeginRenameConfirm switches to Rename before the picker's `finally` runs EndDialog. Read
-    // Screen fresh at both ends used to clear Rank.DialogOpen there, leaving Start.DialogOpen stuck
-    // true forever and every later "Open folder" click a silent no-op.
-    private AppScreen? _dialogScreen;
+    // ---- the folder browser (plan I) -------------------------------------------------------------------------------
+    //
+    // One call at a time: the real link runs every call through one gate, so a second call while one is in
+    // flight throws. The browser therefore keeps ONE listing call in flight and only ever fires the latest target
+    // when it returns (_browsePending); a superseded call is cancelled to hurry it. The model's sequence number
+    // is the second line of defence: an answer for a folder already left is dropped.
 
-    public void BeginDialog()
+    private sealed record BrowseRequest(int Seq, string? Path, bool FallbackToRoots, string? Notice);
+
+    private AppScreen _browseOrigin = AppScreen.Start;
+    private CancellationTokenSource? _browseCts;
+    private BrowseRequest? _browsePending;
+    private Task _browseLoop = Task.CompletedTask;
+    private bool _browseRunning;
+
+    /// <summary>`O` (start and compare screens, or the start screen's Open pill) and `R` (start screen): opens
+    /// the in-app browser in <paramref name="mode"/> instead of the Windows picker (plan I § 2.2 item 1). It starts
+    /// in the parent of the folder last ranked (start screen) or open (compare screen) with that folder selected,
+    /// or at THIS PC when there is none (item 6). Nothing happens while a folder is being opened, on the rename
+    /// screen, or for `R` on the compare screen. The session behind the compare screen stays open untouched.</summary>
+    public void OpenBrowser(BrowseMode mode)
     {
-        _dialogScreen = Screen;
-        if (Screen == AppScreen.Start) Start.DialogOpen = true; else Rank.DialogOpen = true;
+        var origin = Screen;
+        if (origin == AppScreen.Start) { if (Start.Opening) return; }
+        else if (origin == AppScreen.Rank) { if (mode == BrowseMode.Rename) return; }
+        else return;
+
+        _browseOrigin = origin;
+        Rank.HelpPinned = false;
+        Browse.Reset(mode);
+        Screen = AppScreen.Browse;
+
+        var current = origin == AppScreen.Start ? Start.LastFolder : Rank.Snapshot?.Folder ?? _link.Snapshot?.Folder;
+        if (current is null)
+            QueueBrowse(null, null, null);
+        else if (BrowsePath.ParentOf(current) is { } parent)
+            QueueBrowse(parent, current, null, fallbackToRoots: true);
+        else
+            QueueBrowse(null, current, null);
+    }
+
+    private void QueueBrowse(string? path, string? select, bool? hereOpenable, bool fallbackToRoots = false, string? notice = null)
+    {
+        var seq = Browse.BeginLoad(path, select, hereOpenable);
+        _browsePending = new BrowseRequest(seq, path, fallbackToRoots, notice);
+        if (_browseRunning) _browseCts?.Cancel(); // the loop picks _browsePending up when the call in flight returns
+        else
+        {
+            _browseRunning = true;
+            _browseLoop = BrowseLoopAsync(TakePendingBrowse()!);
+        }
         RaiseChanged();
     }
 
-    public void EndDialog()
+    private BrowseRequest? TakePendingBrowse()
     {
-        var screen = _dialogScreen ?? Screen;
-        _dialogScreen = null;
-        if (screen == AppScreen.Start) Start.DialogOpen = false; else Rank.DialogOpen = false;
+        var next = _browsePending;
+        _browsePending = null;
+        if (next is not null) _browseCts = new CancellationTokenSource();
+        return next;
+    }
+
+    private async Task BrowseLoopAsync(BrowseRequest request)
+    {
+        BrowseRequest? current = request;
+        while (current is not null)
+        {
+            var ct = _browseCts!.Token;
+            RootsResult? roots = null;
+            ListingResult? listing = null;
+            Exception? error = null;
+            try
+            {
+                if (current.Path is null) roots = await _link.GetRootsAsync(ct).ConfigureAwait(false);
+                else listing = await _link.BrowseAsync(current.Path, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { error = ex; }
+
+            var done = current;
+            current = await _ui.InvokeAsync(() =>
+            {
+                ApplyBrowseResult(done, roots, listing, error);
+                var next = TakePendingBrowse();
+                if (next is null) _browseRunning = false;
+                return next;
+            }).ConfigureAwait(false);
+        }
+    }
+
+    private void ApplyBrowseResult(BrowseRequest request, RootsResult? roots, ListingResult? listing, Exception? error)
+    {
+        if (Screen != AppScreen.Browse) return;
+
+        switch (roots, listing)
+        {
+            case (RootsResult.Ok ok, _):
+                Browse.ApplyRoots(request.Seq, ok.Roots, request.Notice);
+                break;
+            case (RootsResult.Failed failed, _):
+                FailBrowse(request, BrowseFailureText(failed.Failure), failed.Failure);
+                break;
+            case (_, ListingResult.Ok ok):
+                Browse.ApplyListing(request.Seq, ok.Listing, request.Notice);
+                break;
+            case (_, ListingResult.Failed failed):
+                FailBrowse(request, BrowseFailureText(failed.Failure), failed.Failure);
+                break;
+            default:
+                // Cancelled (the answer is stale anyway) or the call threw.
+                if (error is not null) FailBrowse(request, Notices.TitleAndDetail("Could not read the folder", error.Message), null);
+                break;
+        }
         RaiseChanged();
+    }
+
+    /// <summary>Plan I § 2.2 item 10: one accent line, the browser stays where it was. A cancelled call is silent. The
+    /// very first listing (the parent of the last folder) falls back to THIS PC when it cannot be read, so the
+    /// browser is never an empty screen.</summary>
+    private void FailBrowse(BrowseRequest request, string text, Failure? failure)
+    {
+        if (failure is { Code: "client_cancelled" }) return;
+        if (!Browse.Fail(request.Seq, text)) return;
+        if (request.FallbackToRoots && request.Path is not null) QueueBrowse(null, null, null, notice: text);
+    }
+
+    private static string BrowseFailureText(Failure failure) =>
+        failure.Kind is FailureKind.ServerNotRunning or FailureKind.Unreachable
+            ? StartModel.ServerNotAnswering
+            : Notices.TitleAndDetail(failure.Title, failure.Detail);
+
+    public void OnBrowseKeyUp(UiKey key) => Rank.KeyUp(key);
+
+    /// <summary>A key on the browser (plan I § 2.2 item 5). With the keys page open, any key closes it and does nothing
+    /// else. While a folder is being opened every key waits.</summary>
+    public void OnBrowseKeyDown(UiKey key, UiModifiers modifiers)
+    {
+        if (Screen != AppScreen.Browse) return;
+        Rank.KeyDown(key);
+        if (Rank.HelpPinned)
+        {
+            Rank.HelpPinned = false;
+            RaiseChanged();
+            return;
+        }
+        if (Browse.Opening) return;
+
+        switch (KeyMap.MapBrowse(key, modifiers))
+        {
+            case Intent.BrowseUp: Browse.MoveUp(); break;
+            case Intent.BrowseDown: Browse.MoveDown(); break;
+            case Intent.BrowsePageUp: Browse.PageUp(); break;
+            case Intent.BrowsePageDown: Browse.PageDown(); break;
+            case Intent.BrowseHome: Browse.Home(); break;
+            case Intent.BrowseEnd: Browse.End(); break;
+            case Intent.BrowseEnter: Perform(Browse.Activate()); return;
+            case Intent.BrowseInto: Perform(Browse.GoInto()); return;
+            case Intent.BrowseOut: Perform(Browse.GoUp()); return;
+            case Intent.BrowseBackspace:
+                if (!Browse.Backspace()) { Perform(Browse.GoUp()); return; }
+                break;
+            case Intent.BrowseLeave:
+                if (!Browse.ClearFilter()) { LeaveBrowser(); return; }
+                break;
+            case Intent.ToggleHelp: Rank.HelpPinned = true; break;
+            default: return;
+        }
+        RaiseChanged();
+    }
+
+    /// <summary>Typed text on the browser: finds folders by their letters (plan I § 2.2 item 5). Nothing while the
+    /// keys page is open or a folder is being opened.</summary>
+    public void OnBrowseText(string text)
+    {
+        if (Screen != AppScreen.Browse || Rank.HelpPinned || Browse.Opening) return;
+        Browse.Type(text);
+        RaiseChanged();
+    }
+
+    /// <summary>A click on a row (-1 = the path's last segment, <b>here</b>) selects it.</summary>
+    public void BrowseSelect(int index)
+    {
+        if (Screen != AppScreen.Browse || Browse.Opening) return;
+        Browse.Select(index);
+        RaiseChanged();
+    }
+
+    /// <summary>A double-click: the click's selection, then Enter.</summary>
+    public void BrowseActivate(int index)
+    {
+        if (Screen != AppScreen.Browse || Browse.Opening) return;
+        Browse.Select(index);
+        Perform(Browse.Activate());
+    }
+
+    /// <summary>A click on a piece of the path goes there.</summary>
+    public void BrowseGoToSegment(PathSegment segment)
+    {
+        if (Screen != AppScreen.Browse || Browse.Opening) return;
+        Perform(Browse.GoToSegment(segment));
+    }
+
+    /// <summary>The corner's <c>F1 KEYS</c> by mouse: the same press the key makes.</summary>
+    public void BrowseToggleHelp()
+    {
+        if (Screen != AppScreen.Browse || Browse.Opening) return;
+        Rank.HelpPinned = !Rank.HelpPinned;
+        RaiseChanged();
+    }
+
+    private void Perform(BrowseAction action)
+    {
+        switch (action.Kind)
+        {
+            case BrowseActionKind.Go:
+                if (action.Roots) QueueBrowse(null, action.Select, null);
+                else QueueBrowse(action.Path, action.Select, action.HereOpenable);
+                break;
+            case BrowseActionKind.Rank:
+                _ = OpenFromBrowserAsync(action.Path!);
+                break;
+            case BrowseActionKind.Rename:
+                StopBrowsing();
+                BeginRenameConfirm(action.Path!);
+                break;
+            default:
+                RaiseChanged();
+                break;
+        }
+    }
+
+    /// <summary>Esc with nothing typed: back to where the browser came from (plan I § 2.2 item 5). The compare screen is
+    /// shown as it was: the session was never touched.</summary>
+    private void LeaveBrowser()
+    {
+        StopBrowsing();
+        Screen = _browseOrigin;
+        RaiseChanged();
+    }
+
+    private void StopBrowsing()
+    {
+        _browsePending = null;
+        _browseCts?.Cancel();
+        Browse.Cancel();
+        Rank.HelpPinned = false;
+    }
+
+    /// <summary>Rank mode, Enter on a folder: opens it as Open always did. The browser stays on screen with its busy line
+    /// while the call runs; if the folder is refused ("Nothing to rank here · …") the accent line says so and the browser
+    /// stays where it was (plan I § 2.2 item 10). Waits for a listing still in flight first: the link takes one call at a time.</summary>
+    private async Task OpenFromBrowserAsync(string folder)
+    {
+        _browsePending = null;
+        _browseCts?.Cancel();
+        Browse.BeginOpening();
+        RaiseChanged();
+
+        OpenResult result;
+        try
+        {
+            await _browseLoop.ConfigureAwait(false); // the cancelled listing call frees the link's gate
+            result = await _link.OpenAsync(folder).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await _ui.InvokeAsync(() =>
+            {
+                Browse.EndOpening(Notices.TitleAndDetail("Could not open the folder", ex.Message));
+                RaiseChanged();
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        await _ui.InvokeAsync(() =>
+        {
+            if (Screen != AppScreen.Browse) return;
+            switch (result)
+            {
+                case OpenResult.Opened opened:
+                    Browse.Cancel();
+                    _folderStore.Save(folder);
+                    Start.LastFolder = folder;
+                    EnterCompareScreen(opened.Snapshot);
+                    break;
+                case OpenResult.Failed failed:
+                    Browse.EndOpening(Notices.ForOpenFailure(failed.Failure).Text ?? failed.Failure.Title);
+                    break;
+                default:
+                    Browse.EndOpening("Could not open the folder");
+                    break;
+            }
+            RaiseChanged();
+        }).ConfigureAwait(false);
     }
 
     // ---- rename by rank (§ 3.13, SERVER_SPEC.md § 10.16) ------------------------------------------
@@ -519,19 +786,14 @@ public sealed class RankCoordinator
         {
             case Intent.None: return;
             case Intent.Quit:
-                // A27: whether or not Avalonia routes Esc out of the native folder picker, a dialog
-                // being open means Esc is the picker's to handle, not ours.
-                if (Start.DialogOpen) return;
                 Quit();
                 return;
             case Intent.ToggleHelp: Rank.HelpPinned = !Rank.HelpPinned; RaiseChanged(); return;
             case Intent.OpenFolder:
-                if (!Start.DialogOpen) OpenFolderRequested?.Invoke();
+                OpenBrowser(BrowseMode.Rank); // not while a folder is being opened (the guard is in OpenBrowser)
                 return;
             case Intent.RenameFolder:
-                // Not while a folder is being opened: the link takes one call at a time and the rename
-                // card's first act is an open of its own.
-                if (!Start.DialogOpen && !Start.Opening) RenameRequested?.Invoke();
+                OpenBrowser(BrowseMode.Rename);
                 return;
             case Intent.Undo:
                 if (_startConsumed.Contains(key)) return;
@@ -551,9 +813,6 @@ public sealed class RankCoordinator
                 return Task.CompletedTask;
 
             case Intent.Quit:
-                // A27: same rule as the start screen -- a dialog open on this screen means Esc is
-                // the picker's, not ours.
-                if (Rank.DialogOpen) return Task.CompletedTask;
                 Quit();
                 return Task.CompletedTask;
 
@@ -563,7 +822,7 @@ public sealed class RankCoordinator
                 return Task.CompletedTask;
 
             case Intent.OpenFolder:
-                if (!Rank.DialogOpen) OpenFolderRequested?.Invoke();
+                OpenBrowser(BrowseMode.Rank); // plan I § 2.2 item 1: the in-app browser, the session stays open behind it
                 return Task.CompletedTask;
         }
 

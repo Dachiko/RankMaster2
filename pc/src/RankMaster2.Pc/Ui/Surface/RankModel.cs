@@ -32,7 +32,6 @@ public sealed class RankModel
     public (string Text, DateTimeOffset ExpiresAt)? Toast { get; private set; }
 
     public bool HelpPinned { get; set; }
-    public bool DialogOpen { get; set; }
 
     public IReadOnlyList<string> Strip => Snapshot?.Cues ?? Array.Empty<string>();
 

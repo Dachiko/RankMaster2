@@ -33,6 +33,11 @@ public partial class KeysPage : UserControl
 
     private readonly FadeHost _fade;
 
+    /// <summary>Plan I: the folder browser shows this same page with its own three columns
+    /// (<see cref="HelpRows.BrowsePage"/>).</summary>
+    public void SetSections(IReadOnlyList<HelpSection> sections) =>
+        this.FindControl<ItemsControl>("Columns")!.ItemsSource = sections;
+
     /// <summary>What was last asked for. The page's own <c>IsVisible</c> lags a close by the fade
     /// (plan H § 5 S3: it fades in and out over ~150 ms).</summary>
     public bool IsOpen => _fade.IsShown;

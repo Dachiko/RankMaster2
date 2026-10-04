@@ -37,6 +37,7 @@ public class HouseControlsAndPaletteTests
         "HouseResources.axaml", "HouseStyles.axaml", "StartView.axaml", "RenameView.axaml", "KeysPage.axaml", "UiRoot.axaml",
         "HouseControls.cs", "StartView.axaml.cs", "RenameView.axaml.cs", "KeysPage.axaml.cs", "UiRoot.axaml.cs",
         "DecodeLayer.cs", "DecodeTimeline.cs", "HouseMotion.cs", // plan H § 5 S3
+        "BrowseView.axaml", "BrowseView.axaml.cs", "BrowseList.cs", // plan I: the folder browser
     ];
 
     private static string ViewsDirectory()

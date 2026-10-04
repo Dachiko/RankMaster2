@@ -9,7 +9,7 @@ using RankMaster2.Pc.Ui.Surface;
 namespace RankMaster2.Pc.Ui.Views;
 
 /// <summary>
-/// What part A hosts as window content (plan § 2.2). Switches between <see cref="StartView"/> and
+/// What part A hosts as window content (plan § 2.2). Switches between <see cref="StartView"/>, <see cref="BrowseView"/> (plan I) and
 /// <see cref="RankView"/> as <see cref="RankCoordinator.Screen"/> changes, attaches the key handlers
 /// to the <see cref="TopLevel"/> in the tunnel phase (plan § 2.2, § 3.7), and exposes
 /// <see cref="QuitRequested"/>. Decides nothing itself -- every decision is <c>Surface/</c>'s.
@@ -20,6 +20,7 @@ public partial class UiRoot : UserControl, IUiThread
     private StartView? _startView;
     private RankView? _rankView;
     private RenameView? _renameView;
+    private BrowseView? _browseView;
     private Grid? _startStack;
     private HouseMotion? _motion;
     private AppScreen? _renderedScreen;
@@ -78,9 +79,20 @@ public partial class UiRoot : UserControl, IUiThread
         if (_renderedScreen != _coordinator.Screen)
         {
             _renderedScreen = _coordinator.Screen;
-            root.Content = _coordinator.Screen == AppScreen.Rank
-                ? _rankView ??= new RankView(_coordinator)
-                : StartStack();
+            root.Content = _coordinator.Screen switch
+            {
+                AppScreen.Rank => _rankView ??= new RankView(_coordinator),
+                // Plan I: the folder browser replaces the screen it was opened from; both come back as they were
+                // (the cached views keep their state, and the compare screen's session was never touched).
+                AppScreen.Browse => _browseView ??= new BrowseView(_coordinator, _motion!),
+                _ => StartStack(),
+            };
+        }
+
+        if (_coordinator.Screen == AppScreen.Browse)
+        {
+            _browseView!.Refresh();
+            return;
         }
 
         if (_coordinator.Screen == AppScreen.Rank)
@@ -111,6 +123,7 @@ public partial class UiRoot : UserControl, IUiThread
         var topLevel = TopLevel.GetTopLevel(this);
         topLevel?.AddHandler(InputElement.KeyDownEvent, OnTunnelKeyDown, RoutingStrategies.Tunnel);
         topLevel?.AddHandler(InputElement.KeyUpEvent, OnTunnelKeyUp, RoutingStrategies.Tunnel);
+        topLevel?.AddHandler(InputElement.TextInputEvent, OnTunnelTextInput, RoutingStrategies.Tunnel);
         topLevel?.AddHandler(InputElement.PointerPressedEvent, OnTunnelPointerPressed, RoutingStrategies.Tunnel);
     }
 
@@ -119,6 +132,7 @@ public partial class UiRoot : UserControl, IUiThread
         var topLevel = TopLevel.GetTopLevel(this);
         topLevel?.RemoveHandler(InputElement.KeyDownEvent, OnTunnelKeyDown);
         topLevel?.RemoveHandler(InputElement.KeyUpEvent, OnTunnelKeyUp);
+        topLevel?.RemoveHandler(InputElement.TextInputEvent, OnTunnelTextInput);
         topLevel?.RemoveHandler(InputElement.PointerPressedEvent, OnTunnelPointerPressed);
         base.OnDetachedFromVisualTree(e);
     }
@@ -150,6 +164,18 @@ public partial class UiRoot : UserControl, IUiThread
             // (arrow-key focus navigation, Space/Enter on a focused button) never runs on this screen."
             e.Handled = true;
             _ = _coordinator.OnCompareKeyDown(key, modifiers);
+            return;
+        }
+
+        if (_coordinator.Screen == AppScreen.Browse)
+        {
+            // Plan I § 2.2 item 5. A bare modifier is nobody's. With the keys page open every key closes it (and is
+            // swallowed, so the letter that closed it is not also typed). Otherwise only the keys KeyMap.MapBrowse
+            // knows are ours; letters are left alone so they reach the tunnel's text handler as typed text.
+            if (e.Key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin) return;
+            if (!_coordinator.Rank.HelpPinned && KeyMap.MapBrowse(key, modifiers) == Intent.None) return;
+            e.Handled = true;
+            _coordinator.OnBrowseKeyDown(key, modifiers);
             return;
         }
 
@@ -200,11 +226,20 @@ public partial class UiRoot : UserControl, IUiThread
         _coordinator.OnStartKeyDown(key, modifiers);
     }
 
+    /// <summary>Plan I § 2.2 item 5: on the browser, letters (and digits, spaces) are typed text that finds folders.</summary>
+    private void OnTunnelTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (_coordinator is null || _coordinator.Screen != AppScreen.Browse || string.IsNullOrEmpty(e.Text)) return;
+        e.Handled = true;
+        _coordinator.OnBrowseText(e.Text);
+    }
+
     private void OnTunnelKeyUp(object? sender, KeyEventArgs e)
     {
         if (_coordinator is null) return;
         var key = KeyMapping.Map(e.Key);
         if (_coordinator.Screen == AppScreen.Rank) _coordinator.OnCompareKeyUp(key);
+        else if (_coordinator.Screen == AppScreen.Browse) _coordinator.OnBrowseKeyUp(key);
         else if (_coordinator.Screen != AppScreen.Rename) _coordinator.OnStartKeyUp(key);
     }
 }
@@ -247,6 +282,11 @@ internal static class KeyMapping
         Key.Escape => UiKey.Escape,
         Key.Enter => UiKey.Enter,
         Key.Space => UiKey.Space,
+        Key.Back => UiKey.Backspace,
+        Key.PageUp => UiKey.PageUp,
+        Key.PageDown => UiKey.PageDown,
+        Key.Home => UiKey.Home,
+        Key.End => UiKey.End,
         _ => UiKey.None,
     };
 

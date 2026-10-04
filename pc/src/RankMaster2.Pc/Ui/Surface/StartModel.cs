@@ -36,7 +36,6 @@ public sealed class StartModel
     /// screen, so <c>Ctrl+Z</c> here can call the link (plan § 4.1, § 3.4).</summary>
     public bool ExhaustedSessionOpen { get; private set; }
 
-    public bool DialogOpen { get; set; }
 
     /// <summary>The link's status line (plan § 4.1's table), derived from the real
     /// <see cref="ISessionLink"/>'s coarser <see cref="LinkState"/> plus its last <see cref="Failure"/>.
