@@ -35,3 +35,11 @@ public sealed record FolderEntry(
     [property: JsonPropertyName("rankable")] bool? Rankable,
     [property: JsonPropertyName("hasDatabase")] bool HasDatabase,
     [property: JsonPropertyName("accessible")] bool Accessible);
+
+/// <summary>
+/// The body of <c>GET /libraries/roots</c> (SERVER_SPEC.md § 10.14, openapi <c>RootsResponse</c>) is an
+/// object, <c>{ "roots": [...] }</c>, not a bare array. Internal: callers get the list through
+/// <c>RootsResult.Ok</c>.
+/// </summary>
+internal sealed record RootsBody(
+    [property: JsonPropertyName("roots")] IReadOnlyList<LibraryRoot>? Roots);
