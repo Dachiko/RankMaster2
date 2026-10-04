@@ -1,6 +1,7 @@
 package com.rankmaster2.phone.media
 
 import android.view.SurfaceView
+import android.view.TextureView
 import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -59,6 +60,14 @@ fun MediaPane(
     playing: Boolean = true,
     /** Only a screen with a debug overlay passes one; the pane writes into it and never reads it. */
     probe: MediaDebugProbe? = null,
+    /**
+     * Draw a video on a `TextureView` instead of a `SurfaceView`. Review does: its one full-screen
+     * video stayed black on the owner's phone until something was drawn over it (2026-10-04), the
+     * signature of a SurfaceView hole the compositor was never asked to show. A TextureView is
+     * ordinary view drawing - no hole, no separate layer - at a small cost the single pane of
+     * Review can afford. Ranking keeps the SurfaceView it was tuned on (BUGS.md section 1).
+     */
+    textureVideo: Boolean = false,
 ) {
     DisposableEffect(probe) { onDispose { probe?.showingNothing() } }
     BoxWithConstraints(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
@@ -70,7 +79,7 @@ fun MediaPane(
                 SideEffect { probe?.showingNothing() }
                 StatusPane(MediaPaneState.Gone)
             }
-            ref.isVideo -> VideoPane(ref, media, playing, constraints, probe)
+            ref.isVideo -> VideoPane(ref, media, playing, constraints, probe, textureVideo)
             else -> StillPane(ref, media, panePx, probe)
         }
     }
@@ -136,6 +145,7 @@ private fun VideoPane(
     playing: Boolean,
     constraints: Constraints,
     probe: MediaDebugProbe?,
+    textureVideo: Boolean,
 ) {
     val url = media.videoUrl(ref)
     var state by remember(ref.id, url) { mutableStateOf<MediaPaneState>(MediaPaneState.Loading) }
@@ -229,7 +239,8 @@ private fun VideoPane(
                         "${it.size.width}x${it.size.height} at (${b.left.toInt()},${b.top.toInt()})"
                 },
             factory = { context ->
-                SurfaceView(context).apply {
+                val view = if (textureVideo) TextureView(context) else SurfaceView(context)
+                view.apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,

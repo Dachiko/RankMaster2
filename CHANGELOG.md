@@ -4,6 +4,12 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## Phone 3.2.3 — 2026-10-04 (phone only)
+- Review: videos draw on a TextureView instead of a SurfaceView. Mike saw a black video turn into a
+  picture the moment the menu opened over it, the signature of a SurfaceView hole never shown.
+  Ranking keeps its SurfaceView. Unconfirmed until seen on the phone.
+- Review debug text no longer names files or URLs (`<file>.mp4`, `<url>`), at Mike's request.
+
 ## Phone 3.2.2 — 2026-10-04 (phone only)
 - Review: "Debug info" in the menu shows a live diagnostics panel for the current item (player
   state, format, decoder, first frame, errors, surface, last 40 events) and copies it to the

@@ -249,11 +249,10 @@ private fun Reviewer(
     val longPress = rememberUpdatedState(onLongPress)
 
     Box(Modifier.fillMaxSize()) {
-        // A video is hosted exactly the way the ranking screen hosts one: a plain centred box, no
-        // graphics layer and no clip anywhere above it. Its picture is a SurfaceView, a separate
-        // layer the compositor places, and wrapping it in a Compose graphics layer (which is also
-        // what clipToBounds is) left the pane black on the phone (3.2.0). So a video only *slides*,
-        // through a layout offset; a still, which is ordinary drawing, may also tilt.
+        // Videos stayed black here with a SurfaceView (3.2.0-3.2.2) until something was drawn over
+        // them - the owner saw the picture appear the moment the menu opened. Review therefore draws
+        // its video on a TextureView (`textureVideo = true`), which is ordinary view drawing. The
+        // video still only slides, through a layout offset; a still may also tilt.
         val mover = if (ref.isVideo) {
             Modifier.offset { IntOffset(swipe.dragX.roundToInt(), 0) }
         } else {
@@ -264,7 +263,7 @@ private fun Reviewer(
             }
         }
         Box(Modifier.fillMaxSize().then(mover), contentAlignment = Alignment.Center) {
-            MediaPane(ref = ref, media = media, playing = state.playing, probe = probe)
+            MediaPane(ref = ref, media = media, playing = state.playing, textureVideo = true, probe = probe)
         }
 
         // The gesture surface sits over the picture and does not move with it. One handler for the

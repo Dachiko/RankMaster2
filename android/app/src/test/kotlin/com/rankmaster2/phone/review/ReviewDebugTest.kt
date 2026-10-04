@@ -13,6 +13,7 @@ import com.rankmaster2.phone.net.Links
 import com.rankmaster2.phone.net.MediaRef
 import com.rankmaster2.phone.ui.review.DebugEnv
 import com.rankmaster2.phone.ui.review.DebugScreen
+import com.rankmaster2.phone.ui.review.redactDebugText
 import com.rankmaster2.phone.ui.review.reviewDebugText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -179,5 +180,21 @@ class ReviewDebugTest {
         assertTrue(text, text.contains("kind=still"))
         assertTrue(text, text.contains("url: https://pc/s?w=1080"))
         assertTrue(text, text.contains("(none)"))
+    }
+
+    @Test
+    fun `the copied text names no file and no url`() {
+        val raw = listOf(
+            "item: id=Holiday clip.mp4 kind=video",
+            "url: https://192.168.1.5:18611/api/v1/media/Holiday%20clip.mp4/video?v=ab",
+            "error: Response code 404 for Holiday%20clip.mp4 and Holiday clip.mp4",
+        ).joinToString("\n")
+
+        val text = redactDebugText(raw, "Holiday clip.mp4")
+
+        assertTrue(text, !text.contains("Holiday"))
+        assertTrue(text, !text.contains("192.168"))
+        assertTrue(text, text.contains("id=<file>.mp4 kind=video"))
+        assertTrue(text, text.contains("url: <url>"))
     }
 }

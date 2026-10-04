@@ -110,8 +110,29 @@ internal fun reviewDebugText(
     if (events.isEmpty()) appendLine("(none)") else events.forEach { appendLine(it) }
 }.trimEnd()
 
-/** Reads the probe for the current item and builds the text. Call it where states may be read. */
-internal fun reviewDebugText(env: DebugEnv, screen: DebugScreen, probe: MediaDebugProbe): String {
+/**
+ * The owner's request (2026-10-04): the text he sends on must not name his files. Every URL goes,
+ * and the current item's name - plain or percent-encoded, wherever it turns up, error messages
+ * included - becomes `<file>` with its extension kept, because the container is diagnostic and the
+ * name is not.
+ */
+internal fun redactDebugText(text: String, id: String?): String {
+    var out = text
+    if (!id.isNullOrEmpty()) {
+        val ext = id.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
+        val masked = "<file>$ext"
+        val encoded = runCatching { java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20") }.getOrNull()
+        out = out.replace(id, masked)
+        if (encoded != null && encoded != id) out = out.replace(encoded, masked)
+    }
+    return out.replace(Regex("""https?://\S+"""), "<url>")
+}
+
+/** Reads the probe for the current item and builds the text, with file names and URLs hidden. */
+internal fun reviewDebugText(env: DebugEnv, screen: DebugScreen, probe: MediaDebugProbe): String =
+    redactDebugText(rawReviewDebugText(env, screen, probe), screen.item?.id)
+
+private fun rawReviewDebugText(env: DebugEnv, screen: DebugScreen, probe: MediaDebugProbe): String {
     val item = screen.item
     return when {
         item == null -> reviewDebugText(env, screen, "nothing on screen", emptyList(), emptyList())

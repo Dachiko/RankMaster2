@@ -23,11 +23,17 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
   phone downloads every video completely, so it is decode/render on the phone; Review shows the
   spinner (MediaPane's cover is up: no aspect ratio or never `Loaded`). **Phone 3.2.2** adds a
   "Debug info" menu row in Review (`ui/review/ReviewDebug.kt`, `media/VideoDiagnostics.kt`) that
-  shows and copies player/decoder/surface diagnostics; waiting for Mike to send the text. Also asked
-  him whether videos show in Rank mode in the same test app.
+  shows and copies player/decoder/surface diagnostics. Also asked him whether videos show in Rank
+  mode in the same test app (no answer yet).
+- **Key clue (Mike, 3.2.2):** the video appears the moment the menu opens over it. So the player
+  decodes and the cover lifts; the SurfaceView's picture is just not shown until something is drawn
+  over it (ranking always has its strip/notch/progress line over the panes; Review has nothing).
+  **Phone 3.2.3**: Review draws video on a `TextureView` (`MediaPane(textureVideo = true)`,
+  `Rm2Video.showOn(TextureView)`); ranking unchanged. Debug text now hides file names and URLs
+  (Mike does not want them sent). Unconfirmed until he tries it.
 - Still to hear about: tap / swipe / long press feel, the two new menu glyphs (restart, back
   arrow), resume after leave/re-enter. Videos slide but don't tilt.
-- **Phone:** the tree's APK is `versionName 3.2.2` / `versionCode 7`. Which release build is on
+- **Phone:** the tree's APK is `versionName 3.2.3` / `versionCode 8`. Which release build is on
   Mike's phone is unknown; the debug app (`com.rankmaster2.phone.debug`) sits beside it.
 - **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 491 pass.
 - **Open phone bugs** (`android/BUGS.md`): 1 video wrong proportions, 2 cancel notch drawn wrong,

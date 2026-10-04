@@ -3,6 +3,7 @@ package com.rankmaster2.phone.media
 import android.content.Context
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import androidx.annotation.OptIn
 import androidx.media3.common.C
@@ -379,10 +380,45 @@ class Rm2Video internal constructor(
     /** The surface this video is currently drawing on, if any. */
     private var surface: SurfaceView? = null
 
+    /** The texture this video is drawing on instead, when the pane asked for one (Review). */
+    private var texture: TextureView? = null
+
     /**
      * Draw on [view]. The pane calls this from `AndroidView.update`, for each surface it creates
      * for this video - the provisional one, and the one made at the picture's own size.
      */
+    /** Draw on whichever kind of view the pane made: a [SurfaceView], or a [TextureView]. */
+    fun showOn(view: View) {
+        when (view) {
+            is SurfaceView -> showOn(view)
+            is TextureView -> showOn(view)
+        }
+    }
+
+    /** Stop drawing on [view], whichever kind it is. */
+    fun hideFrom(view: View) {
+        when (view) {
+            is SurfaceView -> hideFrom(view)
+            is TextureView -> hideFrom(view)
+        }
+    }
+
+    fun showOn(view: TextureView) {
+        if (isReleased) {
+            diagnostics.onShowOnIgnored()
+            return
+        }
+        texture = view
+        diagnostics.onShowOn("texture@${Integer.toHexString(System.identityHashCode(view))} ${view.width}x${view.height}")
+        maybePlayer?.setVideoTextureView(view)
+    }
+
+    fun hideFrom(view: TextureView) {
+        diagnostics.onHideFrom("texture@${Integer.toHexString(System.identityHashCode(view))} ${view.width}x${view.height}")
+        if (texture === view) texture = null
+        if (!isReleased) maybePlayer?.clearVideoTextureView(view)
+    }
+
     fun showOn(view: SurfaceView) {
         if (isReleased) {
             diagnostics.onShowOnIgnored()
@@ -603,6 +639,8 @@ class Rm2Video internal constructor(
             it.holder.removeCallback(holderCallback)
         }
         surface = null
+        texture?.let { maybePlayer?.clearVideoTextureView(it) }
+        texture = null
         isReleased = true
         maybePlayer?.removeListener(listener)
         maybePlayer?.removeAnalyticsListener(diagnosticsListener)
