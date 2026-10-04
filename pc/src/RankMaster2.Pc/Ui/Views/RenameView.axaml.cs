@@ -1,3 +1,4 @@
+using Avalonia.Animation;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using RankMaster2.Pc.Ui.Surface;
@@ -17,6 +18,8 @@ namespace RankMaster2.Pc.Ui.Views;
 public partial class RenameView : UserControl, IRefreshable
 {
     private readonly RankCoordinator _coordinator;
+    private readonly HouseMotion _motion;
+    private readonly FadeHost _fade;
     private readonly Border _card;
     private readonly StackPanel _confirmPanel;
     private readonly TextBlock _confirmFolder;
@@ -31,10 +34,12 @@ public partial class RenameView : UserControl, IRefreshable
     private readonly TextBlock _cancelCaption;
     private readonly TextBlock[] _phaseWords;
 
-    public RenameView(RankCoordinator coordinator)
+    public RenameView(RankCoordinator coordinator, HouseMotion motion)
     {
         AvaloniaXamlLoader.Load(this);
         _coordinator = coordinator;
+        _motion = motion;
+        _fade = new FadeHost(this);
 
         _card = this.FindControl<Border>("Card")!;
         _confirmPanel = this.FindControl<StackPanel>("ConfirmPanel")!;
@@ -55,9 +60,26 @@ public partial class RenameView : UserControl, IRefreshable
             this.FindControl<TextBlock>("PhaseSave")!,
         ];
 
+        // Plan H § 5 S3: "the red dots fill". Filled counts dots, so the transition steps from one dot to the
+        // next as the percent moves (the same 200 ms the old progress bar took, Timings.ProgressBarAnimMs).
+        _dots.Transitions =
+        [
+            new DoubleTransition { Property = DotRow.FilledProperty, Duration = Timings.ProgressBarAnimMs },
+        ];
+
         _yesCaption.PointerPressed += (_, e) => { e.Handled = true; ConfirmIfAllowed(); };
         _noCaption.PointerPressed += (_, e) => { e.Handled = true; _coordinator.CancelRenameConfirm(); };
         _cancelCaption.PointerPressed += (_, e) => { e.Handled = true; _coordinator.RequestCancelRename(); };
+    }
+
+    /// <summary>What was last asked for; the card's own <c>IsVisible</c> lags a hide by the fade.</summary>
+    public bool IsShown => _fade.IsShown;
+
+    /// <summary>The ink card fades in when the rename screen starts and out when it ends (plan H § 5 S3).</summary>
+    public void SetShown(bool shown)
+    {
+        if (shown) _fade.Show();
+        else _fade.Hide();
     }
 
     /// <summary>Enter, or a click on <c>ENTER RENAME</c>: start the rename, unless one call is already
@@ -79,14 +101,18 @@ public partial class RenameView : UserControl, IRefreshable
 
         if (confirming)
         {
-            _confirmFolder.Text = rename.FolderName.ToUpperInvariant();
+            // Everything this card shows is the owner's doing (he picked the folder, he pressed Enter), so
+            // its text decodes in rather than swapping silently (plan H § 5 S3).
+            _motion.Change(_confirmFolder, rename.FolderName.ToUpperInvariant(), userCaused: true);
             _confirmLine.Text = RenameModel.ConfirmLine;
             return;
         }
 
         _runningFolder.Text = "  ·  " + rename.FolderName.ToUpperInvariant();
 
-        _percentText.Text = rename.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // The percent rolls digit by digit: 36 → 37 rolls the last digit, 99 → 100 all three.
+        _motion.Change(_percentText, rename.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            userCaused: true, onlyChangedLetters: true);
         _dots.Filled = DotRow.DotsFor(rename.Percent, _dots.Count);
 
         // Cancel asked for: the left caption says so and a busy line takes the dots' place (plan H § 3.2).

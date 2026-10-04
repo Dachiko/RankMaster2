@@ -89,15 +89,15 @@ public class StartScreenViewTests
     {
         var (window, root, c, _) = Build();
         var page = Find<KeysPage>(root)!;
-        Assert.False(page.IsVisible);
+        Assert.False(page.IsOpen);
 
         window.KeyPress(Key.F1, RawInputModifiers.None);
         Assert.True(c.Rank.HelpPinned);
-        Assert.True(page.IsVisible);
+        Assert.True(page.IsOpen);
 
         window.KeyPress(Key.F1, RawInputModifiers.None);
         Assert.False(c.Rank.HelpPinned);
-        Assert.False(page.IsVisible);
+        Assert.False(page.IsOpen);
     }
 
     [AvaloniaFact]
@@ -110,7 +110,7 @@ public class StartScreenViewTests
         window.KeyPress(Key.F1, RawInputModifiers.None);
         window.KeyPress(Key.Escape, RawInputModifiers.None);
         Assert.Equal(0, quit);
-        Assert.False(Find<KeysPage>(root)!.IsVisible);
+        Assert.False(Find<KeysPage>(root)!.IsOpen);
 
         window.KeyPress(Key.Escape, RawInputModifiers.None);
         Assert.Equal(1, quit);
@@ -126,7 +126,7 @@ public class StartScreenViewTests
         window.KeyPress(Key.F1, RawInputModifiers.None);
         window.KeyPress(Key.O, RawInputModifiers.None); // closes the page; does not also open the picker
 
-        Assert.False(Find<KeysPage>(root)!.IsVisible);
+        Assert.False(Find<KeysPage>(root)!.IsOpen);
         Assert.Equal(0, opened);
     }
 
@@ -293,12 +293,12 @@ public class StartScreenViewTests
         var (_, root, c, _) = Build(folder);
         var start = Find<StartView>(root)!;
         var card = Find<RenameView>(root)!;
-        Assert.False(card.IsVisible);
+        Assert.False(card.IsShown);
 
         c.BeginRenameConfirm(folder);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.True(card.IsVisible);
+        Assert.True(card.IsShown);
         Assert.NotNull(start.GetVisualRoot());
         Assert.False(start.IsEnabled);
         var texts = card.GetVisualDescendants().OfType<TextBlock>().Where(t => t.IsVisible).Select(t => t.Text).ToList();
@@ -310,7 +310,7 @@ public class StartScreenViewTests
 
         c.CancelRenameConfirm();
         Dispatcher.UIThread.RunJobs();
-        Assert.False(card.IsVisible);
+        Assert.False(card.IsShown);
         Assert.True(start.IsEnabled);
         Assert.Equal("ResumeButton", start.FocusedPill); // focus is back on the first pill
     }

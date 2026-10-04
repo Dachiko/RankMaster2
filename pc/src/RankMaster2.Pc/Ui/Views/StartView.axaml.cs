@@ -24,6 +24,7 @@ namespace RankMaster2.Pc.Ui.Views;
 public partial class StartView : UserControl, IRefreshable
 {
     private readonly RankCoordinator _coordinator;
+    private readonly HouseMotion _motion;
     private readonly Ellipse _serverDot;
     private readonly TextBlock _serverText;
     private readonly TextBlock _keysCaption;
@@ -47,10 +48,11 @@ public partial class StartView : UserControl, IRefreshable
     private bool _wasExhausted;
     private bool _wasUnderCard;
 
-    public StartView(RankCoordinator coordinator)
+    public StartView(RankCoordinator coordinator, HouseMotion motion)
     {
         AvaloniaXamlLoader.Load(this);
         _coordinator = coordinator;
+        _motion = motion;
 
         _serverDot = this.FindControl<Ellipse>("ServerDot")!;
         _serverText = this.FindControl<TextBlock>("ServerText")!;
@@ -113,6 +115,7 @@ public partial class StartView : UserControl, IRefreshable
         {
             var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Select a folder to rank" });
             var folder = result.Count > 0 ? result[0].TryGetLocalPath() : null;
+            _motion.Activity.Note(); // picking a folder is the owner acting, though no key or click reached us
             if (folder is not null)
                 await _coordinator.OpenFolderAsync(folder);
         }
@@ -135,6 +138,7 @@ public partial class StartView : UserControl, IRefreshable
         {
             var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Select a folder to rename by rank" });
             var folder = result.Count > 0 ? result[0].TryGetLocalPath() : null;
+            _motion.Activity.Note();
             if (folder is not null)
                 _coordinator.BeginRenameConfirm(folder);
         }
@@ -167,6 +171,15 @@ public partial class StartView : UserControl, IRefreshable
         var exhausted = start.MessageKind == StartMessageKind.Exhausted;
         var underCard = _coordinator.Screen == AppScreen.Rename;
 
+        // Plan H § 5 S3, "nothing moves by itself": a text decodes only when what changed it was the owner --
+        // a key or click in the last 1.5 s, or the end of something he started (an open that finished or
+        // failed, the rename card closing, the exhausted screen he voted his way to). A link status that
+        // flips on its own, or a background refresh, lands still.
+        var userCaused = _motion.Activity.Recent
+            || (_wasOpening && !start.Opening)
+            || (_wasUnderCard && !underCard)
+            || (start.MessageKind == StartMessageKind.Exhausted && !_wasExhausted);
+
         // Under the rename card the whole screen is inert (plan H § 3.2: drawn, not usable): Tab cannot
         // reach a pill behind the veil. It looks the same -- the pills only dim for "opening".
         IsEnabled = !underCard;
@@ -181,12 +194,12 @@ public partial class StartView : UserControl, IRefreshable
 
         // ---- label above the hero ----
         _labelDot.IsVisible = exhausted;
-        _labelText.Text = exhausted ? "NO PAIR LEFT" : hasLast ? "RESUME" : "";
+        _motion.Change(_labelText, exhausted ? "NO PAIR LEFT" : hasLast ? "RESUME" : "", userCaused);
         _labelText.Classes.Set("accent", exhausted);
 
         // ---- hero and path ----
         var shown = start.Opening && start.OpeningFolder is { } opening ? opening : start.LastFolder;
-        _heroText.Text = shown is null ? "RANK MASTER" : Notices.LeafName(shown).ToUpperInvariant();
+        _motion.Change(_heroText, shown is null ? "RANK MASTER" : Notices.LeafName(shown).ToUpperInvariant(), userCaused);
         _underRow.IsVisible = hasLast || start.Opening;
         _pathText.Text = start.LastFolder ?? "";
         _pathText.Opacity = start.Opening ? 0 : 1;
@@ -220,7 +233,7 @@ public partial class StartView : UserControl, IRefreshable
                 statusIsError = lamp == ServerLamp.Down;
                 break;
         }
-        _statusLine.Text = status ?? "";
+        _motion.Change(_statusLine, status ?? "", userCaused);
         _statusLine.Classes.Set("accent", statusIsError);
         _statusLine.Classes.Set("mid", !statusIsError);
         _statusDot.IsVisible = statusHasDot && !string.IsNullOrEmpty(status);

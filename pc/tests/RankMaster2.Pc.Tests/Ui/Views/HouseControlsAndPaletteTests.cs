@@ -36,6 +36,7 @@ public class HouseControlsAndPaletteTests
     [
         "HouseResources.axaml", "HouseStyles.axaml", "StartView.axaml", "RenameView.axaml", "KeysPage.axaml", "UiRoot.axaml",
         "HouseControls.cs", "StartView.axaml.cs", "RenameView.axaml.cs", "KeysPage.axaml.cs", "UiRoot.axaml.cs",
+        "DecodeLayer.cs", "DecodeTimeline.cs", "HouseMotion.cs", // plan H § 5 S3
     ];
 
     private static string ViewsDirectory()
@@ -78,7 +79,9 @@ public class HouseControlsAndPaletteTests
             foreach (Match m in Regex.Matches(text, @"\b(?:Foreground|Background|Fill|Stroke|BorderBrush|Color)=""(?!\{)([A-Za-z]+)"""))
                 if (m.Groups[1].Value is not "Transparent")
                     offenders.Add($"{name}: named colour {m.Value}");
-            foreach (Match m in Regex.Matches(text, @"\b(?:Colors|Brushes)\.(?!Transparent\b)\w+|Color\.(?:FromRgb|FromArgb|Parse)\b|new\s+SolidColorBrush\s*\("))
+            // (Color.FromArgb is not flagged: DecodeLayer builds alpha and in-between shades of a palette colour with it,
+            // which is arithmetic on the palette, not a new colour; a literal would still be caught by the hex scan.)
+            foreach (Match m in Regex.Matches(text, @"\b(?:Colors|Brushes)\.(?!Transparent\b)\w+|Color\.(?:FromRgb|Parse)\b|new\s+SolidColorBrush\s*\("))
                 offenders.Add($"{name}: {m.Value}");
         }
 

@@ -21,6 +21,7 @@ public partial class UiRoot : UserControl, IUiThread
     private RankView? _rankView;
     private RenameView? _renameView;
     private Grid? _startStack;
+    private HouseMotion? _motion;
     private AppScreen? _renderedScreen;
     private DispatcherTimer? _repaintTimer;
 
@@ -38,6 +39,7 @@ public partial class UiRoot : UserControl, IUiThread
     public UiRoot(RankCoordinator coordinator) : this()
     {
         _coordinator = coordinator;
+        _motion = new HouseMotion(this.FindControl<DecodeLayer>("Decode")!, new UserActivity());
         _coordinator.Changed += OnCoordinatorChanged;
         _coordinator.QuitRequested += () => QuitRequested?.Invoke();
 
@@ -89,15 +91,15 @@ public partial class UiRoot : UserControl, IUiThread
 
         var renaming = _coordinator.Screen == AppScreen.Rename;
         _startView!.Refresh();
-        _renameView!.IsVisible = renaming;
-        if (renaming) _renameView.Refresh();
+        if (renaming) _renameView!.Refresh();
+        _renameView!.SetShown(renaming); // plan H § 5 S3: the ink card fades in and out
     }
 
     private Grid StartStack()
     {
         if (_startStack is not null) return _startStack;
-        _startView = new StartView(_coordinator!);
-        _renameView = new RenameView(_coordinator!) { IsVisible = false };
+        _startView = new StartView(_coordinator!, _motion!);
+        _renameView = new RenameView(_coordinator!, _motion!) { IsVisible = false };
         return _startStack = new Grid { Children = { _startView, _renameView } };
     }
 
@@ -109,6 +111,7 @@ public partial class UiRoot : UserControl, IUiThread
         var topLevel = TopLevel.GetTopLevel(this);
         topLevel?.AddHandler(InputElement.KeyDownEvent, OnTunnelKeyDown, RoutingStrategies.Tunnel);
         topLevel?.AddHandler(InputElement.KeyUpEvent, OnTunnelKeyUp, RoutingStrategies.Tunnel);
+        topLevel?.AddHandler(InputElement.PointerPressedEvent, OnTunnelPointerPressed, RoutingStrategies.Tunnel);
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -116,12 +119,28 @@ public partial class UiRoot : UserControl, IUiThread
         var topLevel = TopLevel.GetTopLevel(this);
         topLevel?.RemoveHandler(InputElement.KeyDownEvent, OnTunnelKeyDown);
         topLevel?.RemoveHandler(InputElement.KeyUpEvent, OnTunnelKeyUp);
+        topLevel?.RemoveHandler(InputElement.PointerPressedEvent, OnTunnelPointerPressed);
         base.OnDetachedFromVisualTree(e);
     }
+
+    /// <summary>Plan H § 5 S3: a key or a click is the owner acting. It ends every decode that is still
+    /// running (nobody waits on an animation), and it starts the 1.5 s during which a change counts as his
+    /// (so the decode of what his key just changed is not mistaken for something the machine did).
+    /// Neither swallows the input: the key or click goes on to do what it does.</summary>
+    private void NoteUserAction()
+    {
+        if (_motion is null) return;
+        _motion.Layer.FinishAll();
+        _motion.Activity.Note();
+    }
+
+    private void OnTunnelPointerPressed(object? sender, PointerPressedEventArgs e) => NoteUserAction();
 
     private void OnTunnelKeyDown(object? sender, KeyEventArgs e)
     {
         if (_coordinator is null) return;
+        if (e.Key is not (Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin))
+            NoteUserAction();
         var key = KeyMapping.Map(e.Key);
         var modifiers = KeyMapping.MapModifiers(e.KeyModifiers);
 

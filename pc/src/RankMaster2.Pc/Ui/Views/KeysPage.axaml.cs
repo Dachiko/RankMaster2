@@ -21,6 +21,7 @@ public partial class KeysPage : UserControl
     public KeysPage()
     {
         AvaloniaXamlLoader.Load(this);
+        _fade = new FadeHost(this);
         this.FindControl<ItemsControl>("Columns")!.ItemsSource = HelpRows.StartPage;
         this.FindControl<TextBlock>("VersionText")!.Text = "v" + AppInfo.Version;
         PointerPressed += (_, e) =>
@@ -30,7 +31,15 @@ public partial class KeysPage : UserControl
         };
     }
 
-    public bool IsOpen => IsVisible;
+    private readonly FadeHost _fade;
 
-    public void SetOpen(bool open) => IsVisible = open;
+    /// <summary>What was last asked for. The page's own <c>IsVisible</c> lags a close by the fade
+    /// (plan H § 5 S3: it fades in and out over ~150 ms).</summary>
+    public bool IsOpen => _fade.IsShown;
+
+    public void SetOpen(bool open)
+    {
+        if (open) _fade.Show();
+        else _fade.Hide();
+    }
 }
