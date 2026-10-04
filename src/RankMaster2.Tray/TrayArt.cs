@@ -4,11 +4,12 @@ using System.Runtime.InteropServices;
 namespace RankMaster2.Tray;
 
 /// <summary>
-/// The notification-area icon, drawn in code rather than shipped as a <c>.ico</c>.
+/// The notification-area icon, drawn in code rather than shipped as a <c>.ico</c> (the exe's own
+/// icon, <c>App.ico</c>, is a separate file wired in the csproj).
 /// <para/>
-/// It is two panes side by side with the left one lit — the app's entire idea in sixteen pixels —
-/// and drawing it here means there is no binary asset to lose, and no icon that silently fails to
-/// be embedded by a publish script.
+/// It is the house two-pane mark (plan H § 3.5): two upright rounded panes with a thin outline, drawn
+/// for the dark taskbar. The left pane is filled while nothing is open and turns red while a folder
+/// is being ranked — the one fact the icon has to give.
 /// </summary>
 internal static class TrayArt
 {
@@ -16,22 +17,34 @@ internal static class TrayArt
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyIcon(IntPtr handle);
 
-    public static Icon CreateIcon()
+    /// <param name="folderOpen">True while a folder is open: the left pane is accent instead of on-ink.</param>
+    public static Icon CreateIcon(bool folderOpen)
     {
-        // 32px covers the notification area at every DPI Windows scales it to from here.
-        using var bitmap = new Bitmap(32, 32);
+        // The size the notification area asks for at this DPI (16 at 100 %, 20 at 125 %, ...).
+        var size = Math.Max(16, SystemInformation.SmallIconSize.Width);
+
+        using var bitmap = new Bitmap(size, size);
         using (var graphics = Graphics.FromImage(bitmap))
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.Clear(Color.Transparent);
 
-            using var lit = new SolidBrush(Color.FromArgb(255, 236, 238, 242));
-            using var dim = new SolidBrush(Color.FromArgb(255, 96, 104, 120));
-            using var ring = new Pen(Color.FromArgb(255, 46, 204, 113), 2.5f);
+            // Geometry is the mockup's, on a 20-unit square: panes 7 x 12 at x 2 and x 11, y 4,
+            // corner radius 1.2, outline 1.4. The outline never goes under 1.4 px, or it fades out
+            // at 16 px.
+            var k = size / 20f;
+            var stroke = Math.Max(1.4f, 1.4f * k);
+            var fill = folderOpen ? House.Accent : House.OnInk;
 
-            graphics.FillRectangle(lit, 3, 6, 11, 20);
-            graphics.FillRectangle(dim, 18, 6, 11, 20);
-            graphics.DrawRectangle(ring, 3, 6, 11, 20);
+            using var left = House.RoundedRect(new RectangleF(2 * k, 4 * k, 7 * k, 12 * k), 1.2f * k);
+            using var right = House.RoundedRect(new RectangleF(11 * k, 4 * k, 7 * k, 12 * k), 1.2f * k);
+            using var fillBrush = new SolidBrush(fill);
+            using var leftPen = new Pen(fill, stroke) { LineJoin = LineJoin.Round };
+            using var rightPen = new Pen(House.OnInk, stroke) { LineJoin = LineJoin.Round };
+
+            graphics.FillPath(fillBrush, left);
+            graphics.DrawPath(leftPen, left);
+            graphics.DrawPath(rightPen, right);
         }
 
         var handle = bitmap.GetHicon();
