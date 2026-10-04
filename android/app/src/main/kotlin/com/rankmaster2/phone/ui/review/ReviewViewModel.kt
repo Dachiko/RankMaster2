@@ -13,6 +13,7 @@ import com.rankmaster2.phone.net.Rm2Result
 import com.rankmaster2.phone.net.Snapshot
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,29 +22,30 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The review screen's brain: one file at a time, keep it or discard it.
+ * The review screen's brain: one file at a time, tap to keep it, swipe left to discard it.
  *
  * ## Optimistic, and why that is safe here
  *
  * Ranking never guesses (a vote that has not been answered has not happened). Review does: a
  * discard takes the item off the list and shows the next one at once, and the PC is told in the
  * background. A discard is a *move* into `<folder>/discarded/`, undoable, and a failed one puts the
- * item back - so the worst case of guessing wrong is a picture reappearing with a message.
+ * item back where it was - so the worst case of guessing wrong is a picture quietly reappearing.
  *
  * ## One call at a time, in order
  *
  * Every server call goes through [lock], a fair mutex, so discards reach the PC in the order they
- * were swiped, a Cancel waits for every discard before it, and a list refresh never runs between a
- * discard being swiped and being sent.
+ * were made, a Cancel waits for every discard before it, and a list refresh never runs between a
+ * discard being made and being sent.
  *
  * ## The retry rule (SERVER_SPEC.md section 13.3, the same one ranking keeps)
  *
  * A discard that times out is resent **with the same `clientRequestId`**: if the first attempt
  * landed, the server answers the resend `200` and does nothing twice; with a fresh id it would
- * answer `404 unknown_media_id`. The id is created once, when the item is swiped, and travels with
- * the history entry - nothing here can pick up a new one on the way.
+ * answer `404 unknown_media_id`. The id is created once, when the item is discarded, and travels
+ * with the history entry - nothing here can pick up a new one on the way.
  *
  * ## Cancel
  *
@@ -52,16 +54,31 @@ import kotlinx.coroutines.sync.withLock
  * B, and then Cancel is off, because A is no longer the server's last action and can no longer be
  * undone. [ReviewState.canCancel] encodes exactly that.
  *
+ * ## The position lives on the PC
+ *
+ * Which item was on screen is stored by the server, with the folder, so the next visit - from any
+ * phone - resumes there. Every change of the current item schedules a write, debounced
+ * ([positionDebounceMs], latest wins) and quiet on failure: the next change sends it again. The end
+ * of the list sends null, so a finished folder starts from the beginning. Leaving sends whatever is
+ * pending *before* closing the session, which would otherwise take the folder's session with it.
+ *
+ * ## Silence
+ *
+ * Nothing non-fatal is ever shown. A failed discard puts the item back; a failed cancel re-reads
+ * the list; a failed position write is forgotten until the next change. The only things that reach
+ * the screen are the ones with no way forward: the session is gone, the phone is no longer paired,
+ * the server is too old, or something else answered with the wrong certificate.
+ *
  * @param scope tests pass their own; production uses the view model's.
  * @param retryDelayMs the pause before resending after an unreachable PC.
  */
 class ReviewViewModel(
     private val client: Rm2Client,
     opened: Snapshot,
-    private val positions: ReviewPositionStore,
     private val newRequestId: () -> String = { UUID.randomUUID().toString() },
     private val scope: CoroutineScope? = null,
     private val retryDelayMs: Long = 500L,
+    private val positionDebounceMs: Long = POSITION_DEBOUNCE_MS,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReviewState(snapshot = opened))
@@ -69,10 +86,10 @@ class ReviewViewModel(
 
     private val where: CoroutineScope get() = scope ?: viewModelScope
 
-    /** What the last swipes were, oldest first. Only the top is ever acted on. */
+    /** What the last moves were, oldest first. Only the top is ever acted on. */
     private val history = ArrayList<Entry>()
 
-    /** Discards swiped and not yet answered, by `clientRequestId`. A fetched list must not resurrect them. */
+    /** Discards made and not yet answered, by `clientRequestId`. A fetched list must not resurrect them. */
     private val inFlight = LinkedHashMap<String, MediaRef>()
 
     private val lock = Mutex()
@@ -82,17 +99,32 @@ class ReviewViewModel(
         data class Discard(val ref: MediaRef, val index: Int, val requestId: String) : Entry
     }
 
+    /** A review position as the PC holds it. A class, so that "none" (a null id) is a value and not an absence. */
+    private data class Position(val id: String?)
+
+    /** What the PC is known to hold; null until the list has been read. */
+    private var confirmed: Position? = null
+
+    /** Where the screen is now, as a position; a write is due when it differs from [confirmed]. */
+    private var wanted: Position? = null
+
+    private var positionJob: Job? = null
+
     // -- starting ---------------------------------------------------------------------------------
 
     /**
-     * Start a visit: read the list and open at the remembered position.
+     * Start a visit: read the list and open at the PC's remembered position.
      *
      * View models here outlive the screen and a re-opened folder resumes under its old `sessionId`,
      * so the one held for it may be left over from a visit that ended. A visit therefore always
-     * starts clean - nothing from the last one (history, counts, a problem) carries over.
+     * starts clean - nothing from the last one (history, a menu, a problem) carries over.
      */
     fun resume(opened: Snapshot) {
         history.clear()
+        positionJob?.cancel()
+        positionJob = null
+        confirmed = null
+        wanted = null
         _state.update { ReviewState(snapshot = opened, foreground = it.foreground) }
         load()
     }
@@ -128,7 +160,10 @@ class ReviewViewModel(
                     publish()
                     return
                 }
-                val start = startIndex(list, positions.lastPassed(snapshot.folder))
+                // What the PC holds is what it just said; the first write is due only if where we
+                // start differs from it (the stored item has left the folder, or there was none).
+                confirmed = Position(result.value.reviewPosition)
+                val start = startIndex(list, result.value.reviewPosition)
                 _state.update {
                     it.copy(
                         snapshot = snapshot,
@@ -141,8 +176,8 @@ class ReviewViewModel(
                 publish()
             }
 
-            is Rm2Result.Refused -> failLoad(problemFor(result), result.session)
-            is Rm2Result.Unreachable -> failLoad(problemFor(result, null), null)
+            is Rm2Result.Refused -> failLoad(loadFailure(result), result.session)
+            is Rm2Result.Unreachable -> failLoad(loadFailure(result), null)
         }
     }
 
@@ -157,9 +192,9 @@ class ReviewViewModel(
         publish()
     }
 
-    // -- the two swipes ---------------------------------------------------------------------------
+    // -- the two gestures -------------------------------------------------------------------------
 
-    /** Swipe right / Next: keep it, move on. No call to the PC. */
+    /** Tap: keep it, move on. No call to the PC. */
     fun keep() {
         val s = _state.value
         val ref = s.current ?: return
@@ -173,10 +208,9 @@ class ReviewViewModel(
             )
         }
         publish()
-        savePosition()
     }
 
-    /** Swipe left / Discard: gone from the list at once, sent to the PC in the background. */
+    /** Swipe left / the menu's Discard: gone from the list at once, sent to the PC in the background. */
     fun discard() {
         val s = _state.value
         val ref = s.current ?: return
@@ -192,11 +226,9 @@ class ReviewViewModel(
             it.copy(
                 items = remaining,
                 phase = if (index >= remaining.size) ReviewState.Phase.Done else ReviewState.Phase.Reviewing,
-                discardedThisVisit = it.discardedThisVisit + 1,
             )
         }
         publish()
-        savePosition()
 
         where.launch { lock.withLock { sendDiscard(ref, index, requestId) } }
     }
@@ -223,24 +255,16 @@ class ReviewViewModel(
             } else if (result.code == ErrorCodes.SAVE_FAILED && result.detailText("fileMoved") == "true") {
                 // § 10.8: the file is already in discarded/ and the PC armed undo; only its own
                 // ranking file is behind. Putting the picture back would show a file that is not
-                // there, so it stays discarded - and Cancel can still bring it back.
-                _state.update {
-                    it.copy(
-                        snapshot = result.session ?: it.snapshot,
-                        problem = ReviewState.Problem(
-                            "Discarded, but the PC could not save",
-                            "${ref.id} is in discarded/. The PC will try to save again with the next action. " +
-                                result.message,
-                        ),
-                    )
-                }
+                // there, so it stays discarded - and Cancel can still bring it back. The PC saves
+                // again with its next action, so there is nothing to say.
+                _state.update { it.copy(snapshot = result.session ?: it.snapshot) }
                 publish()
             } else {
-                rollBack(ref, index, requestId, problemFor(result, ref), result.session)
+                rollBack(ref, index, requestId, fatalProblem(result), result.session)
             }
 
             is Rm2Result.Unreachable -> {
-                rollBack(ref, index, requestId, problemFor(result, ref), null)
+                rollBack(ref, index, requestId, fatalProblem(result), null)
                 // The answer may have been lost after the move happened; the PC's list is the truth.
                 if (!result.pinMismatch) refreshLocked()
             }
@@ -252,7 +276,7 @@ class ReviewViewModel(
         ref: MediaRef,
         index: Int,
         requestId: String,
-        problem: ReviewState.Problem,
+        fatal: ReviewState.Problem?,
         session: Snapshot?,
     ) {
         forget(requestId)
@@ -265,18 +289,38 @@ class ReviewViewModel(
                 items = items,
                 index = at,
                 phase = ReviewState.Phase.Reviewing,
-                discardedThisVisit = (s.discardedThisVisit - 1).coerceAtLeast(0),
-                problem = problem,
+                problem = fatal ?: s.problem,
             )
         }
         publish()
-        savePosition()
+    }
+
+    // -- the menu ---------------------------------------------------------------------------------
+
+    /** Open the menu for the item on screen. It closes by itself if that item stops being the one shown. */
+    fun openMenu() {
+        val s = _state.value
+        val ref = s.current ?: return
+        if (s.busy || s.problem?.fatal == true) return
+        _state.update { it.copy(menuFor = ref.id) }
+    }
+
+    fun closeMenu() {
+        if (_state.value.menuFor != null) _state.update { it.copy(menuFor = null) }
+    }
+
+    /** The menu's Discard: the same as a swipe left, and only for the item the menu was opened on. */
+    fun discardFromMenu() {
+        val s = _state.value
+        val id = s.menuFor ?: return
+        closeMenu()
+        if (s.current?.id == id) discard()
     }
 
     // -- cancel -----------------------------------------------------------------------------------
 
     /**
-     * Take back the last swipe, one step per press.
+     * Take back the last move, one step per press.
      *
      * A *keep* goes back to that item with no call. A *discard* waits for every call before it, asks
      * the PC to undo, re-reads the list (the restored file's links, and the name it came back
@@ -293,11 +337,10 @@ class ReviewViewModel(
                     if (i < 0) st else st.copy(index = i, phase = ReviewState.Phase.Reviewing)
                 }
                 publish()
-                savePosition()
             }
 
             is Entry.Discard -> {
-                _state.update { it.copy(busy = true, problem = null) }
+                _state.update { it.copy(busy = true, menuFor = null) }
                 where.launch {
                     lock.withLock { cancelDiscard(top) }
                     _state.update { it.copy(busy = false) }
@@ -317,12 +360,7 @@ class ReviewViewModel(
             is Rm2Result.Ok -> {
                 val undone = result.value
                 history.remove(entry)
-                _state.update {
-                    it.copy(
-                        snapshot = undone,
-                        discardedThisVisit = (it.discardedThisVisit - 1).coerceAtLeast(0),
-                    )
-                }
+                _state.update { it.copy(snapshot = undone) }
                 val restoredId = undone.lastAction?.restoredId ?: entry.ref.id
                 when (val fetched = client.items()) {
                     is Rm2Result.Ok -> {
@@ -349,47 +387,59 @@ class ReviewViewModel(
                     }
                 }
                 publish()
-                savePosition()
             }
 
+            // Not taken back, and nothing to say about it: the list is read again, which also
+            // corrects whatever made the PC refuse (an undo that was already used, a folder that
+            // changed). Only a refusal with no way forward is shown.
             is Rm2Result.Refused -> {
-                _state.update { it.copy(snapshot = result.session ?: it.snapshot, problem = cancelProblem(result)) }
+                val fatal = fatalProblem(result)
+                _state.update { it.copy(snapshot = result.session ?: it.snapshot, problem = fatal ?: it.problem) }
                 publish()
+                if (fatal == null) refreshLocked()
             }
 
             is Rm2Result.Unreachable -> {
-                _state.update { it.copy(problem = problemFor(result, null, cancelling = true)) }
-                publish()
-                // The undo may have landed with its answer lost; the PC's list is the truth.
-                if (!result.pinMismatch) refreshLocked()
+                val fatal = fatalProblem(result)
+                if (fatal != null) {
+                    _state.update { it.copy(problem = fatal) }
+                    publish()
+                } else {
+                    // The undo may have landed with its answer lost; the PC's list is the truth.
+                    refreshLocked()
+                }
             }
         }
     }
 
     // -- the end ----------------------------------------------------------------------------------
 
-    /** "Start again": from the first item, with nothing remembered. */
+    /** "Start from the beginning": the first item, with nothing to cancel back to. */
     fun restart() {
         val s = _state.value
         if (s.items.isEmpty() || s.busy) return
         history.clear()
-        positions.forget(s.snapshot.folder)
-        _state.update { it.copy(index = 0, phase = ReviewState.Phase.Reviewing, discardedThisVisit = 0) }
+        _state.update { it.copy(index = 0, phase = ReviewState.Phase.Reviewing, menuFor = null) }
         publish()
     }
 
     /**
-     * Closes the session before leaving, after any discard still waiting to be sent (the PC would
-     * otherwise refuse them with `no_session`). Navigates first: waiting for the PC makes back look
-     * broken on a slow network, and the close is housekeeping - if it fails, the next open closes a
-     * stale session anyway.
+     * Sends the position still waiting, then closes the session, after any discard still waiting to
+     * be sent (the PC would otherwise refuse them with `no_session`). Navigates first: waiting for
+     * the PC makes back look broken on a slow network, and all of this is housekeeping - if the close
+     * fails, the next open closes a stale session anyway.
      */
     fun leave(then: () -> Unit) {
         then()
-        where.launch { lock.withLock { client.closeSession() } }
+        positionJob?.cancel()
+        positionJob = null
+        where.launch {
+            lock.withLock {
+                sendPosition()
+                client.closeSession()
+            }
+        }
     }
-
-    fun dismissProblem() = _state.update { if (it.problem?.fatal == true) it else it.copy(problem = null) }
 
     // -- coming back to the front ------------------------------------------------------------------
 
@@ -431,17 +481,61 @@ class ReviewViewModel(
                 publish()
             }
 
-            is Rm2Result.Refused -> if (result.code == ErrorCodes.NO_SESSION || result.isPairingLost()) {
-                _state.update { it.copy(problem = problemFor(result)) }
-            } else {
-                _state.update { it.copy(snapshot = result.session ?: it.snapshot) }
-                publish()
+            is Rm2Result.Refused -> {
+                val fatal = fatalProblem(result)
+                if (fatal != null) {
+                    _state.update { it.copy(problem = fatal) }
+                } else {
+                    _state.update { it.copy(snapshot = result.session ?: it.snapshot) }
+                    publish()
+                }
             }
 
-            is Rm2Result.Unreachable -> if (result.pinMismatch) {
-                _state.update { it.copy(problem = problemFor(result, null)) }
+            is Rm2Result.Unreachable -> fatalProblem(result)?.let { fatal ->
+                _state.update { it.copy(problem = fatal) }
             }
         }
+    }
+
+    // -- the position -----------------------------------------------------------------------------
+
+    /**
+     * Notes where the screen is now and, if the PC does not hold that, schedules the write.
+     *
+     * Called from [publish], so every change of the current item - keep, discard, cancel, restart,
+     * a rolled-back discard, a refresh that moved things - is covered by one rule and none can be
+     * forgotten. The end of the list is the position `null`.
+     */
+    private fun notePosition() {
+        val s = _state.value
+        val target = when (s.phase) {
+            ReviewState.Phase.Reviewing -> Position(s.current?.id)
+            ReviewState.Phase.Done -> Position(null)
+            else -> return
+        }
+        if (target == wanted) return
+        wanted = target
+        positionJob?.cancel()
+        positionJob = if (target == confirmed) {
+            null // back on what the PC already holds: nothing to write
+        } else {
+            where.launch {
+                delay(positionDebounceMs)
+                lock.withLock { sendPosition() }
+            }
+        }
+    }
+
+    /**
+     * One write of what is [wanted], inside [lock] so that it stays in order with everything else.
+     * No retries and a short ceiling: it must never hold up a discard or a cancel waiting behind it,
+     * and a write that does not land is simply made again by the next change.
+     */
+    private suspend fun sendPosition() {
+        val target = wanted ?: return
+        if (target == confirmed) return
+        val result = withTimeoutOrNull(POSITION_TIMEOUT_MS) { client.setReviewPosition(target.id) }
+        if (result is Rm2Result.Ok) confirmed = target
     }
 
     // -- plumbing ---------------------------------------------------------------------------------
@@ -462,17 +556,15 @@ class ReviewViewModel(
         history.removeAll { it is Entry.Discard && it.requestId == requestId }
     }
 
-    /** Remember the item before the current one: the last one he moved past (or nothing, at the start). */
-    private fun savePosition() {
-        val s = _state.value
-        val folder = s.snapshot.folder
-        val previous = s.items.getOrNull(s.index - 1)
-        if (previous == null) positions.forget(folder) else positions.remember(folder, previous.id)
-    }
-
-    /** Recompute what Cancel may do from the history and the latest snapshot. */
+    /** Recompute what Cancel may do and what the menu is about, then note the position. */
     private fun publish() {
-        _state.update { it.copy(canCancel = cancellable(it.snapshot)) }
+        _state.update {
+            it.copy(
+                canCancel = cancellable(it.snapshot),
+                menuFor = it.menuFor?.takeIf { id -> id == it.current?.id },
+            )
+        }
+        notePosition()
     }
 
     private fun cancellable(snapshot: Snapshot): Boolean {
@@ -514,7 +606,11 @@ class ReviewViewModel(
     private fun Rm2Result.Refused.isPairingLost(): Boolean =
         code == ErrorCodes.TOKEN_REVOKED || code == ErrorCodes.INVALID_TOKEN || code == ErrorCodes.UNAUTHENTICATED
 
-    private fun problemFor(result: Rm2Result.Refused, ref: MediaRef? = null): ReviewState.Problem = when {
+    /**
+     * The refusals with no way forward - the only ones ever shown after the list has loaded. Null
+     * for everything else, which is dealt with without a word.
+     */
+    private fun fatalProblem(result: Rm2Result.Refused): ReviewState.Problem? = when {
         result.code == ErrorCodes.NO_SESSION -> ReviewState.Problem(
             "The folder is no longer open",
             "The PC restarted, or something else took the folder. Nothing is lost. Go back and " +
@@ -536,72 +632,34 @@ class ReviewViewModel(
             fatal = true,
         )
 
-        else -> {
-            val what = ref?.id?.let { "Could not discard $it" }
-            val back = if (ref != null) "It is back in the list. " else ""
-            when (result.code) {
-                ErrorCodes.MOVE_FAILED -> ReviewState.Problem(
-                    what ?: "The file could not be moved",
-                    back + "Nothing changed. " + result.message,
-                )
-
-                ErrorCodes.SAVE_FAILED -> ReviewState.Problem(
-                    what ?: "The PC could not write its file",
-                    back + "Nothing was moved. " + result.message,
-                )
-
-                ErrorCodes.RENAME_IN_PROGRESS -> ReviewState.Problem(
-                    "The PC is renaming this folder",
-                    back + "Wait for it to finish, then try again.",
-                )
-
-                ErrorCodes.SESSION_BUSY -> ReviewState.Problem(
-                    "The PC is busy",
-                    back + "Try again in a moment.",
-                )
-
-                else -> ReviewState.Problem(what ?: "The PC refused that", back + result.message)
-            }
-        }
+        else -> null
     }
 
-    private fun cancelProblem(result: Rm2Result.Refused): ReviewState.Problem =
-        if (result.code == ErrorCodes.NOTHING_TO_UNDO) {
+    private fun fatalProblem(result: Rm2Result.Unreachable): ReviewState.Problem? =
+        if (result.pinMismatch) {
             ReviewState.Problem(
-                "Nothing to take back",
-                "That has already been cancelled, or the folder was changed in the meantime.",
+                "That is not your PC",
+                "Something answered with a certificate this phone has not paired with. Nothing was " +
+                    "sent to it. Do not continue on this network.",
+                fatal = true,
             )
         } else {
-            problemFor(result)
+            null
         }
 
-    private fun problemFor(
-        result: Rm2Result.Unreachable,
-        ref: MediaRef?,
-        cancelling: Boolean = false,
-    ): ReviewState.Problem = when {
-        result.pinMismatch -> ReviewState.Problem(
-            "That is not your PC",
-            "Something answered with a certificate this phone has not paired with. Nothing was " +
-                "sent to it. Do not continue on this network.",
-            fatal = true,
-        )
+    /** Why the list could not be read: a fatal reason, or a plain one the screen answers with Retry. */
+    private fun loadFailure(result: Rm2Result.Refused): ReviewState.Problem =
+        fatalProblem(result) ?: ReviewState.Problem("Could not open the folder", result.message)
 
-        cancelling -> ReviewState.Problem(
+    private fun loadFailure(result: Rm2Result.Unreachable): ReviewState.Problem =
+        fatalProblem(result) ?: ReviewState.Problem(
             "Cannot reach the PC",
-            "The cancel may or may not have landed - the list is being read again.",
+            "Check the PC is awake and on the same Wi-Fi.",
         )
-
-        else -> ReviewState.Problem(
-            ref?.id?.let { "Could not discard $it" } ?: "Cannot reach the PC",
-            (if (ref != null) "It is back in the list. " else "") +
-                "Check the PC is awake and on the same Wi-Fi.",
-        )
-    }
 
     companion object {
-        fun factory(client: Rm2Client, opened: Snapshot, positions: ReviewPositionStore): ViewModelProvider.Factory =
-            viewModelFactory { initializer { ReviewViewModel(client, opened, positions) } }
+        fun factory(client: Rm2Client, opened: Snapshot): ViewModelProvider.Factory =
+            viewModelFactory { initializer { ReviewViewModel(client, opened) } }
 
         /** The first attempt plus three resends. */
         const val MAX_ATTEMPTS = 4
@@ -609,19 +667,32 @@ class ReviewViewModel(
         /** The ceiling on a server-named `retryAfterSeconds`, as in ranking. */
         const val MAX_RETRY_AFTER_SECONDS = 30
 
+        /** A burst of taps writes the position once, after the last of them. */
+        const val POSITION_DEBOUNCE_MS = 400L
+
+        /** A position write that has not answered by now is dropped; the next change makes it again. */
+        const val POSITION_TIMEOUT_MS = 3000L
+
         private const val MAX_HISTORY = 500
         private const val DISCARD = "discard"
         private const val DROP_MISSING = "drop_missing"
 
         /**
-         * Where to open: the first item after [lastPassed] in [items], or 0 when there is nothing
-         * remembered, it is no longer in the list, or it was the last one (a finished folder starts
-         * over rather than opening on an empty end).
+         * Where to open, given the position the PC stored ([reviewPosition], which may name a file
+         * that has since left the folder):
+         *
+         * - on that item, if it is in [items];
+         * - otherwise on the first item that comes after it in [NaturalOrder];
+         * - at 0 when there is none after it, or nothing is stored.
+         *
+         * [items] must already be in natural order, as everything held in the state is.
          */
-        fun startIndex(items: List<MediaRef>, lastPassed: String?): Int {
-            if (lastPassed == null) return 0
-            val at = items.indexOfFirst { it.id == lastPassed }
-            return if (at < 0 || at + 1 >= items.size) 0 else at + 1
+        fun startIndex(items: List<MediaRef>, reviewPosition: String?): Int {
+            if (reviewPosition == null) return 0
+            val at = items.indexOfFirst { it.id == reviewPosition }
+            if (at >= 0) return at
+            val after = items.indexOfFirst { NaturalOrder.compare(it.id, reviewPosition) > 0 }
+            return if (after >= 0) after else 0
         }
     }
 }

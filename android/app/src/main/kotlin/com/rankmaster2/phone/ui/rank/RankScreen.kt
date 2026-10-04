@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
@@ -36,6 +37,8 @@ import androidx.compose.ui.unit.sp
 import com.rankmaster2.phone.media.MediaPane
 import com.rankmaster2.phone.media.Rm2Media
 import com.rankmaster2.phone.net.MediaRef
+import com.rankmaster2.phone.ui.VotingShareOfScreen
+import com.rankmaster2.phone.ui.insideLiveArea
 import kotlinx.coroutines.delay
 
 /**
@@ -269,36 +272,6 @@ private fun Pair(
 }
 
 /**
- * The share of the screen on which a tap casts a vote: **thirty per cent**.
- *
- * The owner kept voting by accident. A wrong vote is the one mistake this screen can make that
- * costs anything - it moves a rating nobody asked to move, and cancel costs a round trip and his
- * attention - so the target is deliberately much smaller than the picture it belongs to. The rest
- * of each pane still *shows* the photograph; it just does not answer a tap.
- *
- * Expressed as the share of the glass, because that is how it was asked for and how it will be
- * adjusted. One number, one place: if thirty per cent is still too much, this line moves and
- * nothing else. It was half before, and half was still catching his thumb.
- */
-internal const val VotingShareOfScreen = 0.30f
-
-/**
- * The live box is **one rectangle centred on the screen**, inset from the four outside edges and
- * crossing the seam - not one box per pane.
- *
- * His words, 2026-09-17: *"the active area is a rectangle inside the screen, with paddings from the
- * edges. It's ok it covers the seam between a pair, the false voting is produced on the edges, not
- * in the center of the screen."* That is a measurement, not a preference: the accidental taps come
- * from the thumb meeting the edge of the glass, and nothing was ever mis-hit in the middle. Insetting
- * from the seam as well - which is what a per-pane box did - shrank the target where it was never
- * wrong, and pushed the live area further from where he actually aims.
- *
- * Equal inset on both axes, hence the square root.
- */
-private fun liveFractionPerAxis(share: Float): Float =
-    kotlin.math.sqrt(share.coerceIn(0.01f, 1f))
-
-/**
  * Which pane a touch may **vote** for: inside the screen's live rectangle, or nothing.
  *
  * Kept separate from [sideAt] rather than folded into it, because the two questions genuinely
@@ -316,14 +289,7 @@ internal fun votableSideAt(
     height: Float,
     share: Float = VotingShareOfScreen,
 ): Side? {
-    val live = liveFractionPerAxis(share)
-    val marginX = width * (1f - live) / 2f
-    val marginY = height * (1f - live) / 2f
-
-    val inside = at.x >= marginX && at.x <= width - marginX &&
-        at.y >= marginY && at.y <= height - marginY
-
-    if (!inside) return null
+    if (!insideLiveArea(at, width, height, share)) return null
 
     // Inside the rectangle, which pane the finger is over decides the vote. No dead band at the
     // seam: he said plainly that the seam is not where the accidents happen, and a band there would
@@ -368,14 +334,7 @@ private fun Pane(ref: MediaRef, media: Rm2Media, playing: Boolean, modifier: Mod
  */
 @Composable
 private fun Exhausted(canCancel: Boolean, busy: Boolean, onCancel: () -> Unit, onLeave: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(32.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    QuietScreen {
         Text("Fewer than two files left to compare", color = Color(0xFFECEEF2), textAlign = TextAlign.Center)
         Text(
             "Everything ranked so far is saved.",
@@ -383,12 +342,8 @@ private fun Exhausted(canCancel: Boolean, busy: Boolean, onCancel: () -> Unit, o
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
         )
-        if (canCancel) {
-            TextButton(onClick = onCancel, enabled = !busy) {
-                Text("Take back the last choice", color = Color(0xFF2ECC71))
-            }
-        }
-        TextButton(onClick = onLeave) { Text("Pick another folder", color = Color(0xFF2ECC71)) }
+        if (canCancel) QuietButton("Take back the last choice", onCancel, enabled = !busy)
+        QuietButton("Pick another folder", onLeave)
     }
 }
 
@@ -397,6 +352,27 @@ private fun ProblemPanel(
     problem: RankState.Problem,
     onDismiss: () -> Unit,
     onLeave: () -> Unit,
+) {
+    ProblemPanelShell(problem.title, problem.body) {
+        if (problem.fatal) {
+            // No "try again" on a fatal one. There is nothing to try: the session is gone, or
+            // the thing that answered was not the PC.
+            QuietButton("Back to folders", onLeave)
+        } else {
+            QuietButton("Close", onDismiss)
+        }
+    }
+}
+
+/**
+ * The look of a problem that stops the screen: a dark veil, a title, a sentence, and whatever the
+ * caller offers underneath. Shared with review mode, so the two say "something is wrong" the same way.
+ */
+@Composable
+internal fun ProblemPanelShell(
+    title: String,
+    body: String,
+    actions: @Composable ColumnScope.() -> Unit,
 ) {
     Box(
         Modifier.fillMaxSize().background(Color(0xE6000000)),
@@ -409,26 +385,40 @@ private fun ProblemPanel(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(problem.title, color = Color(0xFFECEEF2), textAlign = TextAlign.Center)
+            Text(title, color = Color(0xFFECEEF2), textAlign = TextAlign.Center)
             Text(
-                problem.body,
+                body,
                 color = Color(0xFF9AA3B2),
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
             )
-            if (problem.fatal) {
-                // No "try again" on a fatal one. There is nothing to try: the session is gone, or
-                // the thing that answered was not the PC.
-                TextButton(onClick = onLeave) { Text("Back to folders", color = Color(0xFF2ECC71)) }
-            } else {
-                TextButton(onClick = onDismiss) { Text("Close", color = Color(0xFF2ECC71)) }
-            }
+            actions()
         }
     }
 }
 
+/** The plain green text button every quiet screen offers its way out with. */
 @Composable
-private fun Centred(text: String) {
+internal fun QuietButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
+    TextButton(onClick = onClick, enabled = enabled) { Text(text, color = Color(0xFF2ECC71)) }
+}
+
+/** The layout of a screen with nothing on it but a few words and buttons, centred. */
+@Composable
+internal fun QuietScreen(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(32.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        content = content,
+    )
+}
+
+@Composable
+internal fun Centred(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, color = Color(0xFF9AA3B2))
     }

@@ -260,7 +260,7 @@ produce a misleading error path.
 | `nothing_to_undo` | 409 | `LibraryActions.UndoLastMove()` returned `false` | — |
 | `undo_folder_changed` | 409 | the recorded move belongs to a different folder than the open session | `{ "moveFolder": string }` |
 | `move_failed` | 500 | the file move for discard/special/undo threw | `{ "id": string, "stage": "move"\|"undo-move" }` |
-| `save_failed` | 500 | `JsonCatalog.Save` threw | `{ "recordsChanged": bool, "fileMoved": bool }` |
+| `save_failed` | 500 | `JsonCatalog.Save` threw — or, for `PUT /session/review-position` (§ 10.19), the review-position file could not be written (`recordsChanged:false, fileMoved:false`) | `{ "recordsChanged": bool, "fileMoved": bool }` |
 
 ### 5.5 Media
 
@@ -364,6 +364,7 @@ file, or by closing and reopening the session.
 | ranking\|exhausted | `POST /session` other folder | unchanged | unchanged | `409 session_already_open` |
 | ranking\|exhausted | `GET /session`, `GET /session/pair` | unchanged | unchanged | pure reads |
 | ranking\|exhausted | `GET /session/items` | unchanged | unchanged | pure read: the snapshot plus every record (§ 10.17) |
+| ranking\|exhausted | `PUT /session/review-position` ok | unchanged | unchanged | **not an action** (§ 10.19): writes or deletes `<folder>/.rankmaster_review.json` only; no `lastAction`, undo point or database write. Also allowed during a rename |
 | ranking\|exhausted | `POST /session/save` | unchanged | unchanged | writes JSON, never touches the pair |
 | ranking | `POST /session/vote` ok | ranking or exhausted | +1 | save, then advance |
 | ranking | `POST /session/skip` ok | ranking or exhausted | +1 | save, then advance |
@@ -544,7 +545,7 @@ obvious retry.
 `POST /session/items/discard` is the same
 object, with the same fields, in the same shape. There is no "small" variant and no partial update.
 `error.session` in a 409 is the same object. Four implementations, one shape. The one wrapper is
-`GET /session/items` (§ 10.17), whose body is `{ session, items }` — `session` is this same object.
+`GET /session/items` (§ 10.17), whose body is `{ session, items, reviewPosition }` — `session` is this same object. `PUT /session/review-position` (§ 10.19) is not an action and returns neither a snapshot nor this shape.
 
 ### 9.1 `SessionSnapshot`
 
@@ -745,6 +746,7 @@ FileShare.None`, held open for the life of the session, containing
 `{"pid":int,"host":string,"process":string,"startedAt":"RFC3339","serverVersion":string}` written at
 open. It is invisible to the library: `JsonCatalog` only admits files whose extension is in the
 still or video list, so `.lock` is never scanned, never ranked and never appears as a media id.
+The only other files the server keeps in a library folder are `.rankmaster-rename.json` (the rename journal, § 10.16, present only while a rename runs or after it was interrupted) and `.rankmaster_review.json` (the phone's review position, § 10.19, kept across sessions); both are bookkeeping, both are invisible to the library for the same reason, and neither is part of `rankmaster_db.json`.
 A stale lock file left by a killed process is harmless — the OS releases the handle, and the next
 `POST /session` re-opens it.
 
@@ -1326,7 +1328,8 @@ saved. Allowed in `ranking` and `exhausted`, and while a rename runs (like `GET 
 { "session": { "…": "a SessionSnapshot, exactly § 9.1" },
   "items":   [ { "id": "DSC_0123.jpg", "kind": "still", "sizeBytes": 4210332, "mediaVersion": "9f2a1c77b0e4d310",
                  "links": { "meta": "…", "still": "…", "thumb": "…", "video": null } },
-               { "…": "MediaRef, exactly § 9.3" } ] }
+               { "…": "MediaRef, exactly § 9.3" } ],
+  "reviewPosition": "DSC_0123.jpg" }
 ```
 
 - `items` is **every record** of the session (`RankingSession.Records`), both kinds, whatever `policy` is —
@@ -1341,6 +1344,14 @@ saved. Allowed in `ranking` and `exhausted`, and while a rename runs (like `GET 
 - The list and the snapshot are materialised in one critical section (§ 7.3), so `session.pairSeq` is the
   generation the list belongs to. A client refreshes the list after anything that changes records
   (`discard`, `undo`, a rename) rather than patching it, or removes the discarded id itself and keeps going.
+- **`reviewPosition`: `string | null`** — where the phone's review mode last stopped in *this folder*, as
+  stored by `PUT /session/review-position` (§ 10.19). It is read from `<folder>/.rankmaster_review.json`
+  on every call (a few dozen bytes, inside the same critical section). It is **`null`** when there is no
+  file, the file cannot be read, is not JSON, is not an object, has a `version` other than the number `1`,
+  or has a `current` that is not a legal media filename (§ 11.1.4). A bad file is **never an error**: the
+  server logs it and answers `null`. The value is returned **as stored**, even if that id is no longer a
+  record (the item was discarded, or a rename gave every file a new name); it is the client's job to land
+  on the nearest following item. The key is always present. A UTF-8 BOM in a hand-edited file is tolerated.
 - `404 no_session` when closed; `503 session_busy` on lock timeout. Same auth as every `/session*` route.
 
 ### 10.18 `POST /session/items/discard`
@@ -1397,6 +1408,72 @@ changes nothing (`pairSeq` does not move; if a deferred write is latched, it is 
 match is on the last action only, so once anything else has happened the retry falls through to `404
 unknown_media_id`, which is just as safe — the record is gone. A client that wants the first answer back
 MUST send a `clientRequestId` and keep it for the retry.
+
+### 10.19 `PUT /session/review-position`
+
+Remembers where the phone's review mode stopped, **in the library folder on the PC**, so the next time
+the owner opens that folder on the phone — or on another phone — review resumes at the same item. The
+position belongs to the folder, not to a device.
+
+```json
+{ "id": "DSC_0123.jpg" }      // set
+{ "id": null }                // clear
+```
+
+Answers `200` with **just** `{ "reviewPosition": "DSC_0123.jpg" }` (or `{ "reviewPosition": null }` after a
+clear) — not a snapshot, because nothing in the snapshot changed. `GET /session/items` (§ 10.17) returns the
+stored value.
+
+**The file.** `<folder>/.rankmaster_review.json`:
+
+```json
+{ "version": 1, "current": "DSC_0123.jpg", "updatedAt": "2026-10-04T10:15:30.123Z" }
+```
+
+`updatedAt` is RFC 3339 UTC with milliseconds and a `Z` (§ 2). It is written atomically — a temp file in the
+same folder (`.rankmaster_review.json.tmp`), flushed to disk, then replaced over the real one — so a crash
+leaves the old position or the new one. On Windows the file is marked **Hidden** (best effort: a volume that
+refuses the attribute is no reason to fail the call). `{ "id": null }` deletes the file; deleting a file that
+is not there is success. The file is **not** part of `rankmaster_db.json`, whose format is frozen (`SPEC.md`), and
+nothing in the database changes. It is invisible to the library for the same reason `.rankmaster.lock` and
+`.rankmaster-rename.json` are: its extension is not a media extension, so `JsonCatalog.Scan`, the folder
+browser's counts and the rename engine's file listing never see it, and it is hidden besides. The frozen Rank
+Master 2 ignores it for the same reasons. It stays in the folder when the session closes or the server
+restarts (§ 13.4). A rename leaves the file untouched, but renames every id, so the stored id then names a
+file that no longer exists; the client resolves that (§ 10.17).
+
+**Not an action.** `pairSeq`, `pairToken`, `lastAction`, `undoAvailable`, `sessionVotes`, `lastSavedAt`, the
+pair and the warm pairs are all unchanged; no impression is counted; `rankmaster_db.json` is not written;
+the undo point is neither used nor spent (a vote made before the put can still be undone after it). It is
+safe at any moment of a session, so it does not flush unsaved choices and is not refused while one is
+latched (§ 13.1).
+
+**`id`.** Required (`400 missing_field` if the key is absent), a string or `null` (`400 invalid_request`
+for any other type). A string is validated by the same code as § 10.18 — `MediaIdCodec.Validate`, then the
+media-extension check — with the same codes. It does **not** have to be a record of the open session: the
+phone may store the id of the item it had open an instant before discarding it, and § 10.17 hands it back
+as stored.
+
+| Outcome | Status |
+|---|---|
+| stored or cleared | `200 { "reviewPosition": string\|null }` |
+| body not JSON / wrong types / `id` absent | `400 invalid_request` / `400 missing_field` (§ 5.2) |
+| id is not a legal id (empty, > 255, control character) | `400 invalid_media_id { reason }` |
+| id contains a separator, is `.`/`..`, or rooted | `403 media_outside_session { id }` — nothing written |
+| id's extension is not a media extension | `403 media_extension_not_allowed { id, extension }` |
+| the file could not be written or deleted | `500 save_failed { recordsChanged: false, fileMoved: false }` — nothing else changed, the old position is still stored; the temp file is removed |
+| the session lock times out | `503 session_busy` |
+| no session | `404 no_session` (checked before the body, § 8.4 step 1 before step 2) |
+
+`save_failed` is reused rather than a new code: it already means "something the server had to write could
+not be written", and `recordsChanged: false, fileMoved: false` tells a client nothing it ranks with is at
+risk.
+
+**States.** Allowed in `ranking` and `exhausted`, **and while a rename runs** — the one mutating `/session*`
+call that is: it writes no catalog and moves no media, the rename never touches this file, and refusing it
+would only cost the owner his place for no benefit. There is therefore no `409 rename_in_progress` for this
+route. **Idempotent:** the same body can be sent again after a timeout (§ 13.3); the last write wins, which
+is the intent.
 
 ---
 
@@ -1767,6 +1844,7 @@ its safety rests on the journal (§ 10.16), not on the response.
 | `POST /session/vote`, `/skip` | the pair advances; JSON written **within the bound** (§ 13.1) | **no, and by design** — the response does not wait for the write. Applied at once, on disk within 2 s or 5 choices |
 | `POST /session/discard`, `/special`, `POST /session/items/discard` | anything unsaved is flushed, then the file is moved, then JSON written | **yes**, and in that order — a move is never deferred |
 | `GET /session/items` | none | — |
+| `PUT /session/review-position` | `.rankmaster_review.json.tmp` written and flushed, then replaced over `.rankmaster_review.json` (or the file deleted for `null`); no JSON database write | **yes** — synchronous; atomic, so a crash leaves the old or the new position |
 | `POST /session/undo` | of a move: flush, file moved back, then JSON written — **yes**. Of a vote/skip: no file touched, JSON written within the bound — **no**, like the vote it reverses | as stated per case |
 | `DELETE /session` | unsaved choices flushed, then the lock file closed and removed; **no other JSON write** | yes |
 | `GET /media/*` | none | — |
@@ -1790,6 +1868,7 @@ The client does not know the outcome. It MUST resolve, never guess:
 | `POST /session/vote`, `/skip` | **yes, with the same `pairToken`** | if it landed, the retry gets `409 stale_pair_token`; if it did not, the retry votes. Either way one vote, never two. A retry with a *new* token after resyncing is a **double vote** and MUST NOT be done. |
 | `POST /session/discard`, `/special` | **yes, with the same `pairToken`** | same reasoning |
 | `POST /session/items/discard` | **yes, with the same `id` and the same `clientRequestId`** | if the first attempt landed, the retry is answered `200` with the current snapshot and changes nothing (§ 10.18); if it did not, the retry discards. A retry **without** a `clientRequestId` of a discard that landed gets `404 unknown_media_id` — also safe, the record is gone |
+| `PUT /session/review-position` | yes | idempotent: the last write wins, which is the intent (§ 10.19) |
 | `POST /session/undo` | yes | a second undo is `409 nothing_to_undo`; it cannot reach back two actions, because only one is ever recorded |
 | `POST /pair` | **no** | the code is single-use; a retry of a landed pairing gets `401 invalid_pairing_code` and the token is lost. Restart pairing. |
 
@@ -1803,6 +1882,7 @@ MUST hold the token of an in-flight action until they have a definite answer.
 |---|---|
 | ratings, `matches`, `impressions`, `lastPlayed` | yes, **except the last ≤ 5 choices or ≤ 2 seconds of voting**, which the bounded write-behind may not have written yet (§ 13.1). The owner accepted that cost explicitly. Everything that moved a file, every explicit save, and a clean shutdown are on disk |
 | files already moved to `discarded/` / `special 1/` | yes |
+| the review position (`.rankmaster_review.json`, § 10.19) | **yes** — it is a file in the library folder; closing the session or restarting the server leaves it |
 | the session itself, `sessionId`, `sessionSecret`, all `pairToken`s | **no** |
 | `SessionVotes`, `cues`, the recent-shown set, warm pairs | **no** — session-only by design (`SPEC.md`) |
 | the recorded last action, so `undoAvailable` | **no** — nothing done before the restart can be cancelled |

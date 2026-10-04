@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using RankMaster2.Catalog;
 using RankMaster2.Ranking;
 using RankMaster2.Server.Contracts;
@@ -53,6 +54,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
 
     private OpenSession? _open;
     private RenameRun? _rename;
+
+    /// <summary>
+    /// Set by the host after build (the registry is a static and cannot take it from DI). Used only
+    /// for the review-position file's soft failures (§ 10.17); null means silent.
+    /// </summary>
+    public ILogger? Logger { get; set; }
 
     // The bounded write-behind (SERVER_SPEC.md § 13.1). Not readonly: a host binds them from
     // configuration through ApplyDurabilityOptions before it serves anything.
@@ -808,7 +815,12 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
                 .Select(r => MediaRefOf(open, r.Id, r.Kind))
                 .ToList();
 
-            return SessionOutcome.Ok(Materialise(open), items: items);
+            // § 10.17: where review mode stopped, as stored — null for no file or a bad one. Not
+            // checked against the records: the client resolves a vanished id itself.
+            return SessionOutcome.Ok(
+                Materialise(open),
+                items: items,
+                reviewPosition: ReviewPositionFile.Read(open.Folder, Logger));
         });
 
     // ---------------------------------------------------------------------------------------
@@ -835,30 +847,8 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
 
             // The same id rules the media endpoints apply (§ 11.1, § 11.2 steps 2 and 3), so an id
             // such as a backslash path or "sub/x.jpg" can never reach the file move.
-            var valid = Media.MediaIdCodec.Validate(requested);
-            if (!valid.Ok)
-            {
-                return valid.Fault == Media.MediaIdFault.Escapes
-                    ? SessionOutcome.Fail(
-                        ErrorCodes.MediaOutsideSession,
-                        "The id would leave the session folder.",
-                        new { id = requested },
-                        Materialise(open))
-                    : SessionOutcome.Fail(
-                        ErrorCodes.InvalidMediaId,
-                        "The id is not a legal media id.",
-                        new { reason = valid.Reason },
-                        Materialise(open));
-            }
-
-            if (MediaExtensions.KindOf(requested) is null)
-            {
-                return SessionOutcome.Fail(
-                    ErrorCodes.MediaExtensionNotAllowed,
-                    "The id's extension is not a media extension.",
-                    new { id = requested, extension = Path.GetExtension(requested).TrimStart('.').ToLowerInvariant() },
-                    Materialise(open));
-            }
+            if (RefuseIllegalMediaId(open, requested) is { } illegal)
+                return illegal;
 
             // § 13.3 spirit: the first attempt landed and its response was lost, so the record is
             // already gone. Recognised by the last action alone — same id, same non-null
@@ -887,6 +877,90 @@ public sealed class SessionRegistry : IDisposable, Security.ISessionStatusProvid
             }
 
             return ApplyMove(open, record.Id, special: false, token: null, side: null, clientRequestId);
+        });
+
+    /// <summary>
+    /// § 10.18 / § 10.19: the id rules for an id a client names in a body — a legal media filename
+    /// (§ 11.1) with a media extension. Null means the id is acceptable. Whether it is a record of the
+    /// session is a separate question the caller asks (or deliberately does not).
+    /// </summary>
+    private SessionOutcome? RefuseIllegalMediaId(OpenSession open, string requested)
+    {
+        var valid = Media.MediaIdCodec.Validate(requested);
+        if (!valid.Ok)
+        {
+            return valid.Fault == Media.MediaIdFault.Escapes
+                ? SessionOutcome.Fail(
+                    ErrorCodes.MediaOutsideSession,
+                    "The id would leave the session folder.",
+                    new { id = requested },
+                    Materialise(open))
+                : SessionOutcome.Fail(
+                    ErrorCodes.InvalidMediaId,
+                    "The id is not a legal media id.",
+                    new { reason = valid.Reason },
+                    Materialise(open));
+        }
+
+        if (MediaExtensions.KindOf(requested) is null)
+        {
+            return SessionOutcome.Fail(
+                ErrorCodes.MediaExtensionNotAllowed,
+                "The id's extension is not a media extension.",
+                new { id = requested, extension = Path.GetExtension(requested).TrimStart('.').ToLowerInvariant() },
+                Materialise(open));
+        }
+
+        return null;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // PUT /session/review-position — § 10.19. Not an action: one small file in the folder.
+    // ---------------------------------------------------------------------------------------
+
+    public Task<SessionOutcome> SetReviewPositionAsync(JsonElement? body, BodyError? bodyError, CancellationToken cancellation) =>
+        WithLockAsync(cancellation, () =>
+        {
+            if (_open is not { } open)
+                return NoSession();
+
+            // No RenameInProgress refusal, deliberately (§ 10.19): this writes no catalog and moves no
+            // media, and the rename never touches this file.
+            if (bodyError is not null)
+                return BodyFail(bodyError, open);
+
+            // "id" must be present; null clears the position, a string sets it, anything else is a shape error.
+            string? id = null;
+            if (body is null || !body.Value.TryGetProperty("id", out var property))
+                return BodyFail(new BodyError(ErrorCodes.MissingField, "'id' is required.", new { field = "id" }), open);
+            if (property.ValueKind == JsonValueKind.String)
+                id = property.GetString() ?? "";
+            else if (property.ValueKind != JsonValueKind.Null)
+                return BodyFail(new BodyError(ErrorCodes.InvalidRequest, "'id' must be a string or null.", new { field = "id" }), open);
+
+            // Legal id, not necessarily a record: the phone may name the item it had open just before
+            // discarding it, and the client resolves a vanished id to the nearest one itself.
+            if (id is not null && RefuseIllegalMediaId(open, id) is { } illegal)
+                return illegal;
+
+            try
+            {
+                if (id is null)
+                    ReviewPositionFile.Delete(open.Folder);
+                else
+                    ReviewPositionFile.Write(open.Folder, id, DateTimeOffset.UtcNow);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Logger?.LogWarning(e, "The review position could not be written in {Folder}.", open.Folder);
+                return SessionOutcome.Fail(
+                    ErrorCodes.SaveFailed,
+                    "The review position could not be written.",
+                    new { recordsChanged = false, fileMoved = false },
+                    Materialise(open));
+            }
+
+            return SessionOutcome.ReviewPositionOnly(id);
         });
 
     // ---------------------------------------------------------------------------------------

@@ -68,6 +68,7 @@ class FakeRm2Client(
     override suspend fun items() = unexpected<Items>("items")
 
     override suspend fun discardItem(id: String, clientRequestId: String) = unexpected<Snapshot>("discardItem")
+    override suspend fun setReviewPosition(id: String?) = unexpected<Unit>("setReviewPosition")
 
     override fun url(link: String): String = baseUrl + link
 

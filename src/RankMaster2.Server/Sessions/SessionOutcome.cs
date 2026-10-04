@@ -21,6 +21,16 @@ public sealed record SessionOutcome
     /// </summary>
     public IReadOnlyList<SnapshotMediaRef>? Items { get; private init; }
 
+    /// <summary>
+    /// § 10.17 / § 10.19: the stored review position (null = none). Carried by <c>GET /session/items</c>
+    /// next to <see cref="Items"/>, and by itself, with no snapshot, by <c>PUT /session/review-position</c>
+    /// (<see cref="IsReviewPositionOnly"/>).
+    /// </summary>
+    public string? ReviewPosition { get; private init; }
+
+    /// <summary>§ 10.19: the 200 body is just <c>{ "reviewPosition": … }</c>, not a snapshot.</summary>
+    public bool IsReviewPositionOnly { get; private init; }
+
     public string? ErrorCode { get; private init; }
 
     public string? ErrorMessage { get; private init; }
@@ -38,8 +48,13 @@ public sealed record SessionOutcome
     public static SessionOutcome Ok(
         SessionSnapshot snapshot,
         int status = StatusCodes.Status200OK,
-        IReadOnlyList<SnapshotMediaRef>? items = null) =>
-        new() { Status = status, Snapshot = snapshot, Items = items };
+        IReadOnlyList<SnapshotMediaRef>? items = null,
+        string? reviewPosition = null) =>
+        new() { Status = status, Snapshot = snapshot, Items = items, ReviewPosition = reviewPosition };
+
+    /// <summary>§ 10.19: the answer to <c>PUT /session/review-position</c>.</summary>
+    public static SessionOutcome ReviewPositionOnly(string? reviewPosition) =>
+        new() { Status = StatusCodes.Status200OK, ReviewPosition = reviewPosition, IsReviewPositionOnly = true };
 
     public static SessionOutcome NoContent() =>
         new() { Status = StatusCodes.Status204NoContent };

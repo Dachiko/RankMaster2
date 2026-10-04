@@ -387,6 +387,51 @@ class OkHttpRm2ClientEndpointsTest {
     }
 
     @Test
+    fun `items carries the stored review position, and an absent one is null`() = runTest {
+        rm2.enqueue(200, """{"session": $SNAPSHOT_RANKING, "items": [], "reviewPosition": "IMG_0042.jpg"}""")
+        rm2.enqueue(200, """{"session": $SNAPSHOT_RANKING, "items": [], "reviewPosition": null}""")
+        rm2.enqueue(200, """{"session": $SNAPSHOT_RANKING, "items": []}""")
+
+        assertEquals("IMG_0042.jpg", (rm2.client.items() as Rm2Result.Ok).value.reviewPosition)
+        assertNull((rm2.client.items() as Rm2Result.Ok).value.reviewPosition)
+        assertNull((rm2.client.items() as Rm2Result.Ok).value.reviewPosition)
+    }
+
+    @Test
+    fun `setReviewPosition PUTs the id as JSON and nothing else`() = runTest {
+        rm2.enqueue(200, """{"reviewPosition": "beach day #2.jpg"}""")
+
+        assertTrue(rm2.client.setReviewPosition("beach day #2.jpg") is Rm2Result.Ok)
+
+        val request = rm2.take()
+        assertEquals("PUT", request.method)
+        assertEquals("/api/v1/session/review-position", request.path)
+        assertTrue(request.getHeader("Content-Type")!!.startsWith("application/json"))
+        val body = request.jsonBody()
+        assertEquals(setOf("id"), body.keys)
+        assertEquals("beach day #2.jpg", body.str("id"))
+    }
+
+    @Test
+    fun `setReviewPosition null is written as an explicit null, not left out`() = runTest {
+        rm2.enqueue(200, """{"reviewPosition": null}""")
+
+        assertTrue(rm2.client.setReviewPosition(null) is Rm2Result.Ok)
+
+        val raw = rm2.take().body.readUtf8()
+        assertEquals("""{"id":null}""", raw)
+    }
+
+    @Test
+    fun `setReviewPosition with no session is a refusal carrying its code`() = runTest {
+        rm2.enqueue(404, errorEnvelope("no_session", "No session is open."))
+
+        val refused = rm2.client.setReviewPosition("a.jpg") as Rm2Result.Refused
+
+        assertEquals(ErrorCodes.NO_SESSION, refused.code)
+    }
+
+    @Test
     fun `a retried action repeats the same token, which is what makes one vote stay one vote`() =
         runTest {
             rm2.enqueue(200, SNAPSHOT_RANKING)

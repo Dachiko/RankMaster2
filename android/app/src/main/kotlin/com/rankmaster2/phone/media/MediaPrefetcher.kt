@@ -60,8 +60,15 @@ class MediaPrefetcher(
      */
     suspend fun warm(snapshot: Snapshot, panePx: Int): Int = warm(snapshot.warmPairs, panePx)
 
-    suspend fun warm(pairs: List<MediaPair>, panePx: Int): Int {
-        val urls = urlsFor(pairs, panePx)
+    suspend fun warm(pairs: List<MediaPair>, panePx: Int): Int = warmUrls(urlsFor(pairs, panePx))
+
+    /**
+     * Warm single items - what review mode walks through - at the width [panePx] would ask for.
+     * The same plain GET as [warm], for the same URLs a pane would request.
+     */
+    suspend fun warmItems(refs: List<MediaRef>, panePx: Int): Int = warmUrls(urlsForItems(refs, panePx))
+
+    private suspend fun warmUrls(urls: List<String>): Int {
         if (urls.isEmpty()) return 0
         var fetched = 0
         withContext(dispatcher) {
@@ -90,6 +97,12 @@ class MediaPrefetcher(
             .flatMap { listOf(it.left, it.right) }
             .mapNotNull { stillUrl(it, width) }
             .distinct()
+    }
+
+    /** The URLs [warmItems] would fetch, in order; videos and vanished files are skipped as in [urlsFor]. */
+    fun urlsForItems(refs: List<MediaRef>, panePx: Int): List<String> {
+        val width = MediaWidths.forPane(panePx)
+        return refs.mapNotNull { stillUrl(it, width) }.distinct()
     }
 
     private fun stillUrl(ref: MediaRef, width: Int): String? {

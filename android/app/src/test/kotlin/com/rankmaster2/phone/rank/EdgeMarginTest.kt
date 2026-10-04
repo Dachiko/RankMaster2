@@ -2,7 +2,7 @@ package com.rankmaster2.phone.rank
 
 import androidx.compose.ui.geometry.Offset
 import com.rankmaster2.phone.ui.rank.Side
-import com.rankmaster2.phone.ui.rank.VotingShareOfScreen
+import com.rankmaster2.phone.ui.VotingShareOfScreen
 import com.rankmaster2.phone.ui.rank.sideAt
 import com.rankmaster2.phone.ui.rank.votableSideAt
 import kotlin.math.abs

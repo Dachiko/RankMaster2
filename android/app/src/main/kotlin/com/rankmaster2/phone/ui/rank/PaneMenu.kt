@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -115,18 +116,81 @@ internal fun PaneMenu(
     onSpecial: () -> Unit,
 ) {
     val ref = if (side == Side.LEFT) state.left else state.right
+
+    PaneMenuShell(
+        key = side,
+        header = ref?.id.orEmpty(),
+        at = at,
+        windowSize = windowSize,
+        bodyHeight = RankMenuBodyHeight,
+        onDismiss = onDismiss,
+    ) {
+        MenuAction(
+            label = "View full screen",
+            glyph = MenuGlyph.VIEW,
+            accent = Ink,
+            // Always. It reads a file and moves nothing, so there is nothing for it to
+            // collide with - and it is the line that gets used most.
+            enabled = true,
+            onClick = onView,
+        )
+
+        // Below this line, a file moves on the PC. That is the whole hierarchy: one
+        // hairline, and two rows that answer "where does it go?" in the same monospace the
+        // file name is written in. Not red, not shouting - the two rows that talk in paths
+        // are the two rows that touch the disk.
+        Hairline()
+
+        MenuAction(
+            label = "Discard",
+            detail = "discarded/",
+            glyph = MenuGlyph.DISCARD,
+            accent = Amber,
+            enabled = state.actionable,
+            onClick = onDiscard,
+        )
+        MenuAction(
+            label = "Move to special",
+            detail = "special 1/",
+            glyph = MenuGlyph.SPECIAL,
+            accent = Emerald,
+            enabled = state.actionable,
+            onClick = onSpecial,
+        )
+    }
+}
+
+/**
+ * The look of a pane menu, and nothing about what is in it: the scrim, the near-opaque panel, the
+ * file-name header, the grow-from-the-press animation, the haptic tick, the dismissal rules.
+ *
+ * Shared by the ranking screen's long-press menu and review mode's, so the two cannot drift apart.
+ * [content] is the rows; [bodyHeight] is how tall they stack, because the opening animation needs
+ * the panel's size before anything is measured (see [menuTransformOrigin]). [key] identifies what
+ * the menu is about, so that its state is reset when that changes.
+ */
+@Composable
+internal fun PaneMenuShell(
+    key: Any,
+    header: String,
+    at: Offset,
+    windowSize: IntSize,
+    bodyHeight: Dp,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val press = remember(at) { IntOffset(at.x.toInt(), at.y.toInt()) }
 
     // Open, then closing, then gone. `shown` drives every animation; `closing` is what defers the
     // real dismissal until the exit has been seen. A dismissal the owner asked for is still a
     // dismissal 110 ms later, and during those 110 ms the popup is still the thing under his
     // finger - so a second tap lands here and not on a photograph.
-    var shown by remember(side, press) { mutableStateOf(false) }
-    var closing by remember(side, press) { mutableStateOf(false) }
+    var shown by remember(key, press) { mutableStateOf(false) }
+    var closing by remember(key, press) { mutableStateOf(false) }
     val dismiss: () -> Unit = { if (!closing) { closing = true; shown = false } }
 
     val haptics = LocalHapticFeedback.current
-    LaunchedEffect(side, press) {
+    LaunchedEffect(key, press) {
         // The long press has no feedback of its own in Compose: without this the menu simply
         // appears, and the owner cannot tell a long press that worked from one that is still
         // counting.
@@ -184,7 +248,7 @@ internal fun PaneMenu(
             // Belt and braces. The focusable popup already swallows touches outside itself, so in
             // practice this never fires - but "in practice" is not the standard for the one gesture
             // on this screen that cannot be taken back for free.
-            .pointerInput(side, press) { detectTapGestures { dismiss() } }
+            .pointerInput(key, press) { detectTapGestures { dismiss() } }
             .drawBehind { drawRect(brush = scrim, alpha = groundAlpha) }
     )
 
@@ -200,7 +264,7 @@ internal fun PaneMenu(
         // panel is most of the width of a phone. Padding the thing that gets clamped is how the
         // margin survives the clamp without the clamp having to know about it.
         val boxSize = with(LocalDensity.current) {
-            IntSize(MenuBoxWidth.roundToPx(), MenuBoxHeight.roundToPx())
+            IntSize(MenuBoxWidth.roundToPx(), menuBoxHeightFor(bodyHeight).roundToPx())
         }
         val origin = remember(press, windowSize, boxSize) {
             menuTransformOrigin(press, windowSize, boxSize)
@@ -210,7 +274,7 @@ internal fun PaneMenu(
             Modifier
                 .width(MenuBoxWidth)
                 // The margin is not dead: it is the nearest place to the menu that closes it.
-                .pointerInput(side, press) { detectTapGestures { dismiss() } }
+                .pointerInput(key, press) { detectTapGestures { dismiss() } }
                 // The whole box scales, margin included, because the origin above is a fraction of
                 // the box. Putting the layer inside the padding would move the point it grows from.
                 .graphicsLayer {
@@ -232,40 +296,9 @@ internal fun PaneMenu(
                     .padding(PanelPad)
                     .graphicsLayer { alpha = contentAlpha }
             ) {
-                FileName(ref?.id.orEmpty())
+                FileName(header)
 
-                MenuAction(
-                    label = "View full screen",
-                    glyph = MenuGlyph.VIEW,
-                    accent = Ink,
-                    // Always. It reads a file and moves nothing, so there is nothing for it to
-                    // collide with - and it is the line that gets used most.
-                    enabled = true,
-                    onClick = onView,
-                )
-
-                // Below this line, a file moves on the PC. That is the whole hierarchy: one
-                // hairline, and two rows that answer "where does it go?" in the same monospace the
-                // file name is written in. Not red, not shouting - the two rows that talk in paths
-                // are the two rows that touch the disk.
-                Hairline()
-
-                MenuAction(
-                    label = "Discard",
-                    detail = "discarded/",
-                    glyph = MenuGlyph.DISCARD,
-                    accent = Amber,
-                    enabled = state.actionable,
-                    onClick = onDiscard,
-                )
-                MenuAction(
-                    label = "Move to special",
-                    detail = "special 1/",
-                    glyph = MenuGlyph.SPECIAL,
-                    accent = Emerald,
-                    enabled = state.actionable,
-                    onClick = onSpecial,
-                )
+                content()
             }
         }
     }
@@ -324,7 +357,7 @@ private fun FileName(id: String) {
  * there is nothing transient about it and pretending otherwise would be the real lie.
  */
 @Composable
-private fun MenuAction(
+internal fun MenuAction(
     label: String,
     glyph: MenuGlyph,
     accent: Color,
@@ -396,7 +429,7 @@ private fun MenuAction(
 
 /** The one line in the menu. Everything above it reads a file; everything below it moves one. */
 @Composable
-private fun Hairline() {
+internal fun Hairline() {
     Box(
         Modifier
             .padding(horizontal = RowPad, vertical = HairlineGap)
@@ -443,9 +476,15 @@ private val MenuShadow = 28.dp
  * this becomes an underestimate; the cost of that is a few dp of error in where the scale-up
  * appears to start, which is the right thing to be wrong about. Clipping the label would not be.
  */
-internal val MenuHeight: Dp =
-    PanelPad * 2 + HeaderHeight + RowHeight + (HairlineWidth + HairlineGap * 2) +
-        RowHeightWithDetail * 2
+internal fun menuHeightFor(bodyHeight: Dp): Dp = PanelPad * 2 + HeaderHeight + bodyHeight
+
+/** The hairline and the gap above and below it, as it counts in a stack of rows. */
+internal val HairlineBlockHeight: Dp = HairlineWidth + HairlineGap * 2
+
+/** The ranking menu's rows: one plain row, the hairline, two rows that name a folder. */
+internal val RankMenuBodyHeight: Dp = RowHeight + HairlineBlockHeight + RowHeightWithDetail * 2
+
+internal val MenuHeight: Dp = menuHeightFor(RankMenuBodyHeight)
 
 /**
  * How close the panel may come to the edge of the glass, and to the thumb that opened it.
@@ -457,7 +496,10 @@ private val EdgeGap = 10.dp
 
 /** What actually gets positioned, and therefore what has to fit on the screen. */
 internal val MenuBoxWidth: Dp = MenuWidth + EdgeGap * 2
-internal val MenuBoxHeight: Dp = MenuHeight + EdgeGap * 2
+internal val MenuBoxHeight: Dp = menuBoxHeightFor(RankMenuBodyHeight)
+
+/** What gets positioned for a menu whose rows stack [bodyHeight] tall. */
+internal fun menuBoxHeightFor(bodyHeight: Dp): Dp = menuHeightFor(bodyHeight) + EdgeGap * 2
 
 /**
  * How much width the file name actually has: the panel, less the padding that puts every row's
@@ -470,12 +512,12 @@ private val PanelFill = Color(0xF00B0D11)
 /** The hairline round the panel and the one inside it: the same mark, doing the same job. */
 private val PanelEdge = Color(0x1FFFFFFF)
 
-private val Ink = Color(0xFFF3F5F8)
+internal val Ink = Color(0xFFF3F5F8)
 private val InkMuted = Color(0xFF99A1AF)
 private val InkFaint = Color(0xFF6D7583)
 
 /** The screen's own two hues (see [MatchStrip]), at full strength because these are read, not glanced at. */
-private val Amber = Color(0xFFF0A020)
+internal val Amber = Color(0xFFF0A020)
 private val Emerald = Color(0xFF2ECC71)
 
 private val LabelSize = 16.sp
@@ -720,8 +762,10 @@ internal fun menuTransformOrigin(
  * - [DISCARD] an arrow falling into an open tray. Not a bin: this **moves** the file to
  *   `discarded/`, it does not delete it, and a bin would be a lie about what the button does.
  * - [SPECIAL] a star, which is what `special 1/` means.
+ * - [RESTART] an open circle ending in an arrow: "from the beginning" (review mode's menu).
+ * - [BACK] an arrow pointing left: "back to the folders" (review mode's menu).
  */
-internal enum class MenuGlyph { VIEW, DISCARD, SPECIAL }
+internal enum class MenuGlyph { VIEW, DISCARD, SPECIAL, RESTART, BACK }
 
 /** One stroke of a glyph: a polyline in unit space, optionally closed. */
 internal data class GlyphStroke(val points: List<Offset>, val closed: Boolean = false)
@@ -754,6 +798,36 @@ internal fun glyphStrokes(glyph: MenuGlyph): List<GlyphStroke> = when (glyph) {
     MenuGlyph.SPECIAL -> listOf(
         GlyphStroke(starOutline(centre = Offset(0.5f, 0.54f), outer = 0.46f, inner = 0.21f), closed = true)
     )
+    MenuGlyph.RESTART -> {
+        // An open circle with an arrow on its end: "again". Clockwise from the upper right round to
+        // the lower left, so the gap sits at the bottom where the head points back up at the start.
+        val centre = Offset(0.5f, 0.5f)
+        val radius = 0.36f
+        val from = -50.0
+        val sweep = 285.0
+        val arc = (0..14).map { i -> onCircle(centre, radius, from + sweep * i / 14) }
+        val tip = arc.last()
+        val end = Math.toRadians(from + sweep)
+        // Clockwise tangent at the end, and the two barbs that fold back from the tip along it.
+        val tx = (-sin(end)).toFloat()
+        val ty = cos(end).toFloat()
+        val barb = 0.20f
+        val spread = Math.toRadians(35.0)
+        fun barbAt(sign: Double): Offset {
+            val bx = (-tx * cos(spread) - sign * (-ty) * sin(spread)).toFloat()
+            val by = (-ty * cos(spread) - sign * tx * sin(spread)).toFloat()
+            return Offset((tip.x + bx * barb).coerceIn(0f, 1f), (tip.y + by * barb).coerceIn(0f, 1f))
+        }
+        listOf(
+            GlyphStroke(arc),
+            GlyphStroke(listOf(barbAt(+1.0), tip, barbAt(-1.0))),
+        )
+    }
+    MenuGlyph.BACK -> listOf(
+        // A shaft and a head pointing left, out of a folder's worth of space: "back".
+        GlyphStroke(listOf(Offset(0.90f, 0.5f), Offset(0.10f, 0.5f))),
+        GlyphStroke(listOf(Offset(0.38f, 0.22f), Offset(0.10f, 0.5f), Offset(0.38f, 0.78f))),
+    )
 }
 
 /**
@@ -774,6 +848,12 @@ internal fun starOutline(
         x = centre.x + (radius * cos(angle)).toFloat(),
         y = centre.y + (radius * sin(angle)).toFloat(),
     )
+}
+
+/** A point on a circle, [degrees] clockwise from the 3 o'clock position (the screen's y points down). */
+private fun onCircle(centre: Offset, radius: Float, degrees: Double): Offset {
+    val a = Math.toRadians(degrees)
+    return Offset(centre.x + (radius * cos(a)).toFloat(), centre.y + (radius * sin(a)).toFloat())
 }
 
 /** Unit space onto the icon box, and the only place the drawing knows how big it is. */

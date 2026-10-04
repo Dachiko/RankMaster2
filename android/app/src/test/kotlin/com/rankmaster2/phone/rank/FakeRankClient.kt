@@ -102,6 +102,7 @@ class FakeRankClient : Rm2Client {
     override suspend fun openSession(folder: String): Rm2Result<Snapshot> = error("not used")
     override suspend fun items(): Rm2Result<Items> = error("not used")
     override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> = error("not used")
+    override suspend fun setReviewPosition(id: String?): Rm2Result<Unit> = error("not used")
     var sessionClosed = false
         private set
 

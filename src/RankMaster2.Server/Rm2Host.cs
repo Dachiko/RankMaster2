@@ -71,6 +71,9 @@ public static class Rm2Host
             registry.ApplyDurabilityOptions(durability.SaveDelaySeconds, durability.MaxUnsavedChoices);
         }
 
+        registry.Logger = app.Services.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()
+            ?.CreateLogger("RankMaster2.Review");
+
         app.Lifetime.ApplicationStopping.Register(registry.Dispose);
 
         // TLS, pairing, tokens, the fail-closed auth gate, /ping and /libraries/*.

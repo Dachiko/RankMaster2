@@ -33,6 +33,9 @@ class FakeReviewClient : Rm2Client {
 
     val discards = mutableListOf<SentDiscard>()
     val cancels = mutableListOf<String>()
+
+    /** Every review position written, in order; null is the "finished" write. */
+    val positions = mutableListOf<String?>()
     var itemsReads = 0
         private set
     var closed = false
@@ -41,6 +44,12 @@ class FakeReviewClient : Rm2Client {
     val itemsResults = ArrayDeque<Rm2Result<Items>>()
     val discardResults = ArrayDeque<Rm2Result<Snapshot>>()
     val cancelResults = ArrayDeque<Rm2Result<Snapshot>>()
+
+    /** Answers for position writes; an empty queue answers Ok. */
+    val positionResults = ArrayDeque<Rm2Result<Unit>>()
+
+    /** When set, `setReviewPosition` parks until the test completes it - a PC that does not answer. */
+    var positionGate: CompletableDeferred<Unit>? = null
 
     /** What `items()` answers when nothing is queued. */
     var listing: Rm2Result<Items>? = null
@@ -65,6 +74,13 @@ class FakeReviewClient : Rm2Client {
         cancels += clientRequestId
         log += "cancel"
         return cancelResults.removeFirstOrNull() ?: error("unqueued cancel")
+    }
+
+    override suspend fun setReviewPosition(id: String?): Rm2Result<Unit> {
+        log += "position:$id"
+        positionGate?.await()
+        positions += id
+        return positionResults.removeFirstOrNull() ?: Rm2Result.Ok(Unit)
     }
 
     override suspend fun closeSession(): Rm2Result<Unit> {
@@ -111,8 +127,12 @@ object ReviewFixtures {
     fun snapshot(undoAvailable: Boolean = false, lastAction: LastAction? = null): Snapshot =
         RankFixtures.ranking(undoAvailable = undoAvailable, lastAction = lastAction)
 
-    fun items(vararg ids: String, session: Snapshot = snapshot()): Rm2Result<Items> =
-        Rm2Result.Ok(Items(session, ids.map { ref(it) }))
+    fun items(
+        vararg ids: String,
+        session: Snapshot = snapshot(),
+        reviewPosition: String? = null,
+    ): Rm2Result<Items> =
+        Rm2Result.Ok(Items(session, ids.map { ref(it) }, reviewPosition))
 
     private fun action(type: String, id: String?, requestId: String?, restoredId: String? = null, undone: String? = null) =
         LastAction(

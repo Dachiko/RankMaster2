@@ -9,17 +9,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Constraints
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.rankmaster2.phone.media.Rm2Media
-import com.rankmaster2.phone.net.Pair as MediaPair
+import com.rankmaster2.phone.media.paneLongEdgePx
 
 /**
- * The review screen wired to its view model, plus the three things only a screen can know: whether
- * the app is in front, what back means here, and how big a picture is (for prefetching).
+ * The review screen wired to its view model, plus the things only a screen can know: whether the
+ * app is in front, what back means here, and how big a picture is (for prefetching).
  */
 @Composable
 fun ReviewRoute(
@@ -45,10 +46,18 @@ fun ReviewRoute(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Back leaves: it closes the session so the PC does not sit holding a folder nobody is using,
-    // and returns to the folder list. Everything swiped is already on its way to the PC and is sent
-    // before the close.
-    BackHandler(enabled = true) { viewModel.leave(onLeave) }
+    // Back closes the menu if it is open; otherwise it leaves - closing the session so the PC does
+    // not sit holding a folder nobody is using, and returning to the folder list. Everything
+    // discarded is already on its way to the PC and is sent before the close.
+    BackHandler(enabled = true) {
+        if (state.menuFor != null) viewModel.closeMenu() else viewModel.leave(onLeave)
+    }
+
+    // The menu is anchored to where a thumb or a button was, and after a rotation that point
+    // describes somewhere else entirely. Close it rather than leave it pointing at nothing.
+    val configuration = LocalConfiguration.current
+    val portrait = configuration.screenHeightDp >= configuration.screenWidthDp
+    LaunchedEffect(portrait) { viewModel.closeMenu() }
 
     // A video loops for as long as it is on screen and nothing is being touched, so the display
     // would otherwise dim and lock in the middle of watching one.
@@ -60,19 +69,18 @@ fun ReviewRoute(
     }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
-        // The long edge of the screen. The picture's own box is a little smaller (the controls take
-        // some), but the server's widths come in steps (360, 540, 720, 1080, 1440, 2160), so this
-        // lands on the same step nearly always, and then the prefetch is a cache hit.
-        val panePx = with(LocalDensity.current) { maxOf(maxWidth.toPx(), maxHeight.toPx()).toInt() }
+        // The item is drawn into this very box, edge to edge, so the pane's own width is worked out
+        // from these same constraints: the same `w=`, the same URL, a cache hit.
+        val panePx = reviewPrefetchPx(constraints)
 
-        // Warm the next one or two stills once the current item is up - the cheapest work in the
-        // app, and it competes for the same Wi-Fi, so it starts only after the picture is showing.
-        // Videos are skipped by the prefetcher itself; they stream.
+        // Warm the next few stills once the current item is up - the cheapest work in the app, and
+        // it competes for the same Wi-Fi, so it starts only after the picture is showing. Videos
+        // are skipped by the prefetcher itself; they stream, as in ranking. Going back with Cancel
+        // needs nothing extra: what was just on screen is already in the disk cache.
         val upcoming = state.upcoming(PREFETCH_AHEAD)
         LaunchedEffect(state.current?.id, upcoming.map { it.id }, state.foreground, panePx) {
             if (!state.foreground || upcoming.isEmpty()) return@LaunchedEffect
-            val pair = MediaPair(upcoming.first(), upcoming.last())
-            media.prefetcher.warm(listOf(pair), panePx)
+            media.prefetcher.warmItems(upcoming, panePx)
         }
 
         ReviewScreen(
@@ -84,9 +92,19 @@ fun ReviewRoute(
             onRestart = viewModel::restart,
             onRetry = viewModel::retry,
             onLeave = { viewModel.leave(onLeave) },
-            onDismissProblem = viewModel::dismissProblem,
+            onOpenMenu = viewModel::openMenu,
+            onCloseMenu = viewModel::closeMenu,
+            onDiscardFromMenu = viewModel::discardFromMenu,
         )
     }
 }
 
-private const val PREFETCH_AHEAD = 2
+/** How many items ahead are warmed. */
+internal const val PREFETCH_AHEAD = 3
+
+/**
+ * The long edge to prefetch at for a review screen measured at [constraints]: exactly what the item's
+ * own pane computes from the same box, because the item fills the screen. One function, so the two
+ * cannot disagree.
+ */
+internal fun reviewPrefetchPx(constraints: Constraints): Int = paneLongEdgePx(constraints)

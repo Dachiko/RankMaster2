@@ -79,6 +79,14 @@ interface Rm2Client {
      */
     suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot>
 
+    /**
+     * `PUT /session/review-position`. Tells the PC which item is on screen so that the next review
+     * of this folder starts there; null clears it (a finished folder starts from the beginning).
+     * Not an action: it changes no pair, no undo and no ranking. Callers treat a failure as quiet,
+     * because the next change sends the position again.
+     */
+    suspend fun setReviewPosition(id: String?): Rm2Result<Unit>
+
     // -- bytes ---------------------------------------------------------------------------------
 
     /**

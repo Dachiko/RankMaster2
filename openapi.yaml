@@ -659,7 +659,8 @@ paths:
         file gone from disk has `sizeBytes: null`). Sorted by `id` with `OrdinalIgnoreCase` (plain
         character order, case-blind - not Explorer "natural" order). `session` is the same
         `SessionSnapshot` every other `/session*` success returns, taken in the same critical section.
-        Works while `ranking` and `exhausted`.
+        Works while `ranking` and `exhausted`. `reviewPosition` is the stored review position
+        (§ 10.19) or `null`.
       responses:
         "200":
           description: The snapshot and the full item list.
@@ -716,6 +717,51 @@ paths:
         "413": { $ref: '#/components/responses/PayloadTooLarge' }
         "415": { $ref: '#/components/responses/UnsupportedContentType' }
         "500": { $ref: '#/components/responses/MoveOrSaveFailed' }
+        "503": { $ref: '#/components/responses/SessionBusy' }
+        default: { $ref: '#/components/responses/InternalError' }
+
+  /session/review-position:
+    put:
+      tags: [session]
+      operationId: setReviewPosition
+      summary: Review mode - remember (or forget) where the phone stopped, in the folder on the PC.
+      description: |
+        `SERVER_SPEC.md` § 10.19. Stores `{ version: 1, current, updatedAt }` in the hidden file
+        `<folder>/.rankmaster_review.json` (temp file + replace, so a crash leaves the old or the new
+        value), or deletes it when `id` is `null`. `GET /session/items` returns the stored value as
+        `reviewPosition`. The file is not part of `rankmaster_db.json`, whose format is frozen.
+
+        **Not an action.** `pairSeq`, `pairToken`, `lastAction`, `undoAvailable`, impressions and the
+        database are not touched, and it does not spend the undo point. It takes the session lock like
+        the others and works while `ranking`, `exhausted` and during a rename (it writes no catalog).
+        Idempotent: send the same body again after a timeout.
+
+        `id` is validated like a media id (`invalid_media_id`, `media_outside_session`,
+        `media_extension_not_allowed`) but need **not** be a record of the session: the phone may
+        store the id of the item it has just discarded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewPositionRequest' }
+            example:
+              id: "DSC_0123.jpg"
+      responses:
+        "200":
+          description: Stored (or cleared). The body is not a snapshot.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewPosition' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/MediaForbidden' }
+        "404": { $ref: '#/components/responses/NoSession' }
+        "413": { $ref: '#/components/responses/PayloadTooLarge' }
+        "415": { $ref: '#/components/responses/UnsupportedContentType' }
+        "500": { $ref: '#/components/responses/ReviewPositionSaveFailed' }
         "503": { $ref: '#/components/responses/SessionBusy' }
         default: { $ref: '#/components/responses/InternalError' }
 
@@ -1549,6 +1595,23 @@ components:
                   requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
                   details: { recordsChanged: true, fileMoved: true }
 
+    ReviewPositionSaveFailed:
+      description: |
+        `save_failed` — the review-position file could not be written or deleted (`SERVER_SPEC.md`
+        § 10.19). Nothing else changed: `details.recordsChanged` and `details.fileMoved` are `false`,
+        `pairSeq` did not move and the previous position (if any) is still stored.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: save_failed
+              message: The review position could not be written.
+              requestId: 01J8Z5K0QF3V8A0M6R9Q2B7T4C
+              details: { recordsChanged: false, fileMoved: false }
+
     MediaForbidden:
       description: |
         `media_outside_session` — the decoded id would escape the session folder; or
@@ -2162,16 +2225,23 @@ components:
     Items:
       type: object
       additionalProperties: false
-      required: [session, items]
+      required: [session, items, reviewPosition]
       description: |
         The body of `GET /session/items` (`SERVER_SPEC.md` § 10.17). `items.length` equals
-        `session.counts.total`.
+        `session.counts.total`. `reviewPosition` is where the phone last stopped (§ 10.19), as stored.
       properties:
         session: { $ref: '#/components/schemas/SessionSnapshot' }
         items:
           type: array
           description: Every record of the session, both kinds, sorted by `id` (`OrdinalIgnoreCase`).
           items: { $ref: '#/components/schemas/MediaRef' }
+        reviewPosition:
+          type: [string, "null"]
+          description: |
+            The id the phone's review mode last reported with `PUT /session/review-position`, **as
+            stored** (it may no longer be a record: the client resolves it to the nearest following
+            item). `null` when there is no stored position, the file is unreadable or malformed, or
+            its version is unknown - never an error.
 
     DiscardItemRequest:
       type: object
@@ -2186,6 +2256,29 @@ components:
           minLength: 1
           maxLength: 255
         clientRequestId: { $ref: '#/components/schemas/ClientRequestId' }
+
+    ReviewPositionRequest:
+      type: object
+      additionalProperties: false
+      required: [id]
+      description: |
+        `PUT /session/review-position` (`SERVER_SPEC.md` § 10.19). `id` is required; `null` clears the
+        stored position. A string is validated like a media id but need not be a current record.
+      properties:
+        id:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 255
+
+    ReviewPosition:
+      type: object
+      additionalProperties: false
+      required: [reviewPosition]
+      description: The body of a successful `PUT /session/review-position`.
+      properties:
+        reviewPosition:
+          type: [string, 'null']
+          description: What is stored now - the id just written, or null after a clear.
 
     OpenSessionRequest:
       type: object

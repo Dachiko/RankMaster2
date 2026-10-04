@@ -52,6 +52,13 @@ internal data class DiscardItemRequest(
     val clientRequestId: String,
 )
 
+/**
+ * `PUT /session/review-position`. [id] has no default on purpose: a null must be written as
+ * `"id": null`, which is how the PC is told to clear the position.
+ */
+@Serializable
+internal data class ReviewPositionRequest(val id: String?)
+
 /** § 10.11. */
 @Serializable
 internal data class PairRequest(

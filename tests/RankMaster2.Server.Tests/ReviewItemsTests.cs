@@ -19,8 +19,8 @@ public class ReviewItemsTests(Rm2Server server) : SessionTestBase(server)
     {
         response.ShouldHaveStatus(200, clause);
         var json = response.Json ?? throw response.Failure($"{clause}: the body is not JSON.");
-        var keys = json.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray();
-        Assert.Equal(new[] { "items", "session" }, keys);
+        var keys = json.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "items", "reviewPosition", "session" }, keys);
 
         var session = json.GetProperty("session");
         ContractShape.RequireSnapshot(session, $"{clause} (SERVER_SPEC.md § 10.17: session is a § 9.1 snapshot)", response);

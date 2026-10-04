@@ -55,7 +55,16 @@ data class Pair(val left: MediaRef, val right: MediaRef)
  * with the snapshot it was read against. Review mode's whole list; a pure read.
  */
 @Serializable
-data class Items(val session: Snapshot, val items: List<MediaRef>)
+data class Items(
+    val session: Snapshot,
+    val items: List<MediaRef>,
+    /**
+     * The id of the item that was on screen the last time this folder was reviewed, as the PC
+     * stored it - possibly a file that is no longer in the folder. Null: none stored (or an older
+     * server that does not know the field).
+     */
+    val reviewPosition: String? = null,
+)
 
 @Serializable
 data class MediaRef(

@@ -2,7 +2,6 @@ package com.rankmaster2.phone.review
 
 import com.rankmaster2.phone.review.ReviewFixtures.refused
 import com.rankmaster2.phone.review.ReviewFixtures.items
-import com.rankmaster2.phone.ui.review.InMemoryReviewPositionStore
 import com.rankmaster2.phone.ui.review.ReviewState.Phase
 import com.rankmaster2.phone.ui.review.ReviewViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,7 +16,7 @@ import org.junit.Test
 class ReviewOldServerTest {
 
     private fun TestScope.vm(client: FakeReviewClient) = ReviewViewModel(
-        client, ReviewFixtures.snapshot(), InMemoryReviewPositionStore(),
+        client, ReviewFixtures.snapshot(),
         newRequestId = { "req-1" },
         scope = TestScope(UnconfinedTestDispatcher(testScheduler)),
     ).also { it.resume(ReviewFixtures.snapshot()) }

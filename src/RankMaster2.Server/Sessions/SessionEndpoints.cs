@@ -103,6 +103,13 @@ public static class SessionEndpoints
             return Respond(http, await registry.DiscardItemAsync(body, bodyError, cancellation));
         });
 
+        // § 10.19. Not an action: stores where review mode stopped, in the folder, and nothing else.
+        group.MapPut("/review-position", async (HttpContext http, CancellationToken cancellation) =>
+        {
+            var (body, bodyError) = await SessionBody.ReadAsync(http, required: true);
+            return Respond(http, await registry.SetReviewPositionAsync(body, bodyError, cancellation));
+        });
+
         return endpoints;
     }
 
@@ -126,8 +133,16 @@ public static class SessionEndpoints
             return Results.NoContent();
         }
 
+        if (outcome.IsReviewPositionOnly)
+            return SessionResults.ReviewPosition(http, new ReviewPositionBody(outcome.ReviewPosition), outcome.Status);
+
         if (outcome.Items is not null)
-            return SessionResults.Items(http, new SessionItems(outcome.Snapshot!, outcome.Items), outcome.Status);
+        {
+            return SessionResults.Items(
+                http,
+                new SessionItems(outcome.Snapshot!, outcome.Items, outcome.ReviewPosition),
+                outcome.Status);
+        }
 
         return SessionResults.Snapshot(http, outcome.Snapshot!, outcome.Status);
     }

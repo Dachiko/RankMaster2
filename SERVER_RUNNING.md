@@ -207,6 +207,7 @@ and expect to re-pair, because the fingerprint changes with it.
 | `rankmaster_db.json` | the ratings. Same v1 format as Rank Master 1 |
 | `discarded\`, `special 1\` | where discard and special move files |
 | `.rankmaster.lock` | held while a session is open on that folder |
+| `.rankmaster_review.json` | hidden; where the phone's review mode stopped, so it resumes there next time. Safe to delete (the phone just starts from the top) |
 
 ---
 

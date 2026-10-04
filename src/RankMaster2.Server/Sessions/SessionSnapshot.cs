@@ -32,7 +32,12 @@ public sealed record SessionSnapshot(
 /// <summary>SERVER_SPEC.md § 10.17: the body of <c>GET /session/items</c>.</summary>
 public sealed record SessionItems(
     [property: JsonPropertyName("session")] SessionSnapshot Session,
-    [property: JsonPropertyName("items")] IReadOnlyList<SnapshotMediaRef> Items);
+    [property: JsonPropertyName("items")] IReadOnlyList<SnapshotMediaRef> Items,
+    [property: JsonPropertyName("reviewPosition")] string? ReviewPosition);
+
+/// <summary>SERVER_SPEC.md § 10.19: the body of <c>PUT /session/review-position</c>.</summary>
+public sealed record ReviewPositionBody(
+    [property: JsonPropertyName("reviewPosition")] string? ReviewPosition);
 
 /// <summary>SERVER_SPEC.md § 9.2. <c>stills + videos == total</c>.</summary>
 public sealed record SnapshotCounts(

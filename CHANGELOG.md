@@ -4,6 +4,16 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## 3.2.0 — 2026-10-04
+- Phone (3.2.0, versionCode 5): Review mode reworked after Mike's first look. Tap keeps, swipe left
+  discards, swipe right does nothing; only touches that start inside ranking's centred live area
+  count. On screen only the item, ranking's cancel notch and a ⋮ menu (ranking's menu look; long
+  press opens it too): Start from the beginning, Back to folders, Discard. No button strip, no
+  colours, no status text; non-fatal failures are silent. Next 3 stills prefetched.
+- Review position now lives on the PC: `<folder>/.rankmaster_review.json` (hidden), read through
+  `GET /session/items` (`reviewPosition`) and written with `PUT /session/review-position`
+  (SERVER_SPEC.md § 10.19). Review resumes on the same item; a finished folder starts over.
+
 ## 3.1.0 — 2026-10-04
 - New: **Review mode** on the phone (phone 3.1.0, versionCode 4). From the folder list, "Review"
   beside "Rank" shows every photo and video of the folder one at a time, full screen, true aspect.

@@ -4,21 +4,22 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
-- **Version 3.1.0** (2026-10-04, tag `v3.1.0`) is the head of `master` and `origin/master`:
-  **Review mode** on the phone (see `CHANGELOG.md`; server `GET /session/items` +
-  `POST /session/items/discard`, SERVER_SPEC.md § 10.17–10.18; phone `android/.../ui/review/`).
-  Pushed and deployed on this PC 2026-10-04 (`deploy.ps1 -SkipPull`; `/ping` answers 3.1.0).
-- **Debug APK 3.1.0 sent to Mike on Telegram 2026-10-04** (arm64 only, see `AGENTS.md`); waiting for
-  him to install, pair and try it.
-- **Review mode is untested on a phone.** Unit tests only (server 18 new, phone 51 new). A debug
-  APK (`com.rankmaster2.phone.debug`, installs beside the release app, needs its own pairing) builds
-  here; to check on the phone: swipe feel (30 % / fling threshold), the edge back-gesture conflict,
-  video while swiping 4K files, landscape side-column layout. Videos slide but don't tilt
-  (SurfaceView ignores the parent's rotation).
-- **Installed on this PC:** 3.1.0 in `C:\Utils\RankMaster v3` (`78f802a`), tray running.
-- **Phone:** the tree's APK is now `versionName 3.1.0` / `versionCode 4`. Which build is on Mike's
-  phone is unknown — ask him.
-- **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 443 pass.
+- **Version 3.2.0** (2026-10-04, tag `v3.2.0`) is the head of `master` and `origin/master`, and is
+  deployed on this PC. **Review mode** on the phone (see `CHANGELOG.md`): server
+  `GET /session/items`, `POST /session/items/discard`, `PUT /session/review-position`
+  (SERVER_SPEC.md § 10.17–10.19); phone `android/.../ui/review/`.
+- **Review mode, Mike's design (2026-10-04, after seeing 3.1.0):** only the item, ranking's cancel
+  notch and a ⋮ menu (ranking's menu look). Tap = keep, swipe left = discard, swipe right = nothing;
+  only touches starting inside ranking's live area (`ui/LiveArea.kt`) count. No button strip, no
+  colours, no status text, **no progress line** (asked, he said no). Non-fatal failures silent.
+  Position stored on the PC in `<folder>/.rankmaster_review.json`; resumes on the same item.
+- **Debug APK 3.2.0 sent to Mike on Telegram 2026-10-04** (arm64 only, see `AGENTS.md`); 3.1.0 went
+  before it. Waiting for his feedback. Untested on a phone: the hand-written gesture handler (tap /
+  swipe / long press), the two new menu glyphs (restart, back arrow), ⋮ near the right edge vs
+  the system back swipe, resume after leave/re-enter. Videos slide but don't tilt.
+- **Phone:** the tree's APK is `versionName 3.2.0` / `versionCode 5`. Which release build is on
+  Mike's phone is unknown; the debug app (`com.rankmaster2.phone.debug`) sits beside it.
+- **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 491 pass.
 - **Open phone bugs** (`android/BUGS.md`): 1 video wrong proportions, 2 cancel notch drawn wrong,
   3 Back leaves the app while browsing folders, 4 accidental votes near the screen edge. All four
   have a fix in the tree; none is confirmed on the phone.

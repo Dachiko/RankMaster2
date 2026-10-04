@@ -26,6 +26,13 @@ internal static class SessionResults
         return Results.Json(items, statusCode: status);
     }
 
+    /// <summary>SERVER_SPEC.md § 10.19: the body of <c>PUT /session/review-position</c>.</summary>
+    public static IResult ReviewPosition(HttpContext http, ReviewPositionBody body, int status = StatusCodes.Status200OK)
+    {
+        NoStore(http);
+        return Results.Json(body, statusCode: status);
+    }
+
     /// <summary>SERVER_SPEC.md § 10.16: the body of every 2xx from <c>/session/rename*</c>.</summary>
     public static IResult Operation(HttpContext http, RenameOperation operation, int status = StatusCodes.Status200OK)
     {

@@ -83,6 +83,7 @@ class FakeRm2Client : Rm2Client {
     override suspend fun cancel(clientRequestId: String): Rm2Result<Snapshot> = notUsed()
     override suspend fun items(): Rm2Result<Items> = notUsed()
     override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> = notUsed()
+    override suspend fun setReviewPosition(id: String?): Rm2Result<Unit> = notUsed()
 
     override fun url(link: String): String = baseUrl + link
 

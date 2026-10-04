@@ -167,6 +167,9 @@ class OkHttpRm2Client(
     override suspend fun discardItem(id: String, clientRequestId: String): Rm2Result<Snapshot> =
         call(post("/session/items/discard", DiscardItemRequest(id, clientRequestId))) { decode<Snapshot>(it) }
 
+    override suspend fun setReviewPosition(id: String?): Rm2Result<Unit> =
+        call(put("/session/review-position", ReviewPositionRequest(id))) { }
+
     // -- bytes ---------------------------------------------------------------------------------
 
     /**
@@ -187,6 +190,9 @@ class OkHttpRm2Client(
 
     private inline fun <reified T> post(path: String, body: T): Request =
         postJson(path, json.encodeToString(body))
+
+    private inline fun <reified T> put(path: String, body: T): Request =
+        Request.Builder().url(api + path).put(json.encodeToString(body).toRequestBody(JSON)).build()
 
     private fun postJson(path: String, body: String): Request =
         Request.Builder().url(api + path).post(body.toRequestBody(JSON)).build()

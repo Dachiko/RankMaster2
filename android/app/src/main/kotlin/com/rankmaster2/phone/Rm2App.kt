@@ -57,7 +57,6 @@ import com.rankmaster2.phone.ui.pairing.PairingRoute
 import com.rankmaster2.phone.ui.pairing.PairingViewModel
 import com.rankmaster2.phone.ui.rank.RankRoute
 import com.rankmaster2.phone.ui.rank.RankViewModel
-import com.rankmaster2.phone.ui.review.PrefsReviewPositionStore
 import com.rankmaster2.phone.ui.review.ReviewRoute
 import com.rankmaster2.phone.ui.review.ReviewViewModel
 
@@ -264,7 +263,7 @@ private fun ReviewGate(
 
     val viewModel: ReviewViewModel = viewModel(
         key = "review-" + opened.sessionId,
-        factory = ReviewViewModel.factory(client, opened, PrefsReviewPositionStore(context)),
+        factory = ReviewViewModel.factory(client, opened),
     )
     LaunchedEffect(opened) { viewModel.resume(opened) }
 

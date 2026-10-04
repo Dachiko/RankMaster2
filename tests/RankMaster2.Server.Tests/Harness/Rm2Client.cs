@@ -139,6 +139,9 @@ public sealed class Rm2Client(HttpClient http, string? token = null)
     public Task<Rm2Response> DiscardItemAsync(string id, string? clientRequestId = null) =>
         SendAsync(HttpMethod.Post, "/session/items/discard", new { id, clientRequestId });
 
+    public Task<Rm2Response> PutReviewPositionAsync(string? id) =>
+        SendAsync(HttpMethod.Put, "/session/review-position", new { id });
+
     // ---- rename (SERVER_SPEC.md § 10.16) -----------------------------------------------------
 
     public Task<Rm2Response> StartRenameAsync() =>

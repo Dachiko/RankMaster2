@@ -19,8 +19,8 @@ android {
         // (Directory.Build.props carries it for the .NET side). Rank Master 2 is the desktop app
         // being replaced and keeps its own. versionCode only ever climbs - Android refuses to
         // install an APK whose code goes backwards.
-        versionCode = 4
-        versionName = "3.1.0"
+        versionCode = 5
+        versionName = "3.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
