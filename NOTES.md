@@ -13,11 +13,15 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
   only touches starting inside ranking's live area (`ui/LiveArea.kt`) count. No button strip, no
   colours, no status text, **no progress line** (asked, he said no). Non-fatal failures silent.
   Position stored on the PC in `<folder>/.rankmaster_review.json`; resumes on the same item.
-- **Debug APK 3.2.0 sent to Mike on Telegram 2026-10-04** (arm64 only, see `AGENTS.md`); 3.1.0 went
-  before it. Waiting for his feedback. Untested on a phone: the hand-written gesture handler (tap /
-  swipe / long press), the two new menu glyphs (restart, back arrow), ⋮ near the right edge vs
-  the system back swipe, resume after leave/re-enter. Videos slide but don't tilt.
-- **Phone:** the tree's APK is `versionName 3.2.0` / `versionCode 5`. Which release build is on
+- **Mike's feedback on 3.2.0:** (1) videos were a black screen in Review; (2) the edge back swipe
+  did not work in Review. **Phone 3.2.1** (debug APK sent on Telegram 2026-10-04) hosts the video
+  like ranking does (no graphicsLayer/clip above the SurfaceView; the leading suspect, not proved)
+  and drops the full-screen `systemGestureExclusion`. Both unconfirmed. If videos are still black:
+  compare with ranking's video panes on the same file, then get logcat from his phone (wireless
+  debugging) or an emulator run (visual tier: ask first).
+- Still to hear about: tap / swipe / long press feel, the two new menu glyphs (restart, back
+  arrow), resume after leave/re-enter. Videos slide but don't tilt.
+- **Phone:** the tree's APK is `versionName 3.2.1` / `versionCode 6`. Which release build is on
   Mike's phone is unknown; the debug app (`com.rankmaster2.phone.debug`) sits beside it.
 - **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 491 pass.
 - **Open phone bugs** (`android/BUGS.md`): 1 video wrong proportions, 2 cancel notch drawn wrong,

@@ -11,10 +11,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -28,7 +28,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -39,6 +38,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.rankmaster2.phone.media.MediaPane
@@ -50,6 +50,7 @@ import com.rankmaster2.phone.ui.rank.ProblemPanelShell
 import com.rankmaster2.phone.ui.rank.QuietButton
 import com.rankmaster2.phone.ui.rank.QuietScreen
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -207,29 +208,33 @@ private fun Reviewer(
     val discard = rememberUpdatedState(onDiscard)
     val longPress = rememberUpdatedState(onLongPress)
 
-    Box(Modifier.fillMaxSize().clipToBounds()) {
-        val tilts = !ref.isVideo
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    translationX = swipe.dragX
-                    val width = swipe.widthPx
-                    rotationZ = if (tilts && width > 0f) swipe.dragX / width * MAX_TILT_DEGREES else 0f
-                },
-        ) {
-            MediaPane(ref, media, Modifier.fillMaxSize(), playing = state.playing)
+    Box(Modifier.fillMaxSize()) {
+        // A video is hosted exactly the way the ranking screen hosts one: a plain centred box, no
+        // graphics layer and no clip anywhere above it. Its picture is a SurfaceView, a separate
+        // layer the compositor places, and wrapping it in a Compose graphics layer (which is also
+        // what clipToBounds is) left the pane black on the phone (3.2.0). So a video only *slides*,
+        // through a layout offset; a still, which is ordinary drawing, may also tilt.
+        val mover = if (ref.isVideo) {
+            Modifier.offset { IntOffset(swipe.dragX.roundToInt(), 0) }
+        } else {
+            Modifier.graphicsLayer {
+                translationX = swipe.dragX
+                val width = swipe.widthPx
+                rotationZ = if (width > 0f) swipe.dragX / width * MAX_TILT_DEGREES else 0f
+            }
+        }
+        Box(Modifier.fillMaxSize().then(mover), contentAlignment = Alignment.Center) {
+            MediaPane(ref = ref, media = media, playing = state.playing)
         }
 
         // The gesture surface sits over the picture and does not move with it. One handler for the
         // whole screen: what a touch means depends on where it started, which only something that
-        // sees the whole glass can say.
+        // sees the whole glass can say. It claims no system-gesture exclusion: taps and swipes only
+        // count from the centred live area, so the edges stay Android's - the back swipe works here
+        // as it does everywhere else.
         Box(
             Modifier
                 .fillMaxSize()
-                // The edges are where the system's own back swipe starts. Android caps what an app
-                // may claim, so this protects the middle of each edge and no more.
-                .systemGestureExclusion()
                 .reviewGestures(swipe, flingPx, scope, actionable, keep, discard, longPress),
         )
     }

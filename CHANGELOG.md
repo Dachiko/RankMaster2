@@ -4,6 +4,12 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## Phone 3.2.1 — 2026-10-04 (phone only; server stays 3.2.0)
+- Review: videos were a black screen. The video is now hosted like ranking's (no graphics layer or
+  clip above its SurfaceView; it slides by layout offset). Unconfirmed until seen on the phone.
+- Review: the system back swipe from the screen edge works again (the screen no longer claims a
+  system-gesture exclusion; taps and swipes only count from the central live area anyway).
+
 ## 3.2.0 — 2026-10-04
 - Phone (3.2.0, versionCode 5): Review mode reworked after Mike's first look. Tap keeps, swipe left
   discards, swipe right does nothing; only touches that start inside ranking's centred live area
