@@ -4,18 +4,16 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
-- **Version 3.1.0** (2026-10-04, tag `v3.1.0`) is the head of local `master`: **Review mode** on the
-  phone (see `CHANGELOG.md`; server `GET /session/items` + `POST /session/items/discard`,
-  SERVER_SPEC.md § 10.17–10.18; phone `android/.../ui/review/`). **Not pushed** to `origin/master`
-  and **not deployed**: the installed server is still 3.0.6, which answers the new routes `404`
-  (the phone then says "Update the Rank Master server on the PC").
+- **Version 3.1.0** (2026-10-04, tag `v3.1.0`) is the head of `master` and `origin/master`:
+  **Review mode** on the phone (see `CHANGELOG.md`; server `GET /session/items` +
+  `POST /session/items/discard`, SERVER_SPEC.md § 10.17–10.18; phone `android/.../ui/review/`).
+  Pushed and deployed on this PC 2026-10-04 (`deploy.ps1 -SkipPull`; `/ping` answers 3.1.0).
 - **Review mode is untested on a phone.** Unit tests only (server 18 new, phone 51 new). A debug
   APK (`com.rankmaster2.phone.debug`, installs beside the release app, needs its own pairing) builds
   here; to check on the phone: swipe feel (30 % / fling threshold), the edge back-gesture conflict,
   video while swiping 4K files, landscape side-column layout. Videos slide but don't tilt
   (SurfaceView ignores the parent's rotation).
-- **Installed on this PC:** 3.0.6 in `C:\Utils\RankMaster v3` (`pc\VERSION.txt`: `3.0.6 b095827`).
-  The server was last used 2026-09-30 (tray log).
+- **Installed on this PC:** 3.1.0 in `C:\Utils\RankMaster v3` (`78f802a`), tray running.
 - **Phone:** the tree's APK is now `versionName 3.1.0` / `versionCode 4`. Which build is on Mike's
   phone is unknown — ask him.
 - **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 443 pass.
@@ -55,15 +53,12 @@ Baseline to compare against; none of these failures was investigated.
 ## Waiting for Mike (asked 2026-10-04, not answered)
 
 - Commit the `deploy.ps1` fix, or is it someone else's work in progress?
-- Push the docs commits and 3.1.0 (Review mode) to GitHub? Local only; the build box works from GitHub
-  and signs the release APK.
-- Deploy 3.1.0 on this PC (`deploy.ps1 -SkipPull`, restarts the tray)? Review mode needs it.
 - Which APK version is on his phone?
 
 ## Next step
 
-1. Review mode on the phone: Mike's answers on push/deploy, then deploy the server, get an APK on
-   his phone (release from the build box, or the local debug APK), and tune from his feedback.
+1. Review mode on the phone: get a 3.1.0 APK on his phone (release from the build box, which now has
+   it on GitHub, or the local debug APK), and tune from his feedback.
 2. Commit (or drop) the `deploy.ps1` fix.
 3. Confirm the four phone bugs on his phone and delete the ones that are fixed.
 4. Choose an option from `MEMORY_PROPOSALS.md` if the phone still crashes on 4K video.
