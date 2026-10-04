@@ -4,6 +4,11 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## 3.4.2 — 2026-10-04 (tray)
+- Tray icon was near-invisible on Mike's light taskbar (white panes on white). The panes now follow
+  the Windows theme (ink on light, paper on dark; re-read every second) and are drawn pixel by pixel
+  per size with hard edges instead of soft anti-aliased shapes.
+
 ## 3.4.1 — 2026-10-04 (tray)
 - Starting the tray a second time does nothing: no more "already running" message box.
 

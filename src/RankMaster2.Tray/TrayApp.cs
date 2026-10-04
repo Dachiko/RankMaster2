@@ -19,8 +19,9 @@ internal sealed class TrayApp : IDisposable
     private readonly ILogger _logger;
     private readonly NotifyIcon _icon;
     private readonly ContextMenuStrip _menu;
-    private readonly Icon _idleIcon;
-    private readonly Icon _openIcon;
+    private Icon _idleIcon;
+    private Icon _openIcon;
+    private bool _lightTaskbar;
     private readonly Font _defaultFont;
     private readonly Font _regularFont;
     private readonly System.Windows.Forms.Timer _poll;
@@ -34,9 +35,12 @@ internal sealed class TrayApp : IDisposable
         _dataDirectory = dataDirectory;
         _logger = app.Logger;
 
-        // Two icons, made once and swapped; a swap is then a handle change, not a redraw.
-        _idleIcon = TrayArt.CreateIcon(folderOpen: false);
-        _openIcon = TrayArt.CreateIcon(folderOpen: true);
+        // Two icons, made once per taskbar theme and swapped; a swap is then a handle change, not a
+        // redraw. The theme is read again on every poll, so switching Windows between light and dark
+        // repaints the icon within a second (3.4.2).
+        _lightTaskbar = TrayArt.TaskbarIsLight();
+        _idleIcon = TrayArt.CreateIcon(folderOpen: false, _lightTaskbar);
+        _openIcon = TrayArt.CreateIcon(folderOpen: true, _lightTaskbar);
 
         _defaultFont = House.CreateFont(House.Weight.SemiBold, 13);
         _regularFont = House.CreateFont(House.Weight.Regular, 13);
@@ -134,7 +138,23 @@ internal sealed class TrayApp : IDisposable
                 }
             });
 
-            if (_disposed || open is not { } value || value == _folderOpen)
+            if (_disposed)
+                return;
+
+            var light = TrayArt.TaskbarIsLight();
+            if (light != _lightTaskbar)
+            {
+                var oldIdle = _idleIcon;
+                var oldOpen = _openIcon;
+                _lightTaskbar = light;
+                _idleIcon = TrayArt.CreateIcon(folderOpen: false, light);
+                _openIcon = TrayArt.CreateIcon(folderOpen: true, light);
+                _icon.Icon = _folderOpen ? _openIcon : _idleIcon;
+                oldIdle.Dispose();
+                oldOpen.Dispose();
+            }
+
+            if (open is not { } value || value == _folderOpen)
                 return;
 
             _folderOpen = value;

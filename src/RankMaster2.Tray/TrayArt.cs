@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
 
 namespace RankMaster2.Tray;
@@ -7,9 +7,15 @@ namespace RankMaster2.Tray;
 /// The notification-area icon, drawn in code rather than shipped as a <c>.ico</c> (the exe's own
 /// icon, <c>App.ico</c>, is a separate file wired in the csproj).
 /// <para/>
-/// It is the house two-pane mark (plan H § 3.5): two upright rounded panes with a thin outline, drawn
-/// for the dark taskbar. The left pane is filled while nothing is open and turns red while a folder
-/// is being ranked — the one fact the icon has to give.
+/// It is the house two-pane mark (plan H § 3.5): two upright panes, the left one filled, the right
+/// one an outline. The left pane turns red while a folder is being ranked — the one fact the icon
+/// has to give.
+/// <para/>
+/// 3.4.2: two fixes after Mike saw a near-invisible icon in his tray. (1) The panes follow the
+/// taskbar's theme: ink on a light taskbar (his), paper on a dark one — 3.3.0 drew paper only, which
+/// is white on white in the light taskbar and its overflow flyout. (2) The mark is set pixel by pixel
+/// on a grid made for each size, every pixel fully opaque or fully clear: the smooth, anti-aliased
+/// drawing it replaced went soft at 16–20 px, and <c>GetHicon</c> mangles half-transparent pixels.
 /// </summary>
 internal static class TrayArt
 {
@@ -17,34 +23,51 @@ internal static class TrayArt
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyIcon(IntPtr handle);
 
-    /// <param name="folderOpen">True while a folder is open: the left pane is accent instead of on-ink.</param>
-    public static Icon CreateIcon(bool folderOpen)
+    /// <summary>True when Windows draws the taskbar light (Settings → Personalisation → Colours,
+    /// "Choose your default Windows mode"). Missing key or value = dark, Windows' default.</summary>
+    public static bool TaskbarIsLight()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("SystemUsesLightTheme") is int value && value != 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <param name="folderOpen">True while a folder is open: the left pane is accent.</param>
+    /// <param name="lightTaskbar">True on a light taskbar: the panes are ink, else paper.</param>
+    public static Icon CreateIcon(bool folderOpen, bool lightTaskbar)
     {
         // The size the notification area asks for at this DPI (16 at 100 %, 20 at 125 %, ...).
         var size = Math.Max(16, SystemInformation.SmallIconSize.Width);
+        var g = GridFor(size);
 
-        using var bitmap = new Bitmap(size, size);
-        using (var graphics = Graphics.FromImage(bitmap))
+        var outline = lightTaskbar ? House.Ink : House.OnInk;
+        var fill = folderOpen ? House.Accent : outline;
+
+        using var bitmap = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        for (var pane = 0; pane < 2; pane++)
         {
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            graphics.Clear(Color.Transparent);
+            var left = g.X0 + pane * (g.Width + g.Gap);
+            for (var y = 0; y < g.Height; y++)
+            {
+                for (var x = 0; x < g.Width; x++)
+                {
+                    // The four corner pixels stay clear: the pane reads as rounded, with no
+                    // half-transparent pixel anywhere.
+                    var cornerX = x == 0 || x == g.Width - 1;
+                    var cornerY = y == 0 || y == g.Height - 1;
+                    if (cornerX && cornerY) continue;
 
-            // Geometry is the mockup's, on a 20-unit square: panes 7 x 12 at x 2 and x 11, y 4,
-            // corner radius 1.2, outline 1.4. The outline never goes under 1.4 px, or it fades out
-            // at 16 px.
-            var k = size / 20f;
-            var stroke = Math.Max(1.4f, 1.4f * k);
-            var fill = folderOpen ? House.Accent : House.OnInk;
-
-            using var left = House.RoundedRect(new RectangleF(2 * k, 4 * k, 7 * k, 12 * k), 1.2f * k);
-            using var right = House.RoundedRect(new RectangleF(11 * k, 4 * k, 7 * k, 12 * k), 1.2f * k);
-            using var fillBrush = new SolidBrush(fill);
-            using var leftPen = new Pen(fill, stroke) { LineJoin = LineJoin.Round };
-            using var rightPen = new Pen(House.OnInk, stroke) { LineJoin = LineJoin.Round };
-
-            graphics.FillPath(fillBrush, left);
-            graphics.DrawPath(leftPen, left);
-            graphics.DrawPath(rightPen, right);
+                    var onBorder = x < g.Stroke || x >= g.Width - g.Stroke || y < g.Stroke || y >= g.Height - g.Stroke;
+                    if (pane == 0) bitmap.SetPixel(left + x, g.Y0 + y, fill);
+                    else if (onBorder) bitmap.SetPixel(left + x, g.Y0 + y, outline);
+                }
+            }
         }
 
         var handle = bitmap.GetHicon();
@@ -60,5 +83,26 @@ internal static class TrayArt
         {
             DestroyIcon(handle);
         }
+    }
+
+    /// <summary>Pane width and height, gap between the panes, outline width, and the top-left corner,
+    /// centred in a <paramref name="size"/> square. Hand-set for the sizes Windows uses at 100–200 %;
+    /// any other size gets the same proportions, rounded to whole pixels.</summary>
+    private static (int Width, int Height, int Gap, int Stroke, int X0, int Y0) GridFor(int size) => size switch
+    {
+        16 => (6, 12, 2, 1, 1, 2),
+        20 => (7, 14, 2, 1, 2, 3),
+        24 => (8, 18, 2, 2, 3, 3),
+        32 => (11, 22, 4, 2, 3, 5),
+        _ => Proportional(size),
+    };
+
+    private static (int, int, int, int, int, int) Proportional(int size)
+    {
+        var width = (int)Math.Round(size * 0.35);
+        var gap = Math.Max(2, (int)Math.Round(size * 0.1));
+        var height = (int)Math.Round(size * 0.7);
+        var stroke = size >= 24 ? Math.Max(2, size / 16) : 1;
+        return (width, height, gap, stroke, (size - (2 * width + gap)) / 2, (size - height) / 2);
     }
 }
