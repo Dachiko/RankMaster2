@@ -1,20 +1,12 @@
 package com.rankmaster2.phone.media
 
 import android.content.Context
-import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.TextureView
 import android.view.View
 import androidx.annotation.OptIn
-import androidx.media3.common.C
-import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
-import androidx.media3.common.Tracks
-import androidx.media3.exoplayer.DecoderCounters
-import androidx.media3.exoplayer.DecoderReuseEvaluation
-import androidx.media3.exoplayer.source.LoadEventInfo
-import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.compose.runtime.MutableState
@@ -164,7 +156,7 @@ class Rm2VideoPlayers internal constructor(
         // The listener belongs to the Rm2Video, which is what both of the things it reports -
         // the pane's state and the video's shape - are read off. Registering it here and handing
         // it over separately is how one of the two used to be forgotten on release.
-        val video = Rm2Video(player, onState, url)
+        val video = Rm2Video(player, onState)
 
         // § the owner's ask, 2026-09-15: instead of a probe screen, the video that cannot keep up
         // says so on itself. Media3 counts frames the renderer had to throw away because they were
@@ -181,7 +173,6 @@ class Rm2VideoPlayers internal constructor(
         })
 
         player.setMediaItem(MediaItem.fromUri(url))
-        video.diagnostics.onPrepare()
         player.prepare()
         return video
     }
@@ -352,14 +343,7 @@ class Rm2Video internal constructor(
     /** The player behind this video. Null only in a test of a rule that needs no player. */
     private val maybePlayer: ExoPlayer?,
     private val onState: (MediaPaneState) -> Unit = {},
-    url: String? = null,
 ) {
-
-    /**
-     * Everything this video's path has been seen to do, for the review screen's debug overlay.
-     * Observation only: nothing in it feeds back into the player or the pane.
-     */
-    val diagnostics: VideoDiagnostics = VideoDiagnostics(url)
 
     var isReleased: Boolean = false
         private set
@@ -380,14 +364,10 @@ class Rm2Video internal constructor(
     /** The surface this video is currently drawing on, if any. */
     private var surface: SurfaceView? = null
 
-    /** The texture this video is drawing on instead, when the pane asked for one (Review). */
+    /** The texture this video draws on instead, when the pane asked for one (Review). */
     private var texture: TextureView? = null
 
-    /**
-     * Draw on [view]. The pane calls this from `AndroidView.update`, for each surface it creates
-     * for this video - the provisional one, and the one made at the picture's own size.
-     */
-    /** Draw on whichever kind of view the pane made: a [SurfaceView], or a [TextureView]. */
+    /** Draw on whichever kind of view the pane made: a [SurfaceView] or a [TextureView]. */
     fun showOn(view: View) {
         when (view) {
             is SurfaceView -> showOn(view)
@@ -404,29 +384,23 @@ class Rm2Video internal constructor(
     }
 
     fun showOn(view: TextureView) {
-        if (isReleased) {
-            diagnostics.onShowOnIgnored()
-            return
-        }
+        if (isReleased) return
         texture = view
-        diagnostics.onShowOn("texture@${Integer.toHexString(System.identityHashCode(view))} ${view.width}x${view.height}")
         maybePlayer?.setVideoTextureView(view)
     }
 
     fun hideFrom(view: TextureView) {
-        diagnostics.onHideFrom("texture@${Integer.toHexString(System.identityHashCode(view))} ${view.width}x${view.height}")
         if (texture === view) texture = null
         if (!isReleased) maybePlayer?.clearVideoTextureView(view)
     }
 
+    /**
+     * Draw on [view]. The pane calls this from `AndroidView.update`, for each surface it creates
+     * for this video - the provisional one, and the one made at the picture's own size.
+     */
     fun showOn(view: SurfaceView) {
-        if (isReleased) {
-            diagnostics.onShowOnIgnored()
-            return
-        }
+        if (isReleased) return
         surface = view
-        view.holder.addCallback(holderCallback)   // a no-op if it is already there
-        diagnostics.onShowOn(describe(view))
         maybePlayer?.setVideoSurfaceView(view)
     }
 
@@ -435,91 +409,8 @@ class Rm2Video internal constructor(
      * leave the window is never left attached to a live decoder.
      */
     fun hideFrom(view: SurfaceView) {
-        diagnostics.onHideFrom(describe(view))
         if (surface === view) surface = null
         if (!isReleased) maybePlayer?.clearVideoSurfaceView(view)
-        view.holder.removeCallback(holderCallback)
-    }
-
-    /** What the debug overlay reads off the surface: only observed, never changed. */
-    private val holderCallback = object : SurfaceHolder.Callback {
-        override fun surfaceCreated(holder: SurfaceHolder) = diagnostics.onSurfaceCreated()
-
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) =
-            diagnostics.onSurfaceChanged(format, width, height)
-
-        override fun surfaceDestroyed(holder: SurfaceHolder) = diagnostics.onSurfaceDestroyed()
-    }
-
-    private fun describe(view: SurfaceView): String =
-        "view@${Integer.toHexString(System.identityHashCode(view))} ${view.width}x${view.height}"
-
-    /** Everything the player says about itself, recorded as it says it. */
-    private val diagnosticsListener = object : AnalyticsListener {
-        override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) =
-            diagnostics.onPlaybackState(state)
-
-        override fun onPlayWhenReadyChanged(eventTime: AnalyticsListener.EventTime, playWhenReady: Boolean, reason: Int) =
-            diagnostics.onPlayWhenReady(playWhenReady)
-
-        override fun onIsPlayingChanged(eventTime: AnalyticsListener.EventTime, isPlaying: Boolean) =
-            diagnostics.onIsPlaying(isPlaying)
-
-        override fun onPlayerError(eventTime: AnalyticsListener.EventTime, error: PlaybackException) =
-            diagnostics.onPlayerError(error)
-
-        override fun onTracksChanged(eventTime: AnalyticsListener.EventTime, tracks: Tracks) =
-            diagnostics.onTracks(tracks)
-
-        override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: VideoSize) =
-            diagnostics.onVideoSize(
-                videoSize.width,
-                videoSize.height,
-                videoSize.pixelWidthHeightRatio,
-                Rm2VideoPlayers.aspectRatioOf(videoSize.width, videoSize.height, videoSize.pixelWidthHeightRatio),
-            )
-
-        override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) =
-            diagnostics.onFirstFrame()
-
-        override fun onVideoInputFormatChanged(
-            eventTime: AnalyticsListener.EventTime,
-            format: Format,
-            decoderReuseEvaluation: DecoderReuseEvaluation?,
-        ) = diagnostics.onVideoFormat(format)
-
-        override fun onVideoDecoderInitialized(
-            eventTime: AnalyticsListener.EventTime,
-            decoderName: String,
-            initializedTimestampMs: Long,
-            initializationDurationMs: Long,
-        ) = diagnostics.onDecoderInitialized(decoderName, initializationDurationMs)
-
-        override fun onVideoDecoderReleased(eventTime: AnalyticsListener.EventTime, decoderName: String) =
-            diagnostics.onDecoderReleased(decoderName)
-
-        override fun onVideoCodecError(eventTime: AnalyticsListener.EventTime, videoCodecError: Exception) =
-            diagnostics.onCodecError(videoCodecError)
-
-        override fun onVideoEnabled(eventTime: AnalyticsListener.EventTime, decoderCounters: DecoderCounters) =
-            diagnostics.onVideoEnabled()
-
-        override fun onVideoDisabled(eventTime: AnalyticsListener.EventTime, decoderCounters: DecoderCounters) =
-            diagnostics.onVideoDisabled()
-
-        override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) =
-            diagnostics.onDropped(droppedFrames, elapsedMs)
-
-        override fun onSurfaceSizeChanged(eventTime: AnalyticsListener.EventTime, width: Int, height: Int) =
-            diagnostics.onSurfaceSizeSeenByPlayer(width, height)
-
-        override fun onLoadError(
-            eventTime: AnalyticsListener.EventTime,
-            loadEventInfo: LoadEventInfo,
-            mediaLoadData: MediaLoadData,
-            error: java.io.IOException,
-            wasCanceled: Boolean,
-        ) = diagnostics.onLoadError(error, wasCanceled)
     }
 
     private val listener = object : Player.Listener {
@@ -544,44 +435,6 @@ class Rm2Video internal constructor(
 
     init {
         maybePlayer?.addListener(listener)
-        maybePlayer?.addAnalyticsListener(diagnosticsListener)
-        diagnostics.sampler = ::samplePlayer
-        diagnostics.surfaceSampler = ::sampleSurface
-    }
-
-    private fun samplePlayer(): PlayerSample {
-        val player = maybePlayer?.takeIf { !isReleased }
-        return PlayerSample(
-            playbackState = player?.playbackState,
-            playWhenReady = player?.playWhenReady ?: false,
-            isPlaying = player?.isPlaying ?: false,
-            positionMs = player?.currentPosition ?: 0L,
-            durationMs = player?.duration ?: C.TIME_UNSET,
-            bufferedMs = player?.bufferedPosition ?: 0L,
-            aspectRatio = aspectRatio.value,
-            currentFormat = player?.videoFormat?.let { VideoDiagnostics.describeFormat(it) },
-            tracks = player?.currentTracks?.let { VideoDiagnostics.describeVideoTracks(it) } ?: emptyList(),
-        )
-    }
-
-    private fun sampleSurface(): SurfaceSample? {
-        val view = surface ?: return null
-        val at = IntArray(2)
-        view.getLocationOnScreen(at)
-        return SurfaceSample(
-            width = view.width,
-            height = view.height,
-            attached = view.isAttachedToWindow,
-            visibility = when (view.visibility) {
-                View.VISIBLE -> "VISIBLE"
-                View.INVISIBLE -> "INVISIBLE"
-                View.GONE -> "GONE"
-                else -> view.visibility.toString()
-            },
-            surfaceValid = view.holder.surface.isValid,
-            screenX = at[0],
-            screenY = at[1],
-        )
     }
 
     /**
@@ -633,17 +486,12 @@ class Rm2Video internal constructor(
      */
     fun release() {
         if (isReleased) return
-        diagnostics.onReleased()
-        surface?.let {
-            maybePlayer?.clearVideoSurfaceView(it)
-            it.holder.removeCallback(holderCallback)
-        }
+        surface?.let { maybePlayer?.clearVideoSurfaceView(it) }
         surface = null
         texture?.let { maybePlayer?.clearVideoTextureView(it) }
         texture = null
         isReleased = true
         maybePlayer?.removeListener(listener)
-        maybePlayer?.removeAnalyticsListener(diagnosticsListener)
         maybePlayer?.release()
     }
 }

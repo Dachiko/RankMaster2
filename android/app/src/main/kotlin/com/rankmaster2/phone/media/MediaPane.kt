@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.RememberObserver
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -27,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
@@ -58,8 +54,6 @@ fun MediaPane(
      * in the background, or both panes playing when only one is in front.
      */
     playing: Boolean = true,
-    /** Only a screen with a debug overlay passes one; the pane writes into it and never reads it. */
-    probe: MediaDebugProbe? = null,
     /**
      * Draw a video on a `TextureView` instead of a `SurfaceView`. Review does: its one full-screen
      * video stayed black on the owner's phone until something was drawn over it (2026-10-04), the
@@ -69,26 +63,16 @@ fun MediaPane(
      */
     textureVideo: Boolean = false,
 ) {
-    DisposableEffect(probe) { onDispose { probe?.showingNothing() } }
     BoxWithConstraints(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         val panePx = paneLongEdgePx(constraints)
         when {
             // § 11.3: the snapshot already told us the file has left the folder. No request to
             // make, and nothing to wait for.
-            ref.isMissing -> {
-                SideEffect { probe?.showingNothing() }
-                StatusPane(MediaPaneState.Gone)
-            }
-            ref.isVideo -> VideoPane(ref, media, playing, constraints, probe, textureVideo)
-            else -> StillPane(ref, media, panePx, probe)
+            ref.isMissing -> StatusPane(MediaPaneState.Gone)
+            ref.isVideo -> VideoPane(ref, media, playing, textureVideo)
+            else -> StillPane(ref, media, panePx)
         }
     }
-}
-
-/** A constraint as text, "inf" for the unbounded side. */
-internal fun describeConstraints(constraints: Constraints): String {
-    fun edge(value: Int) = if (value == Constraints.Infinity) "inf" else value.toString()
-    return "${constraints.minWidth}x${constraints.minHeight}..${edge(constraints.maxWidth)}x${edge(constraints.maxHeight)}"
 }
 
 /**
@@ -109,12 +93,10 @@ private fun StillPane(
     ref: MediaRef,
     media: Rm2Media,
     panePx: Int,
-    probe: MediaDebugProbe?,
 ) {
     val context = LocalContext.current
     val url = media.stillUrl(ref, panePx)
     var state by remember(ref.id, url) { mutableStateOf<MediaPaneState>(MediaPaneState.Loading) }
-    SideEffect { probe?.showingStill(url, state.toString().take(160)) }
 
     if (url == null) {
         StatusPane(MediaPaneState.Gone)
@@ -143,8 +125,6 @@ private fun VideoPane(
     ref: MediaRef,
     media: Rm2Media,
     playing: Boolean,
-    constraints: Constraints,
-    probe: MediaDebugProbe?,
     textureVideo: Boolean,
 ) {
     val url = media.videoUrl(ref)
@@ -175,7 +155,6 @@ private fun VideoPane(
     }
 
     LaunchedEffect(video, playing) { video?.setPlaying(playing) }
-    SideEffect { probe?.showingVideo(video?.diagnostics) }
 
     if (!playing) {
         // Not in front means black - and, since § 2.5, the player is actually gone too: `sync`
@@ -201,20 +180,6 @@ private fun VideoPane(
     // disagree.
     val ratio = video.aspectRatio.value
 
-    // What the pane itself sees, for the debug overlay: logged only when it changes.
-    val coverShowing = ratio == null || state !is MediaPaneState.Loaded
-    SideEffect {
-        video.diagnostics.onPane(
-            PaneInfo(
-                constraints = describeConstraints(constraints),
-                state = state.toString().take(120),
-                coverShowing = coverShowing,
-                ratio = ratio,
-                playing = playing,
-            ),
-        )
-    }
-
     // One surface per shape, created at its final size and never resized in place.
     //
     // Before the shape is known there has to be a surface - the decoder cannot produce the first
@@ -232,12 +197,7 @@ private fun VideoPane(
     key(ratio) {
         AndroidView(
             modifier = (if (ratio != null) Modifier.aspectRatio(ratio) else Modifier.fillMaxSize())
-                .testTag(MediaPaneTags.VIDEO)
-                .onGloballyPositioned {
-                    val b = it.boundsInWindow()
-                    video.diagnostics.box =
-                        "${it.size.width}x${it.size.height} at (${b.left.toInt()},${b.top.toInt()})"
-                },
+                .testTag(MediaPaneTags.VIDEO),
             factory = { context ->
                 val view = if (textureVideo) TextureView(context) else SurfaceView(context)
                 view.apply {
@@ -265,7 +225,7 @@ private fun VideoPane(
     // shown until its shape is known *and* the player has reached ready (which, for a player with
     // a real surface, it only does once it has rendered a frame). What shows instead is the same
     // spinner or message the pane would show anyway.
-    if (coverShowing) {
+    if (ratio == null || state !is MediaPaneState.Loaded) {
         Box(Modifier.fillMaxSize().background(Color.Black).testTag(MediaPaneTags.COVER)) {
             StatusPane(if (state is MediaPaneState.Loaded) MediaPaneState.Loading else state)
         }

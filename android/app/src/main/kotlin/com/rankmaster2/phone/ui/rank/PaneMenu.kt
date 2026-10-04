@@ -764,9 +764,8 @@ internal fun menuTransformOrigin(
  * - [SPECIAL] a star, which is what `special 1/` means.
  * - [RESTART] an open circle ending in an arrow: "from the beginning" (review mode's menu).
  * - [BACK] an arrow pointing left: "back to the folders" (review mode's menu).
- * - [DEBUG] a prompt chevron and a cursor bar: "the debug overlay" (review mode's menu).
  */
-internal enum class MenuGlyph { VIEW, DISCARD, SPECIAL, RESTART, BACK, DEBUG }
+internal enum class MenuGlyph { VIEW, DISCARD, SPECIAL, RESTART, BACK }
 
 /** One stroke of a glyph: a polyline in unit space, optionally closed. */
 internal data class GlyphStroke(val points: List<Offset>, val closed: Boolean = false)
@@ -828,11 +827,6 @@ internal fun glyphStrokes(glyph: MenuGlyph): List<GlyphStroke> = when (glyph) {
         // A shaft and a head pointing left, out of a folder's worth of space: "back".
         GlyphStroke(listOf(Offset(0.90f, 0.5f), Offset(0.10f, 0.5f))),
         GlyphStroke(listOf(Offset(0.38f, 0.22f), Offset(0.10f, 0.5f), Offset(0.38f, 0.78f))),
-    )
-    MenuGlyph.DEBUG -> listOf(
-        // A prompt chevron and the cursor bar after it.
-        GlyphStroke(listOf(Offset(0.10f, 0.22f), Offset(0.42f, 0.50f), Offset(0.10f, 0.78f))),
-        GlyphStroke(listOf(Offset(0.54f, 0.80f), Offset(0.90f, 0.80f))),
     )
 }
 

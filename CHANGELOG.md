@@ -4,6 +4,11 @@ One entry per version of the server, tray and PC client (`Directory.Build.props`
 versions separately (`android/app/build.gradle.kts`). The frozen Rank Master 2 (1.1.x) history is
 in `README.md`.
 
+## Phone 3.2.4 — 2026-10-04 (phone only) — the release
+- Mike confirmed Review on his phone with 3.2.3 (videos show). The debug panel and the video
+  diagnostics from 3.2.2–3.2.3 are removed; the TextureView fix stays. Release build (R8) checked
+  locally; the signed release APK comes from the build box.
+
 ## Phone 3.2.3 — 2026-10-04 (phone only)
 - Review: videos draw on a TextureView instead of a SurfaceView. Mike saw a black video turn into a
   picture the moment the menu opened over it, the signature of a SurfaceView hole never shown.

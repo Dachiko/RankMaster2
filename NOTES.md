@@ -4,37 +4,25 @@ Updated 2026-10-04. How to work on it is in `AGENTS.md`; this file is only the c
 
 ## State
 
-- **Version 3.2.0** (2026-10-04, tag `v3.2.0`) is the head of `master` and `origin/master`, and is
-  deployed on this PC. **Review mode** on the phone (see `CHANGELOG.md`): server
-  `GET /session/items`, `POST /session/items/discard`, `PUT /session/review-position`
-  (SERVER_SPEC.md § 10.17–10.19); phone `android/.../ui/review/`.
-- **Review mode, Mike's design (2026-10-04, after seeing 3.1.0):** only the item, ranking's cancel
-  notch and a ⋮ menu (ranking's menu look). Tap = keep, swipe left = discard, swipe right = nothing;
-  only touches starting inside ranking's live area (`ui/LiveArea.kt`) count. No button strip, no
-  colours, no status text, **no progress line** (asked, he said no). Non-fatal failures silent.
-  Position stored on the PC in `<folder>/.rankmaster_review.json`; resumes on the same item.
-- **Mike's feedback on 3.2.0:** (1) videos were a black screen in Review; (2) the edge back swipe
-  did not work in Review. **Phone 3.2.1** (debug APK sent on Telegram 2026-10-04) hosts the video
-  like ranking does (no graphicsLayer/clip above the SurfaceView; the leading suspect, not proved)
-  and drops the full-screen `systemGestureExclusion`. Both unconfirmed. If videos are still black:
-  compare with ranking's video panes on the same file, then get logcat from his phone (wireless
-  debugging) or an emulator run (visual tier: ask first).
-- **3.2.1 did not fix the black videos** (edge back swipe: no report yet). The server log shows the
-  phone downloads every video completely, so it is decode/render on the phone; Review shows the
-  spinner (MediaPane's cover is up: no aspect ratio or never `Loaded`). **Phone 3.2.2** adds a
-  "Debug info" menu row in Review (`ui/review/ReviewDebug.kt`, `media/VideoDiagnostics.kt`) that
-  shows and copies player/decoder/surface diagnostics. Also asked him whether videos show in Rank
-  mode in the same test app (no answer yet).
-- **Key clue (Mike, 3.2.2):** the video appears the moment the menu opens over it. So the player
-  decodes and the cover lifts; the SurfaceView's picture is just not shown until something is drawn
-  over it (ranking always has its strip/notch/progress line over the panes; Review has nothing).
-  **Phone 3.2.3**: Review draws video on a `TextureView` (`MediaPane(textureVideo = true)`,
-  `Rm2Video.showOn(TextureView)`); ranking unchanged. Debug text now hides file names and URLs
-  (Mike does not want them sent). Unconfirmed until he tries it.
-- Still to hear about: tap / swipe / long press feel, the two new menu glyphs (restart, back
-  arrow), resume after leave/re-enter. Videos slide but don't tilt.
-- **Phone:** the tree's APK is `versionName 3.2.3` / `versionCode 8`. Which release build is on
-  Mike's phone is unknown; the debug app (`com.rankmaster2.phone.debug`) sits beside it.
+- **Server/tray/PC 3.2.0** (tag `v3.2.0`) is deployed on this PC. **Phone 3.2.4** (tag
+  `phone-v3.2.4`, versionCode 9) is the head of `master` and `origin/master`: **Review mode**, done
+  and confirmed on Mike's phone 2026-10-04 (see `CHANGELOG.md`). Server `GET /session/items`,
+  `POST /session/items/discard`, `PUT /session/review-position` (SERVER_SPEC.md § 10.17–10.19);
+  phone `android/.../ui/review/`.
+- **Review mode, Mike's design:** only the item, ranking's cancel notch and a ⋮ menu (ranking's
+  menu look; long press opens it too). Tap = keep, swipe left = discard, swipe right = nothing; only
+  touches starting inside ranking's live area (`ui/LiveArea.kt`) count, and the screen claims no
+  system-gesture exclusion, so the edge back swipe works. No button strip, colours, status text or
+  progress line (he said no). Non-fatal failures silent. Position stored on the PC in
+  `<folder>/.rankmaster_review.json`; resumes on the same item.
+- **Review videos use a TextureView** (`MediaPane(textureVideo = true)`). With a SurfaceView the
+  picture stayed black until something was drawn over it (it appeared when the menu opened);
+  ranking always has chrome over its panes and keeps its SurfaceView. The 3.2.2 debug panel that
+  found this is removed in 3.2.4 (in git history at `770b7d9` if ever needed again).
+- **Release APK:** signed only on the build box (keystore not here). Waiting for the build box to
+  build `phone-v3.2.4` as a release and send it to Mike. The local debug app
+  (`com.rankmaster2.phone.debug`, 3.2.3) is still on his phone beside the release app; he can
+  uninstall it once the release has Review.
 - **Local Android toolchain** since 2026-10-04 (see `AGENTS.md` § Build): phone tests 491 pass.
 - **Open phone bugs** (`android/BUGS.md`): 1 video wrong proportions, 2 cancel notch drawn wrong,
   3 Back leaves the app while browsing folders, 4 accidental votes near the screen edge. All four
@@ -76,8 +64,8 @@ Baseline to compare against; none of these failures was investigated.
 
 ## Next step
 
-1. Review mode on the phone: get a 3.1.0 APK on his phone (release from the build box, which now has
-   it on GitHub, or the local debug APK), and tune from his feedback.
+1. Review mode: get the build box's signed release of `phone-v3.2.4` onto his phone; then tune
+   from his use (swipe threshold, menu glyphs, resume).
 2. Commit (or drop) the `deploy.ps1` fix.
 3. Confirm the four phone bugs on his phone and delete the ones that are fixed.
 4. Choose an option from `MEMORY_PROPOSALS.md` if the phone still crashes on 4K video.
