@@ -24,6 +24,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Inter, for the house look. Embedded rather than copied beside the exe: the tray is published
+         as a single file, and House.CreateFont loads these into a private font collection. -->
+    <EmbeddedResource Include="Fonts\*.ttf" LogicalName="Fonts.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The same encoder rm2ctl renders its QR with, at the same version. PngByteQRCode is
          managed and draws no platform surface of its own. -->
     <PackageReference Include="QRCoder" Version="1.8.0" />
