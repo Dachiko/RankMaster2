@@ -2,61 +2,61 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:views="clr-namespace:RankMaster2.Pc.Ui.Views"
              x:Class="RankMaster2.Pc.Ui.Views.StartView">
-  <Grid>
-    <Grid.Background>
-      <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
-        <GradientStop Color="#18181B" Offset="0" />
-        <GradientStop Color="#000000" Offset="1" />
-      </LinearGradientBrush>
-    </Grid.Background>
+  <!-- Plan H § 3.1 (mockup C, frames 01-04): no card, no gradient. The last folder is the screen. -->
+  <Grid Background="{DynamicResource House.Bg}">
 
-    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,80,0,0" Spacing="4">
-      <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-        <TextBlock Text="Rank Master 3" FontSize="48" FontWeight="Black">
-          <TextBlock.Foreground>
-            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
-              <GradientStop Color="#60A5FA" Offset="0" />
-              <GradientStop Color="#34D399" Offset="1" />
-            </LinearGradientBrush>
-          </TextBlock.Foreground>
-        </TextBlock>
-        <TextBlock Name="VersionText" FontSize="12" Foreground="{DynamicResource VersionText}" VerticalAlignment="Top" />
+    <!-- Corner captions, 26 px from the top and 34 px from the sides. -->
+    <Grid Margin="34,26,34,0" VerticalAlignment="Top">
+      <TextBlock Classes="caps" Text="RANK MASTER 3" HorizontalAlignment="Left" />
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Ellipse Name="ServerDot" Classes="sd" Margin="0,0,7,0" />
+        <TextBlock Name="ServerText" Classes="caps faint" Text="SERVER" />
+        <TextBlock Name="KeysCaption" Classes="caps faint" Text="  ·  F1 KEYS" />
+      </StackPanel>
+    </Grid>
+
+    <!-- The centre column. -->
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,40">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,14" MinHeight="14" Spacing="7">
+        <Ellipse Name="LabelDot" Classes="sd live" IsVisible="False" />
+        <TextBlock Name="LabelText" Classes="caps" VerticalAlignment="Center" />
+      </StackPanel>
+
+      <!-- The hero shrinks to fit rather than overflow when a folder's name is very long. -->
+      <Viewbox Name="HeroBox" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center">
+        <TextBlock Name="HeroText" Classes="dot" FontSize="64" />
+      </Viewbox>
+
+      <!-- Under the hero: the folder's path, or (while a folder opens) the busy line instead of it. -->
+      <Grid Name="UnderRow" HorizontalAlignment="Center" Margin="0,10,0,0" MinHeight="16">
+        <TextBlock Name="PathText" FontSize="12.5" Foreground="{DynamicResource House.Faint}"
+                   TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" />
+        <views:BusyLine Name="Busy" IsVisible="False" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,2,0,0"
+                        TrackBrush="{DynamicResource House.Line}" DashBrush="{DynamicResource House.Accent}" />
+      </Grid>
+
+      <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,34,0,0">
+        <Button Name="ResumeButton" Classes="pill" IsVisible="False"
+                ToolTip.Tip="Continue ranking the folder you had open last time">
+          <TextBlock Name="ResumeText" FontSize="10.5" FontWeight="Medium" LetterSpacing="1.68" />
+        </Button>
+        <Button Name="OpenButton" Classes="pill"
+                ToolTip.Tip="Pick a folder of photos or videos and start ranking them by pairwise comparison">
+          <TextBlock Text="O OPEN" FontSize="10.5" FontWeight="Medium" LetterSpacing="1.68" />
+        </Button>
+        <Button Name="RenameButton" Classes="pill"
+                ToolTip.Tip="Rename every file in a folder to match its current rank, without opening it to rank">
+          <TextBlock Text="R RENAME" FontSize="10.5" FontWeight="Medium" LetterSpacing="1.68" />
+        </Button>
       </StackPanel>
     </StackPanel>
 
-    <StackPanel Width="512" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-      <Button Name="OpenButton" Content="Select Folder  [O]" HorizontalContentAlignment="Center" Height="52" FontSize="18" FontWeight="SemiBold"
-              Background="{DynamicResource StartButtonFill}" BorderBrush="{DynamicResource StartButtonBorder}" BorderThickness="1"
-              CornerRadius="12" ToolTip.Tip="Pick a folder of photos or videos and start ranking them by pairwise comparison" />
-
-      <Button Name="ResumeButton" HorizontalContentAlignment="Center" Height="52" FontSize="18" FontWeight="SemiBold"
-              Background="{DynamicResource ResumeButtonFill}" BorderBrush="{DynamicResource ResumeButtonBorder}" BorderThickness="1"
-              CornerRadius="12" IsVisible="False" ToolTip.Tip="Continue ranking the folder you had open last time" />
-
-      <Button Name="RenameButton" Content="Rename Files by Rank" HorizontalContentAlignment="Center" Height="52" FontSize="18" FontWeight="SemiBold"
-              Background="{DynamicResource RenameButtonFill}" BorderBrush="{DynamicResource RenameButtonBorder}" BorderThickness="1"
-              Foreground="{DynamicResource RenameButtonText}" CornerRadius="12"
-              ToolTip.Tip="Rename every file in a folder to match its current rank, without opening it to rank" />
-
-      <TextBlock Name="OpeningLine" Foreground="{DynamicResource VersionText}" HorizontalAlignment="Center" IsVisible="False" FontSize="13" />
-
-      <Border Name="ErrorBox" Background="{DynamicResource ErrorBoxFill}" BorderBrush="{DynamicResource ErrorBoxBorder}" BorderThickness="1"
-              CornerRadius="8" Padding="16" IsVisible="False">
-        <TextBlock Name="ErrorText" Foreground="{DynamicResource ErrorBoxText}" FontSize="13" TextWrapping="Wrap" />
-      </Border>
-
-      <Border Name="SuccessBox" Background="{DynamicResource SuccessBoxFill}" BorderBrush="{DynamicResource SuccessBoxBorder}" BorderThickness="1"
-              CornerRadius="8" Padding="16" IsVisible="False">
-        <TextBlock Name="SuccessText" Foreground="{DynamicResource SuccessBoxText}" FontSize="13" TextWrapping="Wrap" />
-      </Border>
-
-      <TextBlock Name="StatusLine" Foreground="{DynamicResource VersionText}" HorizontalAlignment="Center" FontSize="12" IsVisible="False" />
+    <!-- Bottom centre, 34 px up: the status line. -->
+    <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,34">
+      <Ellipse Name="StatusDot" Classes="sd" IsVisible="False" />
+      <TextBlock Name="StatusLine" Classes="mid" FontSize="12" MinHeight="18" />
     </StackPanel>
 
-    <Border Name="HelpButton" Width="36" Height="36" CornerRadius="18" HorizontalAlignment="Right" VerticalAlignment="Top"
-            Margin="0,16,16,0" Background="{DynamicResource CardFill}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1">
-      <Path Data="{DynamicResource Icon.Help}" Stretch="Uniform" Width="18" Height="18" Stroke="White" StrokeThickness="1.5" />
-    </Border>
-    <views:HelpSheet Name="Help" />
+    <views:KeysPage Name="Keys" />
   </Grid>
 </UserControl>

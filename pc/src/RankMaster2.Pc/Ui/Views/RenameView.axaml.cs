@@ -6,55 +6,89 @@ using RankMaster2.Pc.Ui.Surface;
 namespace RankMaster2.Pc.Ui.Views;
 
 /// <summary>
-/// § 3.13, plan E's reserved slot (§ E6). Two stages of <see cref="RenameModel"/> in one control,
-/// swapped by <see cref="Refresh"/> rather than two views, since neither is heavy and the owner
-/// never sees both at once: <c>Confirming</c> (the owner's own words, then Yes/No) and
-/// <c>Running</c> (<c>done / total</c>, the phase, a real bar — never an indeterminate spinner —
-/// and Cancel). <c>Esc</c> for both is wired at <c>UiRoot</c>'s tunnel handler, not here, the same
-/// split every other screen already uses; the buttons exist so the mouse works too.
+/// § 3.13, plan E's reserved slot (§ E6), in plan H § 3.2's form: the <b>ink card</b>. <see cref="UiRoot"/>
+/// draws this view over the start screen (the veil is this view's own background), for both stages of
+/// <see cref="RenameModel"/>, swapped by <see cref="Refresh"/>: <c>Confirming</c> (<c>RENAME BY RANK</c>,
+/// the folder in Doto, one line, <c>ENTER RENAME · ESC KEEP</c>) and <c>Running</c> (a pulsing dot and
+/// <c>RENAMING · folder</c>, the percent in Doto, 60 dots filling red, <c>ESC CANCEL</c> and the three
+/// phase words). Percent only -- never <c>done / total</c>. <c>Esc</c> and <c>Enter</c> are wired at
+/// <see cref="UiRoot"/>'s tunnel handler, not here, the same split every other screen uses; the two or three
+/// caption words are clickable so the mouse works too (there are no buttons on the card any more).
 /// </summary>
 public partial class RenameView : UserControl, IRefreshable
 {
-    private const double TrackWidth = 480;
-
     private readonly RankCoordinator _coordinator;
+    private readonly HouseMotion _motion;
+    private readonly FadeHost _fade;
+    private readonly Border _card;
     private readonly StackPanel _confirmPanel;
-    private readonly TextBlock _confirmText;
-    private readonly Button _yesButton;
-    private readonly Button _noButton;
+    private readonly TextBlock _confirmFolder;
+    private readonly TextBlock _confirmLine;
+    private readonly TextBlock _yesCaption;
+    private readonly TextBlock _noCaption;
     private readonly StackPanel _runningPanel;
-    private readonly TextBlock _folderText;
-    private readonly Border _progressFill;
-    private readonly TextBlock _progressText;
-    private readonly TextBlock _phaseText;
-    private readonly Button _cancelButton;
+    private readonly TextBlock _runningFolder;
+    private readonly TextBlock _percentText;
+    private readonly DotRow _dots;
+    private readonly BusyLine _cancellingLine;
+    private readonly TextBlock _cancelCaption;
+    private readonly TextBlock[] _phaseWords;
 
-    public RenameView(RankCoordinator coordinator)
+    public RenameView(RankCoordinator coordinator, HouseMotion motion)
     {
         AvaloniaXamlLoader.Load(this);
         _coordinator = coordinator;
+        _motion = motion;
+        _fade = new FadeHost(this);
 
+        _card = this.FindControl<Border>("Card")!;
         _confirmPanel = this.FindControl<StackPanel>("ConfirmPanel")!;
-        _confirmText = this.FindControl<TextBlock>("ConfirmText")!;
-        _yesButton = this.FindControl<Button>("YesButton")!;
-        _noButton = this.FindControl<Button>("NoButton")!;
+        _confirmFolder = this.FindControl<TextBlock>("ConfirmFolder")!;
+        _confirmLine = this.FindControl<TextBlock>("ConfirmLine")!;
+        _yesCaption = this.FindControl<TextBlock>("YesCaption")!;
+        _noCaption = this.FindControl<TextBlock>("NoCaption")!;
         _runningPanel = this.FindControl<StackPanel>("RunningPanel")!;
-        _folderText = this.FindControl<TextBlock>("FolderText")!;
-        _progressFill = this.FindControl<Border>("ProgressFill")!;
-        _progressText = this.FindControl<TextBlock>("ProgressText")!;
-        _phaseText = this.FindControl<TextBlock>("PhaseText")!;
-        _cancelButton = this.FindControl<Button>("CancelButton")!;
-
-        _yesButton.Click += (_, _) => _ = _coordinator.ConfirmRenameAsync();
-        _noButton.Click += (_, _) => _coordinator.CancelRenameConfirm();
-        _cancelButton.Click += (_, _) => _coordinator.RequestCancelRename();
-
-        // Timings.ProgressBarAnimMs (plan E's reserved constant, § E's palette table): a real bar,
-        // not a jump cut, as done/total moves on each 250 ms poll.
-        _progressFill.Transitions =
+        _runningFolder = this.FindControl<TextBlock>("RunningFolder")!;
+        _percentText = this.FindControl<TextBlock>("PercentText")!;
+        _dots = this.FindControl<DotRow>("Dots")!;
+        _cancellingLine = this.FindControl<BusyLine>("CancellingLine")!;
+        _cancelCaption = this.FindControl<TextBlock>("CancelCaption")!;
+        _phaseWords =
         [
-            new DoubleTransition { Property = Border.WidthProperty, Duration = Timings.ProgressBarAnimMs },
+            this.FindControl<TextBlock>("PhasePrepare")!,
+            this.FindControl<TextBlock>("PhaseRename")!,
+            this.FindControl<TextBlock>("PhaseSave")!,
         ];
+
+        // Plan H § 5 S3: "the red dots fill". Filled counts dots, so the transition steps from one dot to the
+        // next as the percent moves (the same 200 ms the old progress bar took, Timings.ProgressBarAnimMs).
+        _dots.Transitions =
+        [
+            new DoubleTransition { Property = DotRow.FilledProperty, Duration = Timings.ProgressBarAnimMs },
+        ];
+
+        _yesCaption.PointerPressed += (_, e) => { e.Handled = true; ConfirmIfAllowed(); };
+        _noCaption.PointerPressed += (_, e) => { e.Handled = true; _coordinator.CancelRenameConfirm(); };
+        _cancelCaption.PointerPressed += (_, e) => { e.Handled = true; _coordinator.RequestCancelRename(); };
+    }
+
+    /// <summary>What was last asked for; the card's own <c>IsVisible</c> lags a hide by the fade.</summary>
+    public bool IsShown => _fade.IsShown;
+
+    /// <summary>The ink card fades in when the rename screen starts and out when it ends (plan H § 5 S3).</summary>
+    public void SetShown(bool shown)
+    {
+        if (shown) _fade.Show();
+        else _fade.Hide();
+    }
+
+    /// <summary>Enter, or a click on <c>ENTER RENAME</c>: start the rename, unless one call is already
+    /// in flight (the coordinator's own guard against overlapping calls on the one-call-at-a-time link).</summary>
+    public void ConfirmIfAllowed()
+    {
+        var rename = _coordinator.Rename;
+        if (rename.Stage != RenameStage.Confirming || rename.Busy) return;
+        _ = _coordinator.ConfirmRenameAsync();
     }
 
     public void Refresh()
@@ -67,33 +101,29 @@ public partial class RenameView : UserControl, IRefreshable
 
         if (confirming)
         {
-            _confirmText.Text = rename.ConfirmText;
-            _yesButton.IsEnabled = !rename.Busy;
-            _noButton.IsEnabled = !rename.Busy;
-            if (!rename.Busy) _yesButton.Focus();
+            // Everything this card shows is the owner's doing (he picked the folder, he pressed Enter), so
+            // its text decodes in rather than swapping silently (plan H § 5 S3).
+            _motion.Change(_confirmFolder, rename.FolderName.ToUpperInvariant(), userCaused: true);
+            _confirmLine.Text = RenameModel.ConfirmLine;
             return;
         }
 
-        _folderText.Text = rename.Folder;
+        _runningFolder.Text = "  ·  " + rename.FolderName.ToUpperInvariant();
 
-        var total = rename.Total;
-        var fraction = total > 0 ? Math.Clamp((double)rename.Done / total, 0, 1) : 0;
-        _progressFill.Width = TrackWidth * fraction;
+        // The percent rolls digit by digit: 36 → 37 rolls the last digit, 99 → 100 all three.
+        _motion.Change(_percentText, rename.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            userCaused: true, onlyChangedLetters: true);
+        _dots.Filled = DotRow.DotsFor(rename.Percent, _dots.Count);
 
-        _progressText.Text = total > 0 ? $"{rename.Done} / {total}" : "…";
-        _phaseText.Text = rename.CancelRequested ? $"{Phrase(rename.Phase)} — cancelling…" : Phrase(rename.Phase);
+        // Cancel asked for: the left caption says so and a busy line takes the dots' place (plan H § 3.2).
+        _cancelCaption.Text = rename.CancelRequested ? "CANCELLING" : "ESC CANCEL";
+        _dots.IsVisible = !rename.CancelRequested;
+        _cancellingLine.IsVisible = rename.CancelRequested;
 
-        _cancelButton.IsEnabled = !rename.CancelRequested;
-        _cancelButton.Content = rename.CancelRequested ? "Cancelling…" : "Cancel  [Esc]";
+        for (var i = 0; i < _phaseWords.Length; i++)
+        {
+            _phaseWords[i].Classes.Set("accent", i == rename.PhaseStep);
+            _phaseWords[i].Classes.Set("onink60", i != rename.PhaseStep);
+        }
     }
-
-    private static string Phrase(string phase) => phase switch
-    {
-        "preparing" => "Preparing…",
-        "renaming" => "Renaming…",
-        "saving" => "Saving…",
-        "reuniting" => "Reuniting ratings with files…",
-        "done" => "Done.",
-        _ => phase,
-    };
 }

@@ -88,7 +88,7 @@ public class UiThreadDisciplineTests
         // Screen, the start screen's message and Busy all changed after a call that finished on the
         // thread pool; every one of those writes, and every repaint they asked for, was on the UI thread.
         Assert.Equal(AppScreen.Start, await ui.OnThread(() => c.Screen));
-        Assert.Contains("no longer paired", await ui.OnThread(() => c.Start.BoxText ?? ""));
+        Assert.Contains("no longer paired", await ui.OnThread(() => c.Start.MessageText ?? ""));
         Assert.False(await ui.OnThread(() => c.Rank.Busy));
         Assert.NotEmpty(changedOn);
         Assert.All(changedOn, id => Assert.Equal(ui.ThreadId, id));

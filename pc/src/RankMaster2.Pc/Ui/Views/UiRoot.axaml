@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:RankMaster2.Pc.Ui.Views"
              x:Class="RankMaster2.Pc.Ui.Views.UiRoot"
              Focusable="True">
   <UserControl.Resources>
@@ -7,8 +8,16 @@
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="Theme.axaml" />
         <ResourceInclude Source="Icons.axaml" />
+        <ResourceInclude Source="HouseResources.axaml" />
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </UserControl.Resources>
-  <ContentControl Name="Root" Background="{DynamicResource CompareBackground}" />
+  <UserControl.Styles>
+    <StyleInclude Source="HouseStyles.axaml" />
+  </UserControl.Styles>
+  <Grid>
+    <ContentControl Name="Root" Background="{DynamicResource CompareBackground}" />
+    <!-- Plan H § 5 S3: the layer every "decode in" is drawn on, over everything. -->
+    <views:DecodeLayer Name="Decode" />
+  </Grid>
 </UserControl>

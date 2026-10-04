@@ -40,11 +40,13 @@ public static class KeyMap
     }
 
     /// <summary>
-    /// The start screen's map (plan § 1.1 second paragraph): `O`, `F1`, `Esc`, and `Ctrl+Z` — the
+    /// The start screen's map (plan § 1.1 second paragraph): `O`, `R` (plan H § 3.4: rename by rank),
+    /// `F1`, `Esc`, and `Ctrl+Z` — the
     /// last one only meaningful while a session is open and exhausted, which is <see cref="StartModel"/>'s
     /// job to gate, not this function's (KeyMap only says what the key *could* mean on this screen).
     /// `Enter`/`Space` are deliberately not here: they reach the focused button through Avalonia's own
-    /// behaviour (plan § 3.7), never through KeyMap.
+    /// behaviour (plan § 3.7), never through KeyMap. Neither are `←`/`→` (plan H § 3.4): they only move
+    /// focus between the pills, which is the view's business, so they stay <see cref="Intent.None"/> here.
     /// </summary>
     public static Intent MapStart(UiKey key, UiModifiers modifiers)
     {
@@ -55,6 +57,7 @@ public static class KeyMap
         return key switch
         {
             UiKey.O => Intent.OpenFolder,
+            UiKey.R => Intent.RenameFolder,
             UiKey.F1 => Intent.ToggleHelp,
             UiKey.Escape => Intent.Quit,
             _ => Intent.None,

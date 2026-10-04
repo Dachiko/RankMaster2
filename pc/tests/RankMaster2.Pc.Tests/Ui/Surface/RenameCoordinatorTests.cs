@@ -67,7 +67,7 @@ public class RenameCoordinatorTests
         Assert.Equal(AppScreen.Rename, c.Screen);
         Assert.Equal(RenameStage.Confirming, c.Rename.Stage);
         Assert.Equal("/lib/photos", c.Rename.Folder);
-        Assert.Contains("/lib/photos", c.Rename.ConfirmText);
+        Assert.Equal("photos", c.Rename.FolderName);
         Assert.Empty(link.Calls);
     }
 
@@ -128,7 +128,7 @@ public class RenameCoordinatorTests
         await c.ConfirmRenameAsync();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("Nothing to rank here", c.Start.BoxText);
+        Assert.Contains("Nothing to rank here", c.Start.MessageText);
         Assert.Equal(0, link.CallCount(nameof(link.StartRenameAsync)));
     }
 
@@ -144,7 +144,7 @@ public class RenameCoordinatorTests
         await c.ConfirmRenameAsync();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("already running", c.Start.BoxText);
+        Assert.Contains("already running", c.Start.MessageText);
     }
 
     [Fact]
@@ -160,8 +160,8 @@ public class RenameCoordinatorTests
         await c.ConfirmRenameAsync();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("Renamed 6 file", c.Start.BoxText);
-        Assert.False(c.Start.BoxIsError);
+        Assert.Contains("Renamed 6 file", c.Start.MessageText);
+        Assert.Equal(StartMessageKind.Done, c.Start.MessageKind);
         Assert.Equal(1, link.CallCount(nameof(link.CloseAsync)));
     }
 
@@ -187,8 +187,8 @@ public class RenameCoordinatorTests
         await Flush();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("Renamed 6 file", c.Start.BoxText);
-        Assert.False(c.Start.BoxIsError);
+        Assert.Contains("Renamed 6 file", c.Start.MessageText);
+        Assert.Equal(StartMessageKind.Done, c.Start.MessageKind);
 
         // No further polling once the screen has already moved on.
         c.Tick();
@@ -232,7 +232,7 @@ public class RenameCoordinatorTests
 
         Assert.Equal(1, link.CallCount(nameof(link.CancelRenameAsync)));
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("cancelled", c.Start.BoxText);
+        Assert.Contains("Rename stopped", c.Start.MessageText);
     }
 
     [Fact]
@@ -287,7 +287,7 @@ public class RenameCoordinatorTests
 
     [Theory]
     [InlineData("succeeded", "Renamed", false)]
-    [InlineData("cancelled", "cancelled", true)]
+    [InlineData("cancelled", "Rename stopped", true)]
     public async Task Terminal_states_show_one_line_and_return_to_start(string state, string expectedSubstring, bool expectedIsError)
     {
         var snapshot = SnapshotBuilder.Ranking(folder: "/lib/photos");
@@ -301,10 +301,10 @@ public class RenameCoordinatorTests
         await Flush();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains(expectedSubstring, c.Start.BoxText);
+        Assert.Contains(expectedSubstring, c.Start.MessageText);
         // A rename that finished exactly as asked is not bad news and must not paint the red box
         // (the owner's report: "Success can't be red"). Cancelled/failed still do.
-        Assert.Equal(expectedIsError, c.Start.BoxIsError);
+        Assert.Equal(expectedIsError ? StartMessageKind.Error : StartMessageKind.Done, c.Start.MessageKind);
     }
 
     [Fact]
@@ -322,8 +322,8 @@ public class RenameCoordinatorTests
         await Flush();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("nothing was renamed", c.Start.BoxText);
-        Assert.True(c.Start.BoxIsError);
+        Assert.Equal("Rename failed · nothing changed", c.Start.MessageText);
+        Assert.Equal(StartMessageKind.Error, c.Start.MessageKind);
     }
 
     [Fact]
@@ -341,9 +341,9 @@ public class RenameCoordinatorTests
         await Flush();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("/lib/photos/.rankmaster-rename.json", c.Start.BoxText);
-        Assert.Contains("retry", c.Start.BoxText);
-        Assert.True(c.Start.BoxIsError);
+        Assert.Contains("/lib/photos/.rankmaster-rename.json", c.Start.MessageText);
+        Assert.Contains("open the folder again to retry", c.Start.MessageText);
+        Assert.Equal(StartMessageKind.Error, c.Start.MessageKind);
     }
 
     // ---- transient poll failures do not abandon the bar (§ 3.5's "say nothing on a hiccup") ------
@@ -381,6 +381,6 @@ public class RenameCoordinatorTests
         await Flush();
 
         Assert.Equal(AppScreen.Start, c.Screen);
-        Assert.Contains("no longer paired", c.Start.BoxText);
+        Assert.Contains("no longer paired", c.Start.MessageText);
     }
 }

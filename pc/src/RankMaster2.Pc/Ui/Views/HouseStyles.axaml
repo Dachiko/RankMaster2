@@ -1,0 +1,102 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!--
+    Plan H § 3: the house pieces the start screen, the rename ink card and the keys page share.
+    Colours come from HouseResources.axaml (the palette). Merged into UiRoot, so they exist for
+    exactly the views plan H redraws; the compare screen never uses these class names.
+  -->
+
+  <!-- DESIGN.md § 2: caps labels are Inter Medium 10.5, upper case (the text is written in upper case,
+       Avalonia has no text-transform), tracked 0.16 em = 1.68 px. -->
+  <Style Selector="TextBlock.caps">
+    <Setter Property="FontSize" Value="10.5" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="LetterSpacing" Value="1.68" />
+    <Setter Property="Foreground" Value="{DynamicResource House.Dim}" />
+  </Style>
+  <Style Selector="TextBlock.ink"><Setter Property="Foreground" Value="{DynamicResource House.Ink}" /></Style>
+  <Style Selector="TextBlock.mid"><Setter Property="Foreground" Value="{DynamicResource House.Mid}" /></Style>
+  <Style Selector="TextBlock.faint"><Setter Property="Foreground" Value="{DynamicResource House.Faint}" /></Style>
+  <Style Selector="TextBlock.accent"><Setter Property="Foreground" Value="{DynamicResource House.Accent}" /></Style>
+  <Style Selector="TextBlock.onink"><Setter Property="Foreground" Value="{DynamicResource House.OnInk}" /></Style>
+  <Style Selector="TextBlock.onink60"><Setter Property="Foreground" Value="{DynamicResource House.OnInk60}" /></Style>
+
+  <!-- The Doto lines: hero, big percent, folder name on the card, keys page title. -->
+  <Style Selector="TextBlock.dot">
+    <Setter Property="FontFamily" Value="{DynamicResource House.Dot}" />
+    <Setter Property="FontWeight" Value="Black" />
+    <Setter Property="Foreground" Value="{DynamicResource House.Ink}" />
+  </Style>
+
+  <!-- DESIGN.md § 3 "status dot": 7 px, ink; .off is faint, .live is accent. -->
+  <Style Selector="Ellipse.sd">
+    <Setter Property="Width" Value="7" />
+    <Setter Property="Height" Value="7" />
+    <Setter Property="Fill" Value="{DynamicResource House.Ink}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Ellipse.sd.off"><Setter Property="Fill" Value="{DynamicResource House.Faint}" /></Style>
+  <Style Selector="Ellipse.sd.live"><Setter Property="Fill" Value="{DynamicResource House.Accent}" /></Style>
+
+  <!-- The pulsing live dot (plan H § 3.2 "pulsing red dot"): opacity down to 25 % and back, 1.6 s. It is
+       work under way, so it is allowed to move on its own. -->
+  <Style Selector="Ellipse.pulse">
+    <Style.Animations>
+      <Animation Duration="0:0:1.6" IterationCount="INFINITE" Easing="SineEaseInOut">
+        <KeyFrame Cue="0%"><Setter Property="Opacity" Value="1" /></KeyFrame>
+        <KeyFrame Cue="50%"><Setter Property="Opacity" Value="0.25" /></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1" /></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <!-- DESIGN.md § 3 "key chip": 1 px ink outline, radius 4, Inter SemiBold 11.5. -->
+  <Style Selector="Border.kbd">
+    <Setter Property="BorderBrush" Value="{DynamicResource House.Ink}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="Padding" Value="6,1,6,2" />
+    <Setter Property="MinWidth" Value="22" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
+  </Style>
+  <Style Selector="Border.kbd > TextBlock">
+    <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource House.Ink}" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+  </Style>
+
+  <!-- Plan H § 3.1: a pill is caps on a 1.5 px ink outline, radius 13, padding 7x14; the focused one
+       is filled ink with on-ink text. A real Button, so Enter and Space on the focused pill keep
+       Avalonia's own behaviour (plan H § 3.4). No hand cursor anywhere in plan H's views: a cursor object
+       needs the platform, and UiRoot is built (CompositionTests) before there is one. The caption is a TextBlock the view supplies as the
+       content and does not colour itself, so it inherits the colour set here. -->
+  <Style Selector="Button.pill">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource House.Ink}" />
+    <Setter Property="Padding" Value="14,7" />
+    <Setter Property="Focusable" Value="True" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PillBorder" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource House.Ink}"
+                BorderThickness="1.5" CornerRadius="13" Padding="{TemplateBinding Padding}">
+          <ContentPresenter Name="PART_ContentPresenter" Content="{TemplateBinding Content}"
+                            Foreground="{TemplateBinding Foreground}"
+                            HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="Button.pill:focus">
+    <Setter Property="Background" Value="{DynamicResource House.Ink}" />
+    <Setter Property="Foreground" Value="{DynamicResource House.OnInk}" />
+  </Style>
+
+  <!-- Plan H § 3.2: the ink card: ink, radius 14, shadow; its faint dot grid is a DotGrid control
+       laid over it (Avalonia has no radial-gradient brush). -->
+  <Style Selector="Border.inkcard">
+    <Setter Property="Background" Value="{DynamicResource House.Ink}" />
+    <Setter Property="CornerRadius" Value="14" />
+    <Setter Property="BoxShadow" Value="0 10 40 0 #40141414" />
+  </Style>
+</Styles>
